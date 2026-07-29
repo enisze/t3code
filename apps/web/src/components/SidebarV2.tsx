@@ -12,7 +12,11 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
+import type {
+  ModelSelection,
+  ScopedThreadRef,
+  SidebarProjectGroupingMode,
+} from "@t3tools/contracts";
 import {
   AlarmClockIcon,
   AlarmClockOffIcon,
@@ -131,6 +135,7 @@ import {
   snoozeWakeLabel,
   type SnoozePreset,
 } from "./Sidebar.snooze";
+import { ProjectDefaultAgentField } from "./ProjectDefaultAgentField";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
@@ -1338,6 +1343,26 @@ export default function SidebarV2() {
           stackedThreadToast({
             type: "error",
             title: "Failed to rename project",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [updateProject],
+  );
+
+  const updateProjectDefaultModelSelection = useCallback(
+    async (member: SidebarProjectGroupMember, selection: ModelSelection | null) => {
+      const result = await updateProject({
+        environmentId: member.environmentId,
+        input: { projectId: member.id, defaultModelSelection: selection },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to update project agent",
             description: error instanceof Error ? error.message : "An error occurred.",
           }),
         );
@@ -2690,6 +2715,14 @@ export default function SidebarV2() {
                       </Select>
                     </label>
                   </div>
+                  <ProjectDefaultAgentField
+                    idPrefix={`project-agent-${member.physicalProjectKey}`}
+                    environmentId={member.environmentId}
+                    projectId={member.id}
+                    onChange={(selection) => {
+                      void updateProjectDefaultModelSelection(member, selection);
+                    }}
+                  />
                   {projectActionsTarget.memberProjects.length > 1 ? (
                     <div className="flex justify-end">
                       <Button

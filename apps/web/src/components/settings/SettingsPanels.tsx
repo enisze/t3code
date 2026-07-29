@@ -8,7 +8,7 @@ import {
   SettingsIcon,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -1689,6 +1689,86 @@ export function GeneralSettingsPanel() {
   );
 }
 
+function GuideCode({ children }: { children: ReactNode }) {
+  return (
+    <code className="rounded bg-background/70 px-1 py-0.5 font-mono text-xs text-foreground">
+      {children}
+    </code>
+  );
+}
+
+/**
+ * Collapsible explainer at the top of the Providers panel: how to configure two
+ * accounts of the same provider (e.g. a work and a personal Claude / Codex
+ * login) and route each to a different project. Documents the manual login step
+ * (which happens in an external terminal, since provider auth lives with the
+ * CLI, not T3), the per-instance isolation field, and the per-project "Default
+ * agent" attach point in project settings.
+ */
+function MultiAccountGuide() {
+  return (
+    <details className="group mb-3 rounded-lg border border-border/60 bg-muted/30 px-3.5 py-3">
+      <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium text-foreground [&::-webkit-details-marker]:hidden">
+        <InfoIcon className="size-4 shrink-0 text-muted-foreground" />
+        Use different accounts for different projects
+        <span className="ml-auto text-xs font-normal text-muted-foreground transition-transform group-open:hidden">
+          Show
+        </span>
+        <span className="ml-auto hidden text-xs font-normal text-muted-foreground group-open:inline">
+          Hide
+        </span>
+      </summary>
+      <div className="mt-3 space-y-3 text-sm text-muted-foreground">
+        <p>
+          Each instance below is <span className="font-medium text-foreground">one account</span>{" "}
+          (its own login). To run, for example, two Claude or Codex subscriptions on separate
+          projects:
+        </p>
+        <ol className="list-decimal space-y-2.5 pl-5">
+          <li>
+            <span className="font-medium text-foreground">Log each account into its own home</span>{" "}
+            from a terminal. The login lives with the CLI, not T3, so this step is manual.
+            <div className="mt-1.5 space-y-1.5">
+              <div>
+                Claude — one config dir per account:
+                <div className="mt-1 flex flex-col gap-1">
+                  <GuideCode>claude /login</GuideCode>
+                  <GuideCode>CLAUDE_CONFIG_DIR=~/.claude-personal claude /login</GuideCode>
+                </div>
+              </div>
+              <div>
+                Codex — shared home, separate auth via a shadow home:
+                <div className="mt-1 flex flex-col gap-1">
+                  <GuideCode>codex login</GuideCode>
+                  <GuideCode>CODEX_HOME=~/.codex-personal codex login</GuideCode>
+                </div>
+              </div>
+            </div>
+          </li>
+          <li>
+            <span className="font-medium text-foreground">Add one instance per account</span> with
+            the <PlusIcon className="mb-0.5 inline size-3" aria-label="add" /> button above. Point
+            the second Claude instance at its own <GuideCode>CLAUDE_CONFIG_DIR path</GuideCode> (
+            <GuideCode>~/.claude-personal</GuideCode>). For Codex, keep the same{" "}
+            <GuideCode>CODEX_HOME path</GuideCode> on both and give the second a{" "}
+            <GuideCode>Shadow home path</GuideCode> (<GuideCode>~/.codex-personal</GuideCode>).
+          </li>
+          <li>
+            <span className="font-medium text-foreground">Confirm the emails differ</span> — each
+            card shows “Authenticated as …”. Click the blurred email to reveal it.
+          </li>
+          <li>
+            <span className="font-medium text-foreground">Attach an account to a project</span>: in
+            the sidebar, right-click a project → <span className="text-foreground">Project settings</span>{" "}
+            → <span className="text-foreground">Default agent</span>. New threads in that project
+            start on the account you pick (still overridable per thread).
+          </li>
+        </ol>
+      </div>
+    </details>
+  );
+}
+
 export function ProviderSettingsPanel() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
@@ -2035,6 +2115,7 @@ export function ProviderSettingsPanel() {
           </div>
         }
       >
+        <MultiAccountGuide />
         <SettingsRow
           title={
             <span className="inline-flex items-center gap-1.5">
