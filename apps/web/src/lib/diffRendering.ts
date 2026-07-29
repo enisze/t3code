@@ -1,15 +1,53 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { FileDiffMetadata } from "@pierre/diffs/types";
+import { DEFAULT_DIFF_THEME, type DiffTheme } from "@t3tools/contracts/settings";
 
-export const DIFF_THEME_NAMES = {
-  light: "pierre-light",
-  dark: "pierre-dark",
-} as const;
+/**
+ * Light mode always uses Pierre's light theme; the user-selectable diff theme
+ * (`DiffTheme`) applies in dark mode.
+ */
+export const DIFF_LIGHT_THEME_NAME = "pierre-light";
 
-export type DiffThemeName = (typeof DIFF_THEME_NAMES)[keyof typeof DIFF_THEME_NAMES];
+export type DiffThemeName = DiffTheme | typeof DIFF_LIGHT_THEME_NAME;
 
-export function resolveDiffThemeName(theme: "light" | "dark"): DiffThemeName {
-  return theme === "dark" ? DIFF_THEME_NAMES.dark : DIFF_THEME_NAMES.light;
+export interface DiffThemeOption {
+  readonly value: DiffTheme;
+  readonly label: string;
+}
+
+/** Curated dark diff themes shown in Settings → Appearance. */
+export const DIFF_THEME_OPTIONS: readonly DiffThemeOption[] = [
+  { value: "pierre-dark", label: "Pierre Dark" },
+  { value: "tokyo-night", label: "Tokyo Night" },
+  { value: "one-dark-pro", label: "One Dark Pro" },
+  { value: "ayu-dark", label: "Ayu Dark" },
+  { value: "dracula", label: "Dracula" },
+  { value: "catppuccin-mocha", label: "Catppuccin Mocha" },
+  { value: "github-dark-default", label: "GitHub Dark" },
+  { value: "github-dark-dimmed", label: "GitHub Dark Dimmed" },
+  { value: "material-theme-palenight", label: "Material Palenight" },
+  { value: "night-owl", label: "Night Owl" },
+  { value: "nord", label: "Nord" },
+  { value: "monokai", label: "Monokai" },
+  { value: "poimandres", label: "Poimandres" },
+  { value: "vesper", label: "Vesper" },
+  { value: "synthwave-84", label: "SynthWave '84" },
+];
+
+/**
+ * Every theme name the highlighter may need registered up front, so switching
+ * the setting at runtime never references a theme that was never attached.
+ */
+export const DIFF_HIGHLIGHTER_THEME_NAMES: readonly DiffThemeName[] = [
+  ...DIFF_THEME_OPTIONS.map((option) => option.value),
+  DIFF_LIGHT_THEME_NAME,
+];
+
+export function resolveDiffThemeName(
+  resolvedTheme: "light" | "dark",
+  darkTheme: DiffTheme = DEFAULT_DIFF_THEME,
+): DiffThemeName {
+  return resolvedTheme === "dark" ? darkTheme : DIFF_LIGHT_THEME_NAME;
 }
 
 const FNV_OFFSET_BASIS_32 = 0x811c9dc5;

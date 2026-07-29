@@ -62,6 +62,29 @@ export const EnvironmentIdentificationMode = Schema.Literals(["artwork", "pill",
 export type EnvironmentIdentificationMode = typeof EnvironmentIdentificationMode.Type;
 export const DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE: EnvironmentIdentificationMode = "artwork";
 
+// Syntax highlighting theme for code diffs. These names map to themes bundled
+// by `@pierre/diffs` (Pierre's own themes plus the Shiki theme collection).
+// The selected theme applies in dark mode; light mode always uses pierre-light.
+export const DiffTheme = Schema.Literals([
+  "pierre-dark",
+  "tokyo-night",
+  "one-dark-pro",
+  "ayu-dark",
+  "dracula",
+  "catppuccin-mocha",
+  "github-dark-default",
+  "github-dark-dimmed",
+  "material-theme-palenight",
+  "night-owl",
+  "nord",
+  "monokai",
+  "poimandres",
+  "vesper",
+  "synthwave-84",
+]);
+export type DiffTheme = typeof DiffTheme.Type;
+export const DEFAULT_DIFF_THEME: DiffTheme = "pierre-dark";
+
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -70,6 +93,7 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   diffIgnoreWhitespace: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  diffTheme: DiffTheme.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_DIFF_THEME))),
   environmentIdentificationMode: EnvironmentIdentificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE)),
   ),
@@ -678,6 +702,7 @@ export const ClientSettingsPatch = Schema.Struct({
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
+  diffTheme: Schema.optionalKey(DiffTheme),
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
   glassOpacity: Schema.optionalKey(GlassOpacity),
   favorites: Schema.optionalKey(
