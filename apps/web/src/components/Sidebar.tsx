@@ -21,6 +21,7 @@ import {
   ThreadStatusLabel,
   ThreadWorktreeIndicator,
 } from "./ThreadStatusIndicators";
+import { ProjectDefaultAgentField } from "./ProjectDefaultAgentField";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { useAtomValue } from "@effect/atom-react";
 import { autoAnimate } from "@formkit/auto-animate";
@@ -43,6 +44,7 @@ import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import {
   type ContextMenuItem,
+  type ModelSelection,
   ProjectId,
   type ScopedThreadRef,
   type ResolvedKeybindingsConfig,
@@ -2068,6 +2070,26 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     }
   }, [closeProjectRenameDialog, projectRenameTarget, projectRenameTitle, updateProject]);
 
+  const updateProjectDefaultModelSelection = useCallback(
+    async (member: SidebarProjectGroupMember, selection: ModelSelection | null) => {
+      const result = await updateProject({
+        environmentId: member.environmentId,
+        input: { projectId: member.id, defaultModelSelection: selection },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to update project agent",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [updateProject],
+  );
+
   const closeProjectGroupingDialog = useCallback(() => {
     setProjectGroupingTarget(null);
     setProjectGroupingSelection("inherit");
@@ -2393,6 +2415,16 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               <p className="text-xs text-muted-foreground">
                 Environment: {projectRenameTarget.environmentLabel}
               </p>
+            ) : null}
+            {projectRenameTarget ? (
+              <ProjectDefaultAgentField
+                idPrefix={`project-agent-${projectRenameTarget.physicalProjectKey}`}
+                environmentId={projectRenameTarget.environmentId}
+                projectId={projectRenameTarget.id}
+                onChange={(selection) => {
+                  void updateProjectDefaultModelSelection(projectRenameTarget, selection);
+                }}
+              />
             ) : null}
           </DialogPanel>
           <DialogFooter>

@@ -119,7 +119,9 @@ describe("GitHubAccountResolver.resolveForCwd", () => {
       Effect.provide(
         layerFor(
           shellSnapshot({
-            projects: [projectShell({ id: "app", workspaceRoot: "/repos/app", gitHubAccount: null })],
+            projects: [
+              projectShell({ id: "app", workspaceRoot: "/repos/app", gitHubAccount: null }),
+            ],
             threads: [],
           }),
         ),
@@ -137,14 +139,7 @@ describe("GitHubAccountResolver.resolveForCwd", () => {
         token: "gho_secret",
       });
       const call = mockRun.mock.calls[0]?.[0];
-      assert.deepEqual(call?.args, [
-        "auth",
-        "token",
-        "--user",
-        "octo",
-        "--hostname",
-        "github.com",
-      ]);
+      assert.deepEqual(call?.args, ["auth", "token", "--user", "octo", "--hostname", "github.com"]);
     }).pipe(
       Effect.provide(
         layerFor(

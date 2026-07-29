@@ -14,6 +14,7 @@ import {
 } from "@t3tools/client-runtime/environment";
 import type {
   GitHubAccountRef,
+  ModelSelection,
   ScopedThreadRef,
   SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
@@ -137,6 +138,7 @@ import {
   type SnoozePreset,
 } from "./Sidebar.snooze";
 import { GitHubIcon } from "./Icons";
+import { ProjectDefaultAgentField } from "./ProjectDefaultAgentField";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
@@ -1022,10 +1024,7 @@ function githubAccountValue(account: { readonly host: string; readonly login: st
 
 // github.com is the overwhelmingly common host, so hide it to keep the label
 // short; surface the host only for GitHub Enterprise / self-hosted accounts.
-function githubAccountLabel(account: {
-  readonly host: string;
-  readonly login: string;
-}): string {
+function githubAccountLabel(account: { readonly host: string; readonly login: string }): string {
   return account.host === "github.com" ? account.login : `${account.login} · ${account.host}`;
 }
 
@@ -1038,10 +1037,7 @@ function ProjectGitHubAccountField({
   onSelect,
 }: {
   readonly member: SidebarProjectGroupMember;
-  readonly onSelect: (
-    member: SidebarProjectGroupMember,
-    account: GitHubAccountRef | null,
-  ) => void;
+  readonly onSelect: (member: SidebarProjectGroupMember, account: GitHubAccountRef | null) => void;
 }) {
   const discovery = useEnvironmentQuery(
     sourceControlEnvironment.discovery({ environmentId: member.environmentId, input: {} }),
@@ -1461,6 +1457,26 @@ export default function SidebarV2() {
           stackedThreadToast({
             type: "error",
             title: "Failed to rename project",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [updateProject],
+  );
+
+  const updateProjectDefaultModelSelection = useCallback(
+    async (member: SidebarProjectGroupMember, selection: ModelSelection | null) => {
+      const result = await updateProject({
+        environmentId: member.environmentId,
+        input: { projectId: member.id, defaultModelSelection: selection },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to update project agent",
             description: error instanceof Error ? error.message : "An error occurred.",
           }),
         );
@@ -2843,6 +2859,14 @@ export default function SidebarV2() {
                       onSelect={updateProjectGitHubAccount}
                     />
                   </div>
+                  <ProjectDefaultAgentField
+                    idPrefix={`project-agent-${member.physicalProjectKey}`}
+                    environmentId={member.environmentId}
+                    projectId={member.id}
+                    onChange={(selection) => {
+                      void updateProjectDefaultModelSelection(member, selection);
+                    }}
+                  />
                   {projectActionsTarget.memberProjects.length > 1 ? (
                     <div className="flex justify-end">
                       <Button

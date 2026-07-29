@@ -130,10 +130,7 @@ export const make = Effect.gen(function* () {
       Effect.catch(() => Effect.succeed(null)),
     );
 
-  const resolveToken = (
-    cwd: string,
-    account: GitHubAccountRef,
-  ): Effect.Effect<string | null> =>
+  const resolveToken = (cwd: string, account: GitHubAccountRef): Effect.Effect<string | null> =>
     Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       const cache = yield* Ref.get(tokenCache);
