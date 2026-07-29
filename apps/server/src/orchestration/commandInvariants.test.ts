@@ -13,11 +13,13 @@ import * as Effect from "effect/Effect";
 
 import {
   findThreadById,
+  isThreadAlreadyExistsInvariantError,
   listThreadsByProjectId,
   requireNonNegativeInteger,
   requireThread,
   requireThreadAbsent,
 } from "./commandInvariants.ts";
+import { OrchestrationCommandInvariantError } from "./Errors.ts";
 
 const now = "2026-01-01T00:00:00.000Z";
 
@@ -201,6 +203,55 @@ describe("commandInvariants", () => {
         }),
       ),
     ).rejects.toThrow("already exists");
+  });
+
+  it("detects the thread-already-exists invariant so bootstrap can treat it as idempotent", async () => {
+    const error = await Effect.runPromise(
+      Effect.flip(
+        requireThreadAbsent({
+          readModel,
+          command: {
+            type: "thread.create",
+            commandId: CommandId.make("cmd-4"),
+            threadId: ThreadId.make("thread-1"),
+            projectId: ProjectId.make("project-a"),
+            title: "dup",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+          },
+          threadId: ThreadId.make("thread-1"),
+        }),
+      ),
+    );
+
+    expect(isThreadAlreadyExistsInvariantError(error, ThreadId.make("thread-1"))).toBe(true);
+    // A different threadId or a different invariant must not be mistaken for it.
+    expect(isThreadAlreadyExistsInvariantError(error, ThreadId.make("thread-3"))).toBe(false);
+    expect(
+      isThreadAlreadyExistsInvariantError(
+        new OrchestrationCommandInvariantError({
+          commandType: "thread.create",
+          detail: "Project 'project-a' does not exist for command 'thread.create'.",
+        }),
+        ThreadId.make("thread-1"),
+      ),
+    ).toBe(false);
+    expect(
+      isThreadAlreadyExistsInvariantError(
+        new OrchestrationCommandInvariantError({
+          commandType: "thread.turn.start",
+          detail: "Thread 'thread-1' already exists and cannot be created twice.",
+        }),
+        ThreadId.make("thread-1"),
+      ),
+    ).toBe(false);
   });
 
   it("requires non-negative integers", async () => {
