@@ -66,6 +66,7 @@ import {
   projectActivityEvent,
   projectThreadDetailSnapshot,
 } from "./orchestration/ActivityPayloadProjection.ts";
+import { isThreadAlreadyExistsInvariantError } from "./orchestration/commandInvariants.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -878,20 +879,37 @@ const makeWsRpcLayer = (
 
           const bootstrapProgram = Effect.gen(function* () {
             if (bootstrap?.createThread) {
-              yield* orchestrationEngine.dispatch({
-                type: "thread.create",
-                commandId: yield* serverCommandId("bootstrap-thread-create"),
-                threadId: command.threadId,
-                projectId: bootstrap.createThread.projectId,
-                title: bootstrap.createThread.title,
-                modelSelection: bootstrap.createThread.modelSelection,
-                runtimeMode: bootstrap.createThread.runtimeMode,
-                interactionMode: bootstrap.createThread.interactionMode,
-                branch: bootstrap.createThread.branch,
-                worktreePath: bootstrap.createThread.worktreePath,
-                createdAt: bootstrap.createThread.createdAt,
-              });
-              createdThread = true;
+              // Bootstrapping a draft is a "create if absent" operation: the
+              // client generated this threadId before the thread existed, so a
+              // duplicate send (or a draft that was already promoted) can target
+              // a threadId the server already has. Treat that specific invariant
+              // as a no-op and continue with the turn against the existing
+              // thread instead of failing the whole send — the client then
+              // navigates to the already-created chat. `createdThread` stays
+              // false so cleanup never deletes a thread we did not create.
+              const created = yield* orchestrationEngine
+                .dispatch({
+                  type: "thread.create",
+                  commandId: yield* serverCommandId("bootstrap-thread-create"),
+                  threadId: command.threadId,
+                  projectId: bootstrap.createThread.projectId,
+                  title: bootstrap.createThread.title,
+                  modelSelection: bootstrap.createThread.modelSelection,
+                  runtimeMode: bootstrap.createThread.runtimeMode,
+                  interactionMode: bootstrap.createThread.interactionMode,
+                  branch: bootstrap.createThread.branch,
+                  worktreePath: bootstrap.createThread.worktreePath,
+                  createdAt: bootstrap.createThread.createdAt,
+                })
+                .pipe(
+                  Effect.as(true),
+                  Effect.catchTag("OrchestrationCommandInvariantError", (error) =>
+                    isThreadAlreadyExistsInvariantError(error, command.threadId)
+                      ? Effect.succeed(false)
+                      : Effect.fail(error),
+                  ),
+                );
+              createdThread = created;
             }
 
             if (bootstrap?.prepareWorktree) {

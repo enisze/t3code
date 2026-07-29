@@ -151,6 +151,10 @@ export function requireThreadNotArchived(input: {
   );
 }
 
+function threadAlreadyExistsDetail(threadId: ThreadId): string {
+  return `Thread '${threadId}' already exists and cannot be created twice.`;
+}
+
 export function requireThreadAbsent(input: {
   readonly readModel: OrchestrationReadModel;
   readonly command: OrchestrationCommand;
@@ -159,11 +163,21 @@ export function requireThreadAbsent(input: {
   if (!findThreadById(input.readModel, input.threadId)) {
     return Effect.void;
   }
-  return Effect.fail(
-    invariantError(
-      input.command.type,
-      `Thread '${input.threadId}' already exists and cannot be created twice.`,
-    ),
+  return Effect.fail(invariantError(input.command.type, threadAlreadyExistsDetail(input.threadId)));
+}
+
+/**
+ * True when `error` is the specific invariant raised by `requireThreadAbsent`
+ * for `threadId` — i.e. a `thread.create` that failed only because the thread
+ * already exists. Lets idempotent callers (e.g. bootstrapping a draft that was
+ * already promoted) treat the duplicate create as a no-op instead of a failure.
+ */
+export function isThreadAlreadyExistsInvariantError(
+  error: OrchestrationCommandInvariantError,
+  threadId: ThreadId,
+): boolean {
+  return (
+    error.commandType === "thread.create" && error.detail === threadAlreadyExistsDetail(threadId)
   );
 }
 
