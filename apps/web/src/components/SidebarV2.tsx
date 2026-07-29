@@ -13,6 +13,7 @@ import {
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 import type {
+  GitHubAccountRef,
   ModelSelection,
   ScopedThreadRef,
   SidebarProjectGroupingMode,
@@ -98,6 +99,7 @@ import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../s
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
 import { projectEnvironment } from "../state/projects";
+import { sourceControlEnvironment } from "../state/sourceControl";
 import { useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
@@ -135,6 +137,7 @@ import {
   snoozeWakeLabel,
   type SnoozePreset,
 } from "./Sidebar.snooze";
+import { GitHubIcon } from "./Icons";
 import { ProjectDefaultAgentField } from "./ProjectDefaultAgentField";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
@@ -1010,6 +1013,117 @@ function latestTurnDiff(
   return null;
 }
 
+// Sentinel Select value for "attach nothing, use the machine-global default
+// gh account". Real accounts encode host+login into an opaque key so the
+// Select can round-trip a value back to a GitHubAccountRef.
+const GITHUB_DEFAULT_ACCOUNT_VALUE = "__default__";
+
+function githubAccountValue(account: { readonly host: string; readonly login: string }): string {
+  return `${account.host} ${account.login}`;
+}
+
+// github.com is the overwhelmingly common host, so hide it to keep the label
+// short; surface the host only for GitHub Enterprise / self-hosted accounts.
+function githubAccountLabel(account: { readonly host: string; readonly login: string }): string {
+  return account.host === "github.com" ? account.login : `${account.login} · ${account.host}`;
+}
+
+// Per-project GitHub account selector. Reads the same source-control discovery
+// query the settings panel uses (scoped to the member's environment) and only
+// offers authenticated accounts. Selecting an option attaches that account to
+// the project; "Use default account" clears it back to the machine default.
+function ProjectGitHubAccountField({
+  member,
+  onSelect,
+}: {
+  readonly member: SidebarProjectGroupMember;
+  readonly onSelect: (member: SidebarProjectGroupMember, account: GitHubAccountRef | null) => void;
+}) {
+  const discovery = useEnvironmentQuery(
+    sourceControlEnvironment.discovery({ environmentId: member.environmentId, input: {} }),
+  );
+  const accounts = useMemo(
+    () =>
+      (
+        discovery.data?.sourceControlProviders.find((provider) => provider.kind === "github")
+          ?.accounts ?? []
+      ).filter((account) => account.authenticated),
+    [discovery.data],
+  );
+  const accountByValue = useMemo(
+    () => new Map(accounts.map((account) => [githubAccountValue(account), account] as const)),
+    [accounts],
+  );
+  const current = member.gitHubAccount;
+  const isLoading = discovery.isPending && discovery.data === null;
+
+  const label = <span className="font-medium text-foreground">GitHub account</span>;
+
+  if (accounts.length === 0) {
+    return (
+      <label className="grid min-w-0 gap-1.5 sm:col-span-2">
+        {label}
+        <p className="text-sm text-muted-foreground">
+          {isLoading ? (
+            "Loading accounts…"
+          ) : (
+            <>
+              No GitHub accounts — run{" "}
+              <code className="rounded bg-muted px-1 py-px text-[11px]">gh auth login</code>
+            </>
+          )}
+        </p>
+      </label>
+    );
+  }
+
+  const currentValue = current ? githubAccountValue(current) : GITHUB_DEFAULT_ACCOUNT_VALUE;
+
+  return (
+    <label className="grid min-w-0 gap-1.5">
+      {label}
+      <Select
+        value={currentValue}
+        onValueChange={(value) => {
+          if (value === null || value === GITHUB_DEFAULT_ACCOUNT_VALUE) {
+            onSelect(member, null);
+            return;
+          }
+          const account = accountByValue.get(value);
+          if (account) {
+            onSelect(member, { host: account.host, login: account.login });
+          }
+        }}
+      >
+        <SelectTrigger
+          className="w-full sm:min-h-7.5"
+          aria-label={`GitHub account for ${member.environmentLabel ?? "current environment"}`}
+        >
+          <span className="flex min-w-0 items-center gap-1.5">
+            <GitHubIcon className="size-3.5 shrink-0 opacity-70" aria-hidden />
+            <SelectValue>{current ? githubAccountLabel(current) : "Default account"}</SelectValue>
+          </span>
+        </SelectTrigger>
+        <SelectPopup align="start" alignItemWithTrigger={false}>
+          <SelectItem hideIndicator value={GITHUB_DEFAULT_ACCOUNT_VALUE}>
+            Use default account
+          </SelectItem>
+          {accounts.map((account) => (
+            <SelectItem
+              key={githubAccountValue(account)}
+              hideIndicator
+              value={githubAccountValue(account)}
+            >
+              {githubAccountLabel(account)}
+              {account.active ? " (default)" : ""}
+            </SelectItem>
+          ))}
+        </SelectPopup>
+      </Select>
+    </label>
+  );
+}
+
 export default function SidebarV2() {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
@@ -1363,6 +1477,32 @@ export default function SidebarV2() {
           stackedThreadToast({
             type: "error",
             title: "Failed to update project agent",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [updateProject],
+  );
+
+  const updateProjectGitHubAccount = useCallback(
+    async (member: SidebarProjectGroupMember, account: GitHubAccountRef | null) => {
+      const current = member.gitHubAccount;
+      const unchanged =
+        account === null
+          ? current === null
+          : current !== null && current.host === account.host && current.login === account.login;
+      if (unchanged) return;
+      const result = await updateProject({
+        environmentId: member.environmentId,
+        input: { projectId: member.id, gitHubAccount: account },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to update GitHub account",
             description: error instanceof Error ? error.message : "An error occurred.",
           }),
         );
@@ -2714,6 +2854,10 @@ export default function SidebarV2() {
                         </SelectPopup>
                       </Select>
                     </label>
+                    <ProjectGitHubAccountField
+                      member={member}
+                      onSelect={updateProjectGitHubAccount}
+                    />
                   </div>
                   <ProjectDefaultAgentField
                     idPrefix={`project-agent-${member.physicalProjectKey}`}

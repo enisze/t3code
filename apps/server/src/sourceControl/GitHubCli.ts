@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -12,6 +13,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { GitHubAccountResolver, gitHubAccountGhEnv } from "./GitHubAccountResolver.ts";
 import {
   decodeGitHubPullRequestJson,
   decodeGitHubPullRequestListJson,
@@ -307,15 +309,24 @@ export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
 
   const execute: GitHubCli["Service"]["execute"] = (input) =>
-    process
-      .run({
-        operation: "GitHubCli.execute",
-        command: "gh",
-        args: input.args,
-        cwd: input.cwd,
-        timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-      })
-      .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
+    Effect.serviceOption(GitHubAccountResolver).pipe(
+      Effect.flatMap((resolverOption) =>
+        Option.isNone(resolverOption)
+          ? Effect.succeed(null)
+          : resolverOption.value.resolveForCwd(input.cwd),
+      ),
+      Effect.flatMap((resolved) =>
+        process.run({
+          operation: "GitHubCli.execute",
+          command: "gh",
+          args: input.args,
+          cwd: input.cwd,
+          timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          ...(resolved !== null ? { env: gitHubAccountGhEnv(resolved) } : {}),
+        }),
+      ),
+      Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)),
+    );
 
   return GitHubCli.of({
     execute,

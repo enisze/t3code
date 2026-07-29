@@ -6,6 +6,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Struct from "effect/Struct";
 import { ProviderOptionSelections } from "./model.ts";
 import { RepositoryIdentity } from "./environment.ts";
+import { GitHubAccountRef } from "./sourceControl.ts";
 import {
   ApprovalRequestId,
   CheckpointRef,
@@ -214,6 +215,13 @@ export const OrchestrationProject = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
+  /**
+   * GitHub account (from `gh auth status`) to run this project's GitHub
+   * operations as. Null means fall back to the machine-global active account.
+   */
+  gitHubAccount: Schema.NullOr(GitHubAccountRef).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -391,6 +399,9 @@ export const OrchestrationProjectShell = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
+  gitHubAccount: Schema.NullOr(GitHubAccountRef).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -520,6 +531,7 @@ export const ProjectCreateCommand = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  gitHubAccount: Schema.optional(Schema.NullOr(GitHubAccountRef)),
   createdAt: IsoDateTime,
 });
 
@@ -530,6 +542,7 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  gitHubAccount: Schema.optional(Schema.NullOr(GitHubAccountRef)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
 });
 
@@ -916,6 +929,7 @@ export const ProjectCreatedPayload = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
+  gitHubAccount: Schema.optional(Schema.NullOr(GitHubAccountRef)),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -927,6 +941,7 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  gitHubAccount: Schema.optional(Schema.NullOr(GitHubAccountRef)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
   updatedAt: IsoDateTime,
 });

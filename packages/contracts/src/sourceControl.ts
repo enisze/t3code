@@ -121,6 +121,18 @@ export const SourceControlProviderAuth = Schema.Struct({
 });
 export type SourceControlProviderAuth = typeof SourceControlProviderAuth.Type;
 
+/**
+ * Reference to a specific GitHub account already authenticated in the `gh`
+ * CLI (one of the accounts surfaced by `gh auth status`). Projects attach one
+ * of these so their GitHub operations run as that account without touching the
+ * machine-global active account.
+ */
+export const GitHubAccountRef = Schema.Struct({
+  host: TrimmedNonEmptyString,
+  login: TrimmedNonEmptyString,
+});
+export type GitHubAccountRef = typeof GitHubAccountRef.Type;
+
 const SourceControlDiscoverySharedFields = {
   label: TrimmedNonEmptyString,
   executable: Schema.optional(TrimmedNonEmptyString),
@@ -137,10 +149,28 @@ export const VcsDiscoveryItem = Schema.Struct({
 });
 export type VcsDiscoveryItem = typeof VcsDiscoveryItem.Type;
 
+/**
+ * An account authenticated in a source-control CLI (currently only GitHub via
+ * `gh auth status`). Surfaced so a project can be attached to a specific
+ * account. `active` marks the machine-global default account.
+ */
+export const SourceControlAccountInfo = Schema.Struct({
+  host: TrimmedNonEmptyString,
+  login: TrimmedNonEmptyString,
+  authenticated: Schema.Boolean,
+  active: Schema.Boolean,
+});
+export type SourceControlAccountInfo = typeof SourceControlAccountInfo.Type;
+
 export const SourceControlProviderDiscoveryItem = Schema.Struct({
   kind: SourceControlProviderKind,
   ...SourceControlDiscoverySharedFields,
   auth: SourceControlProviderAuth,
+  /**
+   * All accounts the provider CLI is aware of. Lets a project pick which
+   * account to act as. Absent for providers without multi-account discovery.
+   */
+  accounts: Schema.optional(Schema.Array(SourceControlAccountInfo)),
 });
 export type SourceControlProviderDiscoveryItem = typeof SourceControlProviderDiscoveryItem.Type;
 

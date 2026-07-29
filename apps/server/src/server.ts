@@ -33,6 +33,7 @@ import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
+import * as GitHubAccountResolver from "./sourceControl/GitHubAccountResolver.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
@@ -558,6 +559,12 @@ export const makeServerLayer = Layer.unwrap(
     );
 
     return serverApplicationLayer.pipe(
+      // Ambient per-project GitHub account resolver. Placed above
+      // `RuntimeServicesLive` (which provides `ProjectionSnapshotQuery`) and
+      // the global `VcsProcess.layer` so it can consume both; kept in the
+      // merged runtime context so `GitHubCli.execute` finds it via
+      // `Effect.serviceOption`.
+      Layer.provideMerge(GitHubAccountResolver.layer),
       Layer.provideMerge(RuntimeServicesLive),
       Layer.provideMerge(serverRelayBrokerTracingLayer),
       Layer.provideMerge(HttpResponseCompressionLive),

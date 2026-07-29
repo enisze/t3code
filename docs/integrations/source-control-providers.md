@@ -51,6 +51,23 @@ The **Source Control settings** page shows you exactly what's connected:
 
 Run a quick **Rescan** after setting up a new machine or changing credentials.
 
+### Use a Different GitHub Account per Project
+
+If you juggle more than one GitHub identity — a work account and a personal one, say — you can attach a specific account to each project instead of relying on the machine-wide default.
+
+**Set it up once:**
+
+1. Sign in to each account with the GitHub CLI (you can be logged into several at the same time):
+   ```bash
+   gh auth login   # repeat for each account
+   ```
+   Confirm they're all listed with `gh auth status`.
+2. In T3 Code, open a project's **GitHub account** selector and pick the account it should use. Choose **Use default account** to fall back to the machine-wide active account.
+
+Once attached, every GitHub operation T3 Code runs for that project — creating and listing pull requests, checking out a PR, viewing or creating repositories — acts as the chosen account. T3 Code never stores your token; it asks the GitHub CLI for a short-lived token for that account only when it needs one, and it never changes which account is globally active, so projects on different accounts don't interfere with each other.
+
+> **Note:** This currently scopes the `gh` CLI operations above. Plain `git` pushes/fetches over HTTPS still use whatever credentials your Git credential helper provides. Push via SSH or a matching credential helper if you need the push itself to run as a specific account.
+
 ## Getting Started
 
 ### For GitHub (Recommended for most users)
