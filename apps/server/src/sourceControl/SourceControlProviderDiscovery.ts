@@ -1,4 +1,5 @@
 import type {
+  SourceControlAccountInfo,
   SourceControlProviderAuth,
   SourceControlProviderDiscoveryItem,
   SourceControlProviderInfo,
@@ -34,6 +35,14 @@ export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly versionArgs: ReadonlyArray<string>;
   readonly authArgs: ReadonlyArray<string>;
   readonly parseAuth: (input: SourceControlAuthProbeInput) => SourceControlProviderAuth;
+  /**
+   * Parse all accounts the CLI knows about (e.g. every `gh auth status`
+   * account), so a project can be attached to a specific one. Optional — only
+   * providers with multi-account support implement it.
+   */
+  readonly parseAccounts?: (
+    input: SourceControlAuthProbeInput,
+  ) => ReadonlyArray<SourceControlAccountInfo>;
   readonly refineUnknownRemote?: (
     input: SourceControlUnknownRemoteRefinementInput,
   ) => SourceControlProviderInfo | null;
@@ -254,6 +263,9 @@ export function probeSourceControlProvider(input: {
               ({
                 ...item,
                 auth: spec.parseAuth(result),
+                ...(spec.parseAccounts !== undefined
+                  ? { accounts: spec.parseAccounts(result) }
+                  : {}),
               }) satisfies SourceControlProviderDiscoveryItem,
           ),
           Effect.catch((cause) =>
