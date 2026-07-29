@@ -31,6 +31,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  DEFAULT_DIFF_THEME,
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
   DEFAULT_UNIFIED_SETTINGS,
   type EnvironmentIdentificationMode,
@@ -63,6 +64,7 @@ import {
 } from "../SidebarStageBackdrop";
 import { isElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
+import { DIFF_THEME_OPTIONS } from "../../lib/diffRendering";
 import { useTheme } from "../../hooks/useTheme";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
@@ -588,6 +590,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
         ? ["Diff whitespace changes"]
         : []),
+      ...(settings.diffTheme !== DEFAULT_UNIFIED_SETTINGS.diffTheme ? ["Diff theme"] : []),
       ...(settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar
         ? ["Auto-open task panel"]
         : []),
@@ -627,6 +630,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
       settings.diffIgnoreWhitespace,
+      settings.diffTheme,
       settings.environmentIdentificationMode,
       settings.glassOpacity,
       settings.enableAssistantStreaming,
@@ -654,6 +658,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
+      diffTheme: DEFAULT_UNIFIED_SETTINGS.diffTheme,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
@@ -988,6 +993,44 @@ export function AppearanceSettingsPanel() {
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 {THEME_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Diff theme"
+          description="Syntax colors for code and diffs. Applies in dark mode; light mode uses the default."
+          resetAction={
+            settings.diffTheme !== DEFAULT_DIFF_THEME ? (
+              <SettingResetButton
+                label="diff theme"
+                onClick={() => updateSettings({ diffTheme: DEFAULT_DIFF_THEME })}
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.diffTheme}
+              onValueChange={(value) => {
+                const match = DIFF_THEME_OPTIONS.find((option) => option.value === value);
+                if (match) {
+                  updateSettings({ diffTheme: match.value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-52" aria-label="Diff theme">
+                <SelectValue>
+                  {DIFF_THEME_OPTIONS.find((option) => option.value === settings.diffTheme)
+                    ?.label ?? "Pierre Dark"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {DIFF_THEME_OPTIONS.map((option) => (
                   <SelectItem hideIndicator key={option.value} value={option.value}>
                     {option.label}
                   </SelectItem>

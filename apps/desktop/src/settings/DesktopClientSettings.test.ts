@@ -18,6 +18,7 @@ const clientSettings: ClientSettings = {
   confirmThreadDelete: false,
   dismissedProviderUpdateNotificationKeys: [],
   diffIgnoreWhitespace: true,
+  diffTheme: "pierre-dark",
   environmentIdentificationMode: "artwork",
   favorites: [],
   glassOpacity: 80,
