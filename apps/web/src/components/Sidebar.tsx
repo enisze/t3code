@@ -22,6 +22,7 @@ import {
   ThreadWorktreeIndicator,
 } from "./ThreadStatusIndicators";
 import { ProjectDefaultAgentField } from "./ProjectDefaultAgentField";
+import { ProjectGitHubAccountField } from "./ProjectGitHubAccountField";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { useAtomValue } from "@effect/atom-react";
 import { autoAnimate } from "@formkit/auto-animate";
@@ -44,6 +45,7 @@ import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import {
   type ContextMenuItem,
+  type GitHubAccountRef,
   type ModelSelection,
   ProjectId,
   type ScopedThreadRef,
@@ -1655,7 +1657,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
         const clicked = await api.contextMenu.show(
           [
-            buildTargetedItem("rename", "Rename"),
+            buildTargetedItem("rename", "Project settings…"),
             buildTargetedItem("grouping", "Group into..."),
             buildTargetedItem("copy-path", "Copy Path"),
             buildTargetedItem("delete", "Remove", {
@@ -2090,6 +2092,26 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [updateProject],
   );
 
+  const updateProjectGitHubAccount = useCallback(
+    async (member: SidebarProjectGroupMember, account: GitHubAccountRef | null) => {
+      const result = await updateProject({
+        environmentId: member.environmentId,
+        input: { projectId: member.id, gitHubAccount: account },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to update project GitHub account",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [updateProject],
+  );
+
   const closeProjectGroupingDialog = useCallback(() => {
     setProjectGroupingTarget(null);
     setProjectGroupingSelection("inherit");
@@ -2389,11 +2411,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       >
         <DialogPopup className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Rename project</DialogTitle>
+            <DialogTitle>Project settings</DialogTitle>
             <DialogDescription>
               {projectRenameTarget
-                ? `Update the title for ${projectRenameTarget.workspaceRoot}.`
-                : "Update the project title."}
+                ? `Rename ${projectRenameTarget.workspaceRoot} and choose which account new threads use.`
+                : "Rename the project and choose which account new threads use."}
             </DialogDescription>
           </DialogHeader>
           <DialogPanel className="space-y-4">
@@ -2423,6 +2445,16 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                 projectId={projectRenameTarget.id}
                 onChange={(selection) => {
                   void updateProjectDefaultModelSelection(projectRenameTarget, selection);
+                }}
+              />
+            ) : null}
+            {projectRenameTarget ? (
+              <ProjectGitHubAccountField
+                idPrefix={`project-agent-${projectRenameTarget.physicalProjectKey}`}
+                environmentId={projectRenameTarget.environmentId}
+                projectId={projectRenameTarget.id}
+                onChange={(account) => {
+                  void updateProjectGitHubAccount(projectRenameTarget, account);
                 }}
               />
             ) : null}

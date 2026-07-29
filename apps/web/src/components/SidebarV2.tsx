@@ -1019,7 +1019,7 @@ function latestTurnDiff(
 const GITHUB_DEFAULT_ACCOUNT_VALUE = "__default__";
 
 function githubAccountValue(account: { readonly host: string; readonly login: string }): string {
-  return `${account.host} ${account.login}`;
+  return `${account.host}\u0000${account.login}`;
 }
 
 // github.com is the overwhelmingly common host, so hide it to keep the label

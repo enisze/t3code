@@ -1759,8 +1759,10 @@ function MultiAccountGuide() {
           </li>
           <li>
             <span className="font-medium text-foreground">Attach an account to a project</span>: in
-            the sidebar, right-click a project → <span className="text-foreground">Project settings</span>{" "}
-            → <span className="text-foreground">Default agent</span>. New threads in that project
+            the sidebar, right-click a project (or open its{" "}
+            <span className="text-foreground">⋯</span> menu) →{" "}
+            <span className="text-foreground">Project settings</span> →{" "}
+            <span className="text-foreground">Default agent</span>. New threads in that project
             start on the account you pick (still overridable per thread).
           </li>
         </ol>
