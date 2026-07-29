@@ -26,6 +26,7 @@ import { openDiffFilePrimaryAction } from "../diffFileActions";
 import { useCheckpointDiff } from "~/lib/checkpointDiffState";
 import { cn } from "~/lib/utils";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
+import { selectViewedFileKeys, useDiffViewedStore } from "../diffViewedStore";
 import { useTheme } from "../hooks/useTheme";
 import {
   buildFileDiffRenderKey,
@@ -47,6 +48,7 @@ import { AnnotatableCodeView, type AnnotatableCodeViewHandle } from "./diffs/Ann
 import { Button } from "./ui/button";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 import { Switch } from "./ui/switch";
+import { Checkbox } from "./ui/checkbox";
 import {
   Combobox,
   ComboboxEmpty,
@@ -302,6 +304,10 @@ export default function DiffPanel({
     collapsedDiffFiles.scopeKey === collapseScopeKey
       ? collapsedDiffFiles.fileKeys
       : EMPTY_COLLAPSED_DIFF_FILE_KEYS;
+  const viewedFileKeys = useDiffViewedStore((state) =>
+    selectViewedFileKeys(state.viewedByScope, collapseScopeKey),
+  );
+  const viewedFileKeySet = useMemo(() => new Set(viewedFileKeys), [viewedFileKeys]);
   const reviewSectionTitle = selectedTurn
     ? `Turn ${selectedCheckpointTurnCount ?? "?"}`
     : selectedGitScope === "unstaged"
@@ -503,6 +509,25 @@ export default function DiffPanel({
       });
     },
     [collapseScopeKey],
+  );
+
+  const toggleFileViewed = useCallback(
+    (fileKey: string) => {
+      if (!collapseScopeKey) return;
+      const nowViewed = !viewedFileKeySet.has(fileKey);
+      useDiffViewedStore.getState().toggleFileViewed(collapseScopeKey, fileKey);
+      // Collapse a file when it is marked viewed, and expand it when unmarked.
+      setCollapsedDiffFiles((current) => {
+        const next = new Set(current.scopeKey === collapseScopeKey ? current.fileKeys : []);
+        if (nowViewed) {
+          next.add(fileKey);
+        } else {
+          next.delete(fileKey);
+        }
+        return { scopeKey: collapseScopeKey, fileKeys: next };
+      });
+    },
+    [collapseScopeKey, viewedFileKeySet],
   );
 
   const toggleDiffFileCollapse = useCallback(() => {
@@ -882,37 +907,63 @@ export default function DiffPanel({
                   sectionId={reviewSectionId}
                   sectionTitle={reviewSectionTitle}
                   composerDraftTarget={composerDraftTarget}
+                  viewedFileKeys={viewedFileKeySet}
                   renderHeaderPrefix={(fileDiff, fileKey, collapsed) => {
                     const filePath = resolveFileDiffPath(fileDiff);
+                    const viewed = viewedFileKeySet.has(fileKey);
                     return (
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <button
-                              type="button"
-                              className={cn(
-                                "inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 transition-colors hover:bg-foreground/10 focus-visible:outline-hidden",
-                                getDiffCollapseIconClassName(fileDiff),
-                              )}
-                              aria-label={collapsed ? `Expand ${filePath}` : `Collapse ${filePath}`}
-                              aria-expanded={!collapsed}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                toggleDiffFileCollapsed(fileKey);
-                              }}
-                            />
-                          }
-                        >
-                          {collapsed ? (
-                            <ChevronRightIcon className="size-4" />
-                          ) : (
-                            <ChevronDownIcon className="size-4" />
-                          )}
-                        </TooltipTrigger>
-                        <TooltipPopup side="top">
-                          {collapsed ? "Expand diff" : "Collapse diff"}
-                        </TooltipPopup>
-                      </Tooltip>
+                      <>
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <button
+                                type="button"
+                                className={cn(
+                                  "inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 transition-colors hover:bg-foreground/10 focus-visible:outline-hidden",
+                                  getDiffCollapseIconClassName(fileDiff),
+                                )}
+                                aria-label={
+                                  collapsed ? `Expand ${filePath}` : `Collapse ${filePath}`
+                                }
+                                aria-expanded={!collapsed}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  toggleDiffFileCollapsed(fileKey);
+                                }}
+                              />
+                            }
+                          >
+                            {collapsed ? (
+                              <ChevronRightIcon className="size-4" />
+                            ) : (
+                              <ChevronDownIcon className="size-4" />
+                            )}
+                          </TooltipTrigger>
+                          <TooltipPopup side="top">
+                            {collapsed ? "Expand diff" : "Collapse diff"}
+                          </TooltipPopup>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <Checkbox
+                                checked={viewed}
+                                className="shrink-0"
+                                aria-label={
+                                  viewed
+                                    ? `Mark ${filePath} as not viewed`
+                                    : `Mark ${filePath} as viewed`
+                                }
+                                onClick={(event) => event.stopPropagation()}
+                                onCheckedChange={() => toggleFileViewed(fileKey)}
+                              />
+                            }
+                          />
+                          <TooltipPopup side="top">
+                            {viewed ? "Mark as not viewed" : "Mark as viewed"}
+                          </TooltipPopup>
+                        </Tooltip>
+                      </>
                     );
                   }}
                   options={{

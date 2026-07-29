@@ -83,12 +83,15 @@ interface AnnotatableCodeViewProps {
   options: NonNullable<CodeViewProps<DiffCommentAnnotationGroup>["options"]>;
   viewerRef?: Ref<AnnotatableCodeViewHandle>;
   className?: string;
+  viewedFileKeys?: ReadonlySet<string>;
   renderHeaderPrefix: (
     fileDiff: FileDiffMetadata,
     fileKey: string,
     collapsed: boolean,
   ) => ReactNode;
 }
+
+const EMPTY_VIEWED_FILE_KEYS: ReadonlySet<string> = new Set();
 
 interface DiffSelectionContext {
   item: CodeViewItem<DiffCommentAnnotationGroup>;
@@ -102,6 +105,7 @@ export function AnnotatableCodeView({
   options,
   viewerRef,
   className,
+  viewedFileKeys = EMPTY_VIEWED_FILE_KEYS,
   renderHeaderPrefix,
 }: AnnotatableCodeViewProps) {
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
@@ -142,6 +146,7 @@ export function AnnotatableCodeView({
           }, []);
         const annotations =
           draft?.fileKey === fileKey ? [...persisted, draft.annotation] : persisted;
+        const viewed = viewedFileKeys.has(fileKey);
         return {
           id: fileKey,
           type: "diff",
@@ -149,7 +154,7 @@ export function AnnotatableCodeView({
           annotations,
           collapsed,
           version: fnv1a32(
-            `${collapsed ? "1" : "0"}:${annotations
+            `${collapsed ? "1" : "0"}:${viewed ? "1" : "0"}:${annotations
               .flatMap((annotation) =>
                 annotation.metadata.entries.map(
                   (entry) => `${entry.id}:${entry.rangeLabel}:${entry.text}`,
@@ -159,7 +164,7 @@ export function AnnotatableCodeView({
           ),
         };
       }),
-    [draft, files, reviewComments, sectionId],
+    [draft, files, reviewComments, sectionId, viewedFileKeys],
   );
 
   const removeEntry = useCallback(
