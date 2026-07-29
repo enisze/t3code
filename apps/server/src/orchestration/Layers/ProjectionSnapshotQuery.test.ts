@@ -266,6 +266,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
+          gitHubAccount: null,
           scripts: [
             {
               id: "script-1",
@@ -381,6 +382,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
+          gitHubAccount: null,
           scripts: [
             {
               id: "script-1",

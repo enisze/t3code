@@ -82,6 +82,15 @@ function parseGitHubAuth(input: SourceControlAuthProbeInput) {
   });
 }
 
+function parseGitHubAccounts(input: SourceControlAuthProbeInput) {
+  return parseGitHubAuthStatus(input.stdout).accounts.map((account) => ({
+    host: account.host,
+    login: account.account,
+    authenticated: account.authenticated,
+    active: account.active,
+  }));
+}
+
 export const discovery = {
   type: "cli",
   kind: "github",
@@ -90,6 +99,7 @@ export const discovery = {
   versionArgs: ["--version"],
   authArgs: ["auth", "status", "--json", "hosts"],
   parseAuth: parseGitHubAuth,
+  parseAccounts: parseGitHubAccounts,
   installHint:
     "Install the GitHub command-line tool (`gh`) via https://cli.github.com/ or your package manager (for example `brew install gh`).",
 } satisfies SourceControlCliDiscoverySpec;
