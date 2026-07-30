@@ -6,9 +6,11 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { MessageSquarePlusIcon } from "lucide-react";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
+import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, {
   type NewProjectScriptInput,
@@ -35,6 +37,9 @@ interface ChatHeaderProps {
   rightPanelOpen: boolean;
   gitCwd: string | null;
   onNewThreadInProject: () => void;
+  // Only provided when the active thread runs in a worktree — starts a fresh
+  // chat pointed at that same worktree instead of provisioning a new one.
+  onNewChatInWorktree?: () => void;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateProjectScript: (
@@ -71,6 +76,7 @@ export const ChatHeader = memo(function ChatHeader({
   rightPanelOpen,
   gitCwd,
   onNewThreadInProject,
+  onNewChatInWorktree,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
@@ -140,6 +146,23 @@ export const ChatHeader = memo(function ChatHeader({
           rightPanelOpen ? "pr-0" : "pr-16",
         )}
       >
+        {onNewChatInWorktree && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  aria-label="New chat in this worktree"
+                  size="icon-xs"
+                  variant="outline"
+                  onClick={onNewChatInWorktree}
+                />
+              }
+            >
+              <MessageSquarePlusIcon aria-hidden="true" className="size-4" />
+            </TooltipTrigger>
+            <TooltipPopup side="top">New chat in this worktree</TooltipPopup>
+          </Tooltip>
+        )}
         {activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}
