@@ -1743,6 +1743,14 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "git",
             },
           ),
+        [WS_METHODS.gitMergePullRequest]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitMergePullRequest,
+            gitWorkflow
+              .mergePullRequest(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "git" },
+          ),
         [WS_METHODS.gitPreparePullRequestThread]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitPreparePullRequestThread,

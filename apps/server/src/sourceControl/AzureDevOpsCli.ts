@@ -246,6 +246,11 @@ export class AzureDevOpsCli extends Context.Service<
       readonly reference: string;
       readonly remoteName?: string;
     }) => Effect.Effect<void, AzureDevOpsCliError>;
+
+    readonly mergePullRequest: (input: {
+      readonly cwd: string;
+      readonly reference: string;
+    }) => Effect.Effect<void, AzureDevOpsCliError>;
   }
 >()("t3/sourceControl/AzureDevOpsCli") {}
 
@@ -528,6 +533,24 @@ export const make = Effect.gen(function* () {
           normalizeChangeRequestId(input.reference),
           "--remote-name",
           input.remoteName ?? "origin",
+        ],
+      }).pipe(Effect.asVoid),
+    mergePullRequest: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: [
+          "repos",
+          "pr",
+          "update",
+          "--only-show-errors",
+          "--detect",
+          "true",
+          "--id",
+          normalizeChangeRequestId(input.reference),
+          "--status",
+          "completed",
+          "--delete-source-branch",
+          "false",
         ],
       }).pipe(Effect.asVoid),
   });

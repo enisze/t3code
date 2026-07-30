@@ -19,5 +19,11 @@ export function createGitEnvironmentAtoms<R, E>(
       scheduler: vcsCommandScheduler,
       concurrency: vcsCommandConcurrency,
     }),
+    mergePullRequest: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:git:merge-pull-request",
+      tag: WS_METHODS.gitMergePullRequest,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
   };
 }

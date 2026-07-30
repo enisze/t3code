@@ -294,6 +294,11 @@ export class GitLabCli extends Context.Service<
       readonly reference: string;
       readonly force?: boolean;
     }) => Effect.Effect<void, GitLabCliError>;
+
+    readonly mergeMergeRequest: (input: {
+      readonly cwd: string;
+      readonly reference: string;
+    }) => Effect.Effect<void, GitLabCliError>;
   }
 >()("t3/sourceControl/GitLabCli") {}
 
@@ -629,6 +634,12 @@ export const make = Effect.gen(function* () {
         cwd: input.cwd,
         reference: input.reference,
         args: ["mr", "checkout", input.reference],
+      }).pipe(Effect.asVoid),
+    mergeMergeRequest: (input) =>
+      executeMergeRequest({
+        cwd: input.cwd,
+        reference: input.reference,
+        args: ["mr", "merge", input.reference, "--yes"],
       }).pipe(Effect.asVoid),
   });
 });

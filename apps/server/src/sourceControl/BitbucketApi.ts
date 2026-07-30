@@ -45,6 +45,7 @@ const BitbucketApiOperation = Schema.Literals([
   "listPullRequests",
   "createRepository",
   "createPullRequest",
+  "mergePullRequest",
   "probeAuth",
   "checkoutPullRequest",
 ]);
@@ -283,6 +284,11 @@ export class BitbucketApi extends Context.Service<
       readonly cwd: string;
       readonly context?: SourceControlProvider.SourceControlProviderContext;
     }) => Effect.Effect<string | null, BitbucketApiError>;
+    readonly mergePullRequest: (input: {
+      readonly cwd: string;
+      readonly context?: SourceControlProvider.SourceControlProviderContext;
+      readonly reference: string;
+    }) => Effect.Effect<void, BitbucketApiError>;
     readonly checkoutPullRequest: (input: {
       readonly cwd: string;
       readonly context?: SourceControlProvider.SourceControlProviderContext;
@@ -816,6 +822,26 @@ export const make = Effect.gen(function* () {
           ),
         ),
         Effect.map(defaultChangeRequestTargetBranch),
+      ),
+    mergePullRequest: (input) =>
+      resolveRepository(input).pipe(
+        Effect.flatMap((repository) =>
+          executeJson(
+            "mergePullRequest",
+            HttpClientRequest.post(
+              apiUrl(
+                `/repositories/${encodeURIComponent(repository.workspace)}/${encodeURIComponent(repository.repoSlug)}/pullrequests/${encodeURIComponent(normalizeChangeRequestId(input.reference))}/merge`,
+              ),
+            ).pipe(
+              HttpClientRequest.bodyJsonUnsafe({
+                merge_strategy: "merge_commit",
+                close_source_branch: false,
+              }),
+            ),
+            BitbucketPullRequestSchema,
+          ),
+        ),
+        Effect.asVoid,
       ),
     // Bitbucket Cloud pull requests are Git-backed and Bitbucket does not provide
     // an official checkout CLI. This provider-local path uses GitVcsDriver as a
