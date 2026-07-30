@@ -27,6 +27,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { expect } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { GitHubAccountResolver } from "../sourceControl/GitHubAccountResolver.ts";
 import * as TerminalManager from "./Manager.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
 
@@ -1257,6 +1258,50 @@ it.layer(
             .some((input) => input.shell !== "/definitely/missing-shell"),
         ).toBe(true);
       }
+    }),
+  );
+
+  it.effect("pins the shell to the GitHub account the project selected", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { PATH: "/usr/bin", SHELL: "/bin/bash" },
+      });
+
+      // The resolver is ambient in the server runtime, so it is read from the
+      // fiber that opens the terminal rather than captured at manager creation.
+      yield* manager.open(openInput()).pipe(
+        Effect.provideService(
+          GitHubAccountResolver,
+          GitHubAccountResolver.of({
+            resolveForCwd: () =>
+              Effect.succeed({
+                account: { host: "github.com", login: "octo" },
+                token: "gho_project",
+              }),
+          }),
+        ),
+      );
+
+      const env = ptyAdapter.spawnInputs[0]?.env;
+      assert.equal(env?.GH_HOST, "github.com");
+      assert.equal(env?.GH_TOKEN, "gho_project");
+      assert.equal(env?.GIT_CONFIG_COUNT, "2");
+      assert.equal(env?.GIT_CONFIG_KEY_1, "credential.https://github.com.helper");
+      assert.equal(env?.GIT_CONFIG_VALUE_1, "!gh auth git-credential");
+    }),
+  );
+
+  it.effect("leaves the shell environment alone without a project account", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { PATH: "/usr/bin", SHELL: "/bin/bash" },
+      });
+
+      yield* manager.open(openInput());
+
+      const env = ptyAdapter.spawnInputs[0]?.env;
+      assert.equal(env?.GH_TOKEN, undefined);
+      assert.equal(env?.GIT_CONFIG_COUNT, undefined);
     }),
   );
 

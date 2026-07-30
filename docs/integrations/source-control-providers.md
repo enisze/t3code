@@ -64,9 +64,15 @@ If you juggle more than one GitHub identity — a work account and a personal on
    Confirm they're all listed with `gh auth status`.
 2. In T3 Code, open a project's **GitHub account** selector and pick the account it should use. Choose **Use default account** to fall back to the machine-wide active account.
 
-Once attached, every GitHub operation T3 Code runs for that project — creating and listing pull requests, checking out a PR, viewing or creating repositories — acts as the chosen account. T3 Code never stores your token; it asks the GitHub CLI for a short-lived token for that account only when it needs one, and it never changes which account is globally active, so projects on different accounts don't interfere with each other.
+Once attached, every GitHub operation T3 Code runs for that project acts as the chosen account:
 
-> **Note:** This currently scopes the `gh` CLI operations above. Plain `git` pushes/fetches over HTTPS still use whatever credentials your Git credential helper provides. Push via SSH or a matching credential helper if you need the push itself to run as a specific account.
+- **`gh` operations** — creating and listing pull requests, checking out a PR, viewing or creating repositories.
+- **`git` over HTTPS** — push, pull, and fetch, including the push half of **Commit, Push & PR**. T3 Code points Git's credential lookup for that host at the chosen account instead of letting your OS keychain answer with whichever account it cached first. Only that host is redirected, so credentials for other hosts keep working.
+- **The integrated terminal** — each terminal starts with `gh` and `git` already pinned to the project's account, so `gh repo view` and `git push` see the same repositories the app does. You don't need `gh auth switch`; switching globally won't help either, because the pin is per project.
+
+T3 Code never stores your token; it asks the GitHub CLI for a short-lived token for that account only when it needs one, and it never changes which account is globally active, so projects on different accounts don't interfere with each other.
+
+> **Notes:** A terminal picks up the account when it starts — restart an open terminal after changing the selection. Account pinning only applies to HTTPS remotes; SSH remotes (`git@github.com:...`) authenticate with your SSH keys, which T3 Code does not manage.
 
 ## Getting Started
 

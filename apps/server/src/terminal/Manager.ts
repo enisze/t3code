@@ -1854,14 +1854,17 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
    * selected for the project owning `cwd`. Returns `{}` when no account is
    * attached or the resolver isn't provided, leaving ambient auth untouched.
    */
-  const resolveTerminalAccountEnv = (cwd: string): Effect.Effect<NodeJS.ProcessEnv> =>
+  const resolveTerminalAccountEnv = (
+    cwd: string,
+    spawnEnv: NodeJS.ProcessEnv,
+  ): Effect.Effect<NodeJS.ProcessEnv> =>
     Effect.gen(function* () {
       const resolverOption = yield* Effect.serviceOption(GitHubAccountResolver);
       if (Option.isNone(resolverOption)) {
         return {};
       }
       const resolved = yield* resolverOption.value.resolveForCwd(cwd);
-      return resolved === null ? {} : gitHubAccountAuthEnv(resolved);
+      return resolved === null ? {} : gitHubAccountAuthEnv(resolved, spawnEnv);
     });
 
   const startSession = Effect.fn("terminal.startSession")(function* (
@@ -1907,7 +1910,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             // Make `gh` and `git` in this terminal act as the project's selected
             // GitHub account (if any), so pushes/PRs use the right identity
             // without the user running `gh auth switch`.
-            const accountEnv = yield* resolveTerminalAccountEnv(session.cwd);
+            const accountEnv = yield* resolveTerminalAccountEnv(session.cwd, terminalEnv);
             const spawnResult = yield* trySpawn(
               shellCandidates,
               { ...terminalEnv, ...accountEnv },

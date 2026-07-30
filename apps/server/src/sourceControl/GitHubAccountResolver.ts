@@ -78,17 +78,30 @@ export function gitHubAccountGhEnv(resolved: ResolvedGitHubAccount): NodeJS.Proc
  * resets any inherited helper (OS keychain, global config) so the selected
  * account wins; `!gh auth git-credential` then returns the `GH_TOKEN` above.
  * This is the same mechanism CI uses (`GH_TOKEN` + gh credential helper).
+ *
+ * Pairs are appended after any `GIT_CONFIG_COUNT` already present in `baseEnv`,
+ * so a runtime git config the process inherited keeps working instead of being
+ * silently overwritten by our pairs claiming indices 0 and 1.
  */
-export function gitHubAccountAuthEnv(resolved: ResolvedGitHubAccount): NodeJS.ProcessEnv {
-  const baseUrl = `https://${resolved.account.host}`;
+export function gitHubAccountAuthEnv(
+  resolved: ResolvedGitHubAccount,
+  baseEnv: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  const helperKey = `credential.https://${resolved.account.host}.helper`;
+  const offset = parseGitConfigCount(baseEnv.GIT_CONFIG_COUNT);
   return {
     ...gitHubAccountGhEnv(resolved),
-    GIT_CONFIG_COUNT: "2",
-    GIT_CONFIG_KEY_0: `credential.${baseUrl}.helper`,
-    GIT_CONFIG_VALUE_0: "",
-    GIT_CONFIG_KEY_1: `credential.${baseUrl}.helper`,
-    GIT_CONFIG_VALUE_1: "!gh auth git-credential",
+    GIT_CONFIG_COUNT: String(offset + 2),
+    [`GIT_CONFIG_KEY_${offset}`]: helperKey,
+    [`GIT_CONFIG_VALUE_${offset}`]: "",
+    [`GIT_CONFIG_KEY_${offset + 1}`]: helperKey,
+    [`GIT_CONFIG_VALUE_${offset + 1}`]: "!gh auth git-credential",
   };
+}
+
+function parseGitConfigCount(value: string | undefined): number {
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0;
 }
 
 /**
@@ -175,11 +188,21 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.option);
 
+      // Falling back to the ambient account is the difference between "acts as
+      // the wrong user" and "fails loudly", so leave a breadcrumb either way.
       if (result._tag === "None") {
+        yield* Effect.logWarning(
+          "Could not mint a token for the project's GitHub account; falling back to the active gh account",
+          { host: account.host, login: account.login, cwd },
+        );
         return null;
       }
       const token = result.value.stdout.trim();
       if (token.length === 0) {
+        yield* Effect.logWarning(
+          "gh returned an empty token for the project's GitHub account; falling back to the active gh account",
+          { host: account.host, login: account.login, cwd },
+        );
         return null;
       }
 
