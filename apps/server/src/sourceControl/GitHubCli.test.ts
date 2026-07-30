@@ -6,6 +6,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { GitHubAccountResolver } from "./GitHubAccountResolver.ts";
 import * as GitHubCli from "./GitHubCli.ts";
 
 const processOutput = (stdout: string): VcsProcess.VcsProcessOutput => ({
@@ -371,6 +372,41 @@ describe("GitHubCli.layer", () => {
       assert.strictEqual(error.cwd, "/repo");
       assert.strictEqual(error.cause, cause);
       assert.equal(error.message.includes(cause.detail), false);
+    }).pipe(Effect.provide(layer)),
+  );
+});
+
+describe("GitHubCli account scoping", () => {
+  const resolverLayer = Layer.succeed(
+    GitHubAccountResolver,
+    GitHubAccountResolver.of({
+      resolveForCwd: () =>
+        Effect.succeed({ account: { host: "github.com", login: "octo" }, token: "gho_project" }),
+    }),
+  );
+
+  it.effect("gives gh the credential config its child git processes need", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValue(Effect.succeed(processOutput("")));
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.execute({ cwd: "/repo", args: ["pr", "create"] });
+
+      const env = mockRun.mock.calls[0]?.[0]?.env;
+      assert.equal(env?.GH_TOKEN, "gho_project");
+      // Without these, `gh pr create` pushing a new branch falls back to the
+      // machine credential helper and acts as the wrong account.
+      assert.equal(env?.GIT_CONFIG_KEY_1, "credential.https://github.com.helper");
+      assert.equal(env?.GIT_CONFIG_VALUE_1, "!gh auth git-credential");
+    }).pipe(Effect.provide(layer.pipe(Layer.provideMerge(resolverLayer)))),
+  );
+
+  it.effect("leaves the environment alone when no account is attached", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValue(Effect.succeed(processOutput("")));
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.execute({ cwd: "/repo", args: ["pr", "list"] });
+
+      assert.equal(mockRun.mock.calls[0]?.[0]?.env, undefined);
     }).pipe(Effect.provide(layer)),
   );
 });

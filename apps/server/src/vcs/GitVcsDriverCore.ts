@@ -920,7 +920,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         return {};
       }
       const resolved = yield* resolverOption.value.resolveForCwd(cwd);
-      return resolved === null ? {} : gitHubAccountAuthEnv(resolved);
+      return resolved === null ? {} : gitHubAccountAuthEnv(resolved, process.env);
     });
 
   const runGitWithEnv = (

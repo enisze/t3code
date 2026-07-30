@@ -13,7 +13,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import { GitHubAccountResolver, gitHubAccountGhEnv } from "./GitHubAccountResolver.ts";
+import { GitHubAccountResolver, gitHubAccountAuthEnv } from "./GitHubAccountResolver.ts";
 import {
   decodeGitHubPullRequestJson,
   decodeGitHubPullRequestListJson,
@@ -327,7 +327,13 @@ export const make = Effect.gen(function* () {
           args: input.args,
           cwd: input.cwd,
           timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-          ...(resolved !== null ? { env: gitHubAccountGhEnv(resolved) } : {}),
+          // The full auth env, not the `gh`-only one: `gh` shells out to `git`
+          // for the network half of `pr create` (pushing a branch with no
+          // upstream) and `pr checkout`, and those children would otherwise fall
+          // back to the machine credential helper.
+          ...(resolved !== null
+            ? { env: gitHubAccountAuthEnv(resolved, globalThis.process.env) }
+            : {}),
         }),
       ),
       Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)),

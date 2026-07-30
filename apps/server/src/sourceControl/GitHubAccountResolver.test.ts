@@ -16,6 +16,7 @@ import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSna
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import {
   GitHubAccountResolver,
+  gitHubAccountAuthEnv,
   gitHubAccountGhEnv,
   layer as resolverLayer,
 } from "./GitHubAccountResolver.ts";
@@ -32,6 +33,7 @@ const projectShell = (input: {
   workspaceRoot: input.workspaceRoot,
   defaultModelSelection: null,
   gitHubAccount: input.gitHubAccount,
+  worktreeBranchPrefix: null,
   scripts: [],
   createdAt: NOW,
   updatedAt: NOW,
@@ -105,6 +107,63 @@ describe("gitHubAccountGhEnv", () => {
       gitHubAccountGhEnv({ account: { host: "ghe.corp", login: "octo" }, token: "t0ken" }),
       { GH_HOST: "ghe.corp", GH_ENTERPRISE_TOKEN: "t0ken" },
     );
+  });
+});
+
+describe("gitHubAccountAuthEnv", () => {
+  it("pins git credentials for the account host to gh's helper", () => {
+    assert.deepEqual(
+      gitHubAccountAuthEnv({ account: { host: "github.com", login: "octo" }, token: "t0ken" }, {}),
+      {
+        GH_HOST: "github.com",
+        GH_TOKEN: "t0ken",
+        GIT_CONFIG_COUNT: "2",
+        // An empty helper resets the list, so the machine-global helper (usually
+        // an OS keychain) cannot answer for this host first.
+        GIT_CONFIG_KEY_0: "credential.https://github.com.helper",
+        GIT_CONFIG_VALUE_0: "",
+        GIT_CONFIG_KEY_1: "credential.https://github.com.helper",
+        GIT_CONFIG_VALUE_1: "!gh auth git-credential",
+      },
+    );
+  });
+
+  it("scopes the helper to enterprise hosts", () => {
+    assert.deepEqual(
+      gitHubAccountAuthEnv({ account: { host: "ghe.corp", login: "octo" }, token: "t0ken" }, {}),
+      {
+        GH_HOST: "ghe.corp",
+        GH_ENTERPRISE_TOKEN: "t0ken",
+        GIT_CONFIG_COUNT: "2",
+        GIT_CONFIG_KEY_0: "credential.https://ghe.corp.helper",
+        GIT_CONFIG_VALUE_0: "",
+        GIT_CONFIG_KEY_1: "credential.https://ghe.corp.helper",
+        GIT_CONFIG_VALUE_1: "!gh auth git-credential",
+      },
+    );
+  });
+
+  it("appends after runtime config pairs already in the environment", () => {
+    const env = gitHubAccountAuthEnv(
+      { account: { host: "github.com", login: "octo" }, token: "t0ken" },
+      { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.pager", GIT_CONFIG_VALUE_0: "cat" },
+    );
+    assert.equal(env.GIT_CONFIG_COUNT, "3");
+    // Index 0 stays with the inherited pair instead of being overwritten.
+    assert.equal(env.GIT_CONFIG_KEY_0, undefined);
+    assert.equal(env.GIT_CONFIG_KEY_1, "credential.https://github.com.helper");
+    assert.equal(env.GIT_CONFIG_VALUE_1, "");
+    assert.equal(env.GIT_CONFIG_KEY_2, "credential.https://github.com.helper");
+    assert.equal(env.GIT_CONFIG_VALUE_2, "!gh auth git-credential");
+  });
+
+  it("ignores a malformed inherited GIT_CONFIG_COUNT", () => {
+    const env = gitHubAccountAuthEnv(
+      { account: { host: "github.com", login: "octo" }, token: "t0ken" },
+      { GIT_CONFIG_COUNT: "not-a-number" },
+    );
+    assert.equal(env.GIT_CONFIG_COUNT, "2");
+    assert.equal(env.GIT_CONFIG_KEY_0, "credential.https://github.com.helper");
   });
 });
 
