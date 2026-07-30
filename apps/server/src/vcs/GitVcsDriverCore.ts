@@ -923,6 +923,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return resolved === null ? {} : gitHubAccountAuthEnv(resolved, process.env);
     });
 
+  /**
+   * Env for a git command that talks to a remote (fetch/pull/push). Combines
+   * the non-interactive base — so the server never blocks on a credential
+   * prompt — with the project's selected-account auth env (token + gh
+   * credential helper + SSH→HTTPS rewrite). When no account is attached, or the
+   * resolver isn't provided, this is just the non-interactive base and git uses
+   * ambient auth.
+   *
+   * Every remote-touching git command routes through this so account selection
+   * can't be silently skipped by a call site that forgot to opt in — the class
+   * of bug that made "set an account for a project" only half-work.
+   */
+  const resolveNetworkGitEnv = (cwd: string): Effect.Effect<NodeJS.ProcessEnv> =>
+    resolveAccountAuthEnv(cwd).pipe(
+      Effect.map((authEnv) => ({ ...STATUS_UPSTREAM_REFRESH_ENV, ...authEnv })),
+    );
+
   const runGitWithEnv = (
     operation: string,
     cwd: string,
@@ -1020,16 +1037,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   ): Effect.Effect<void, GitCommandError> => {
     const fetchCwd =
       path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
-    return executeGit(
-      "GitVcsDriver.fetchRemoteForStatus",
-      fetchCwd,
-      ["--git-dir", gitCommonDir, "fetch", "--quiet", "--no-tags", remoteName],
-      {
-        env: STATUS_UPSTREAM_REFRESH_ENV,
-        fallbackErrorDetail: "Background Git fetch exited with a non-zero status.",
-        timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
-      },
-    ).pipe(Effect.asVoid);
+    return resolveNetworkGitEnv(fetchCwd).pipe(
+      Effect.flatMap((env) =>
+        executeGit(
+          "GitVcsDriver.fetchRemoteForStatus",
+          fetchCwd,
+          ["--git-dir", gitCommonDir, "fetch", "--quiet", "--no-tags", remoteName],
+          {
+            env,
+            fallbackErrorDetail: "Background Git fetch exited with a non-zero status.",
+            timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
+          },
+        ),
+      ),
+      Effect.asVoid,
+    );
   };
 
   const resolveRepositoryPathsUncached = Effect.fn("resolveRepositoryPathsUncached")(function* (
@@ -1856,8 +1878,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
     }
 
-    // Authenticate the push as the project's selected GitHub account (if any).
-    const authEnv = yield* resolveAccountAuthEnv(cwd);
+    // Authenticate the push as the project's selected GitHub account (if any),
+    // non-interactively so it fails fast instead of prompting on the server.
+    const authEnv = yield* resolveNetworkGitEnv(cwd);
 
     const requestedRemoteName = options?.remoteName?.trim() || null;
     if (requestedRemoteName) {
@@ -1997,7 +2020,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ["rev-parse", "HEAD"],
       true,
     ).pipe(Effect.map((stdout) => stdout.trim()));
+    const pullEnv = yield* resolveNetworkGitEnv(cwd);
     yield* executeGit("GitVcsDriver.pullCurrentBranch.pull", cwd, ["pull", "--ff-only"], {
+      env: pullEnv,
       timeoutMs: 30_000,
       fallbackErrorDetail: "git pull failed",
     });
@@ -2590,6 +2615,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const fetchPullRequestBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchPullRequestBranch"] =
     Effect.fn("fetchPullRequestBranch")(function* (input) {
       const remoteName = yield* resolvePrimaryRemoteName(input.cwd);
+      const env = yield* resolveNetworkGitEnv(input.cwd);
       yield* executeGit(
         "GitVcsDriver.fetchPullRequestBranch",
         input.cwd,
@@ -2601,6 +2627,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           `+refs/pull/${input.prNumber}/head:refs/heads/${input.branch}`,
         ],
         {
+          env,
           fallbackErrorDetail: "git fetch pull request branch failed",
         },
       );
@@ -2608,13 +2635,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const fetchRemote: GitVcsDriver.GitVcsDriver["Service"]["fetchRemote"] = Effect.fn("fetchRemote")(
     function* (input) {
-      const authEnv = yield* resolveAccountAuthEnv(input.cwd);
+      const env = yield* resolveNetworkGitEnv(input.cwd);
       yield* executeGit(
         "GitVcsDriver.fetchRemote",
         input.cwd,
         ["fetch", "--quiet", input.remoteName],
         {
-          env: { ...STATUS_UPSTREAM_REFRESH_ENV, ...authEnv },
+          env,
           fallbackErrorDetail: `git fetch ${input.remoteName} failed`,
         },
       );
@@ -2642,7 +2669,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const fetchRemoteBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteBranch"] = Effect.fn(
     "fetchRemoteBranch",
   )(function* (input) {
-    const authEnv = yield* resolveAccountAuthEnv(input.cwd);
+    const authEnv = yield* resolveNetworkGitEnv(input.cwd);
     yield* runGitWithEnv(
       "GitVcsDriver.fetchRemoteBranch.fetch",
       input.cwd,
@@ -2669,13 +2696,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const fetchRemoteTrackingBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"] =
     Effect.fn("fetchRemoteTrackingBranch")(function* (input) {
-      yield* runGit("GitVcsDriver.fetchRemoteTrackingBranch", input.cwd, [
-        "fetch",
-        "--quiet",
-        "--no-tags",
-        input.remoteName,
-        `+refs/heads/${input.remoteBranch}:refs/remotes/${input.remoteName}/${input.remoteBranch}`,
-      ]);
+      const env = yield* resolveNetworkGitEnv(input.cwd);
+      yield* runGitWithEnv(
+        "GitVcsDriver.fetchRemoteTrackingBranch",
+        input.cwd,
+        [
+          "fetch",
+          "--quiet",
+          "--no-tags",
+          input.remoteName,
+          `+refs/heads/${input.remoteBranch}:refs/remotes/${input.remoteName}/${input.remoteBranch}`,
+        ],
+        env,
+      );
     });
 
   const setBranchUpstream: GitVcsDriver.GitVcsDriver["Service"]["setBranchUpstream"] = (input) =>

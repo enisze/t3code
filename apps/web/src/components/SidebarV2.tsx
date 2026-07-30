@@ -1059,13 +1059,15 @@ function ProjectGitHubAccountField({
   const discovery = useEnvironmentQuery(
     sourceControlEnvironment.discovery({ environmentId: member.environmentId, input: {} }),
   );
-  const accounts = useMemo(
+  const allAccounts = useMemo(
     () =>
-      (
-        discovery.data?.sourceControlProviders.find((provider) => provider.kind === "github")
-          ?.accounts ?? []
-      ).filter((account) => account.authenticated),
+      discovery.data?.sourceControlProviders.find((provider) => provider.kind === "github")
+        ?.accounts ?? [],
     [discovery.data],
+  );
+  const accounts = useMemo(
+    () => allAccounts.filter((account) => account.authenticated),
+    [allAccounts],
   );
   const accountByValue = useMemo(
     () => new Map(accounts.map((account) => [githubAccountValue(account), account] as const)),
@@ -1073,6 +1075,23 @@ function ProjectGitHubAccountField({
   );
   const current = member.gitHubAccount;
   const isLoading = discovery.isPending && discovery.data === null;
+
+  // The selected account is unusable when `gh` no longer lists it as
+  // authenticated (token expired/revoked) or doesn't know it at all. Git then
+  // silently falls back to the machine default account, so flag it here — the
+  // one place where the selection can be changed or re-authenticated.
+  const currentHealth =
+    current === null
+      ? undefined
+      : allAccounts.find(
+          (account) => account.host === current.host && account.login === current.login,
+        );
+  const currentAuthError =
+    current !== null &&
+    discovery.data !== null &&
+    (currentHealth === undefined || !currentHealth.authenticated)
+      ? (currentHealth?.authError ?? "it is not signed in to the GitHub CLI")
+      : null;
 
   const label = <span className="font-medium text-foreground">GitHub account</span>;
 
@@ -1137,6 +1156,13 @@ function ProjectGitHubAccountField({
           ))}
         </SelectPopup>
       </Select>
+      {current !== null && currentAuthError !== null ? (
+        <p className="text-xs text-amber-600 dark:text-amber-400">
+          {githubAccountLabel(current)} can’t be used because {currentAuthError}. Git runs as your
+          default account until you re-authenticate with{" "}
+          <code className="rounded bg-muted px-1 py-px text-[11px]">gh auth login</code>.
+        </p>
+      ) : null}
     </label>
   );
 }

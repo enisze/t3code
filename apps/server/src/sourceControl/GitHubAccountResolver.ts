@@ -79,6 +79,13 @@ export function gitHubAccountGhEnv(resolved: ResolvedGitHubAccount): NodeJS.Proc
  * account wins; `!gh auth git-credential` then returns the `GH_TOKEN` above.
  * This is the same mechanism CI uses (`GH_TOKEN` + gh credential helper).
  *
+ * It also rewrites the account host's SSH remote forms to HTTPS
+ * (`url.https://<host>/.insteadOf`), so a repo whose remote is
+ * `git@<host>:owner/repo` still authenticates as the selected account. Without
+ * it, an SSH remote bypasses the token entirely and uses the machine's SSH key
+ * — i.e. account selection would silently do nothing. The rewrite is scoped to
+ * this process and never touches the stored remote URL.
+ *
  * Pairs are appended after any `GIT_CONFIG_COUNT` already present in `baseEnv`,
  * so a runtime git config the process inherited keeps working instead of being
  * silently overwritten by our pairs claiming indices 0 and 1.
@@ -87,15 +94,21 @@ export function gitHubAccountAuthEnv(
   resolved: ResolvedGitHubAccount,
   baseEnv: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
-  const helperKey = `credential.https://${resolved.account.host}.helper`;
+  const host = resolved.account.host;
+  const helperKey = `credential.https://${host}.helper`;
+  const insteadOfKey = `url.https://${host}/.insteadOf`;
   const offset = parseGitConfigCount(baseEnv.GIT_CONFIG_COUNT);
   return {
     ...gitHubAccountGhEnv(resolved),
-    GIT_CONFIG_COUNT: String(offset + 2),
+    GIT_CONFIG_COUNT: String(offset + 4),
     [`GIT_CONFIG_KEY_${offset}`]: helperKey,
     [`GIT_CONFIG_VALUE_${offset}`]: "",
     [`GIT_CONFIG_KEY_${offset + 1}`]: helperKey,
     [`GIT_CONFIG_VALUE_${offset + 1}`]: "!gh auth git-credential",
+    [`GIT_CONFIG_KEY_${offset + 2}`]: insteadOfKey,
+    [`GIT_CONFIG_VALUE_${offset + 2}`]: `git@${host}:`,
+    [`GIT_CONFIG_KEY_${offset + 3}`]: insteadOfKey,
+    [`GIT_CONFIG_VALUE_${offset + 3}`]: `ssh://git@${host}/`,
   };
 }
 

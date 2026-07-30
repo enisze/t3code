@@ -159,6 +159,13 @@ export const SourceControlAccountInfo = Schema.Struct({
   login: TrimmedNonEmptyString,
   authenticated: Schema.Boolean,
   active: Schema.Boolean,
+  /**
+   * When the CLI knows about this account but it is not usable (e.g. its token
+   * expired or was revoked), the human-readable reason from `gh auth status`.
+   * Absent for healthy accounts. Lets the UI explain why a project's selected
+   * account fell back to the machine default instead of failing silently.
+   */
+  authError: Schema.optional(TrimmedNonEmptyString),
 });
 export type SourceControlAccountInfo = typeof SourceControlAccountInfo.Type;
 

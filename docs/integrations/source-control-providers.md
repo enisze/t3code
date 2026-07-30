@@ -67,12 +67,12 @@ If you juggle more than one GitHub identity — a work account and a personal on
 Once attached, every GitHub operation T3 Code runs for that project acts as the chosen account:
 
 - **`gh` operations** — creating and listing pull requests, checking out a PR, viewing or creating repositories.
-- **`git` over HTTPS** — push, pull, and fetch, including the push half of **Commit, Push & PR**. T3 Code points Git's credential lookup for that host at the chosen account instead of letting your OS keychain answer with whichever account it cached first. Only that host is redirected, so credentials for other hosts keep working.
+- **`git` over the network** — push, pull, fetch, and the background refresh that keeps each project's branch list and ahead/behind counts up to date (including the push half of **Commit, Push & PR**). T3 Code points Git's credential lookup for that host at the chosen account instead of letting your OS keychain answer with whichever account it cached first. Only that host is redirected, so credentials for other hosts keep working. If the project's remote is an SSH URL (`git@github.com:…`), T3 Code rewrites just that host to HTTPS for its own operations so the chosen account's token still applies — your stored remote URL is left unchanged.
 - **The integrated terminal** — each terminal starts with `gh` and `git` already pinned to the project's account, so `gh repo view` and `git push` see the same repositories the app does. You don't need `gh auth switch`; switching globally won't help either, because the pin is per project.
 
 T3 Code never stores your token; it asks the GitHub CLI for a short-lived token for that account only when it needs one, and it never changes which account is globally active, so projects on different accounts don't interfere with each other.
 
-> **Notes:** A terminal picks up the account when it starts — restart an open terminal after changing the selection. Account pinning only applies to HTTPS remotes; SSH remotes (`git@github.com:...`) authenticate with your SSH keys, which T3 Code does not manage.
+> **Notes:** A terminal picks up the account when it starts — restart an open terminal after changing the selection. If the selected account can't be used (its GitHub CLI token expired or was revoked), the **GitHub account** selector flags it and Git falls back to your default account until you re-run `gh auth login`. Commit authorship still comes from your Git config (`user.name`/`user.email`), not the selected account.
 
 ## Getting Started
 
