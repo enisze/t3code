@@ -103,6 +103,7 @@ describe("add project shared logic", () => {
         repositoryIdentity: null,
         defaultModelSelection: null,
         gitHubAccount: null,
+        worktreeBranchPrefix: null,
         scripts: [],
       },
       {
@@ -115,6 +116,7 @@ describe("add project shared logic", () => {
         repositoryIdentity: null,
         defaultModelSelection: null,
         gitHubAccount: null,
+        worktreeBranchPrefix: null,
         scripts: [],
       },
     ];

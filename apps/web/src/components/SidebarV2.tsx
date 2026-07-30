@@ -18,6 +18,7 @@ import type {
   ScopedThreadRef,
   SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
+import { sanitizeWorktreeBranchPrefix, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
 import {
   AlarmClockIcon,
   AlarmClockOffIcon,
@@ -28,6 +29,7 @@ import {
   CircleDashedIcon,
   ClockIcon,
   CopyIcon,
+  FilePenIcon,
   FolderIcon,
   FolderPlusIcon,
   GitBranchIcon,
@@ -95,7 +97,11 @@ import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useThreadShells } from "../state/entities";
-import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
+import {
+  environmentServerConfigsAtom,
+  primaryServerKeybindingsAtom,
+  primaryServerSettingsAtom,
+} from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
 import { projectEnvironment } from "../state/projects";
@@ -969,6 +975,17 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 <span className="flex-1" />
               )}
               {prBadge}
+              {gitStatus.data?.hasWorkingTreeChanges ? (
+                <span
+                  className="inline-flex shrink-0 items-center gap-0.5 font-mono text-amber-600 dark:text-amber-400"
+                  title={`${gitStatus.data.workingTree.files.length} modified file${
+                    gitStatus.data.workingTree.files.length === 1 ? "" : "s"
+                  } in the working tree`}
+                >
+                  <FilePenIcon aria-hidden className="size-3" />
+                  {gitStatus.data.workingTree.files.length}
+                </span>
+              ) : null}
               {diff ? (
                 <span className="shrink-0 font-mono">
                   <span className="text-emerald-600 dark:text-emerald-400">+{diff.insertions}</span>{" "}
@@ -1243,6 +1260,7 @@ export default function SidebarV2() {
     [sidebarProjectSortOrder, threads, unsortedProjectGroups],
   );
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const globalWorktreeBranchPrefix = useAtomValue(primaryServerSettingsAtom).worktreeBranchPrefix;
   const providerEntryByInstanceId = useMemo(
     () =>
       new Map(
@@ -1503,6 +1521,29 @@ export default function SidebarV2() {
           stackedThreadToast({
             type: "error",
             title: "Failed to update GitHub account",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [updateProject],
+  );
+
+  const updateProjectWorktreeBranchPrefix = useCallback(
+    async (member: SidebarProjectGroupMember, rawValue: string) => {
+      const trimmed = rawValue.trim();
+      const nextPrefix = trimmed.length === 0 ? null : sanitizeWorktreeBranchPrefix(trimmed);
+      if ((member.worktreeBranchPrefix ?? null) === nextPrefix) return;
+      const result = await updateProject({
+        environmentId: member.environmentId,
+        input: { projectId: member.id, worktreeBranchPrefix: nextPrefix },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to update branch prefix",
             description: error instanceof Error ? error.message : "An error occurred.",
           }),
         );
@@ -2858,6 +2899,35 @@ export default function SidebarV2() {
                       member={member}
                       onSelect={updateProjectGitHubAccount}
                     />
+                    <label className="grid min-w-0 gap-1.5">
+                      <span className="font-medium text-foreground">Worktree branch prefix</span>
+                      <Input
+                        key={`prefix:${member.physicalProjectKey}:${member.worktreeBranchPrefix ?? ""}`}
+                        aria-label={`Worktree branch prefix in ${member.environmentLabel ?? "current environment"}`}
+                        defaultValue={member.worktreeBranchPrefix ?? ""}
+                        placeholder={
+                          globalWorktreeBranchPrefix.trim().length > 0
+                            ? globalWorktreeBranchPrefix
+                            : WORKTREE_BRANCH_PREFIX
+                        }
+                        onBlur={(event) => {
+                          void updateProjectWorktreeBranchPrefix(member, event.currentTarget.value);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") event.currentTarget.blur();
+                        }}
+                      />
+                      <span className="text-[11px] text-muted-foreground">
+                        New worktree branches use{" "}
+                        <code>
+                          {sanitizeWorktreeBranchPrefix(
+                            member.worktreeBranchPrefix ?? globalWorktreeBranchPrefix,
+                          )}
+                          /…
+                        </code>
+                        {member.worktreeBranchPrefix === null ? " (global default)" : null}
+                      </span>
+                    </label>
                   </div>
                   <ProjectDefaultAgentField
                     idPrefix={`project-agent-${member.physicalProjectKey}`}

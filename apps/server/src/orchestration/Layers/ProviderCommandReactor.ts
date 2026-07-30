@@ -12,7 +12,7 @@ import {
   type RuntimeMode,
   type TurnId,
 } from "@t3tools/contracts";
-import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
+import { isTemporaryWorktreeBranch, sanitizeWorktreeBranchPrefix } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -166,15 +166,16 @@ function stalePendingRequestDetail(
   return `Stale pending ${requestKind} request: ${requestId}. Provider callback state does not survive app restarts or recovered sessions. Restart the turn to continue.`;
 }
 
-function buildGeneratedWorktreeBranchName(raw: string): string {
+function buildGeneratedWorktreeBranchName(raw: string, prefix?: string | null): string {
+  const resolvedPrefix = sanitizeWorktreeBranchPrefix(prefix);
   const normalized = raw
     .trim()
     .toLowerCase()
     .replace(/^refs\/heads\//, "")
     .replace(/['"`]/g, "");
 
-  const withoutPrefix = normalized.startsWith(`${WORKTREE_BRANCH_PREFIX}/`)
-    ? normalized.slice(`${WORKTREE_BRANCH_PREFIX}/`.length)
+  const withoutPrefix = normalized.startsWith(`${resolvedPrefix}/`)
+    ? normalized.slice(`${resolvedPrefix}/`.length)
     : normalized;
 
   const branchFragment = withoutPrefix
@@ -186,7 +187,7 @@ function buildGeneratedWorktreeBranchName(raw: string): string {
     .replace(/[./_-]+$/g, "");
 
   const safeFragment = branchFragment.length > 0 ? branchFragment : "update";
-  return `${WORKTREE_BRANCH_PREFIX}/${safeFragment}`;
+  return `${resolvedPrefix}/${safeFragment}`;
 }
 
 const make = Effect.gen(function* () {
@@ -677,6 +678,7 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly branch: string | null;
     readonly worktreePath: string | null;
+    readonly worktreeBranchPrefix?: string | null;
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
   }) {
@@ -708,7 +710,10 @@ const make = Effect.gen(function* () {
       });
       if (!generated) return;
 
-      const targetBranch = buildGeneratedWorktreeBranchName(generated.branch);
+      // Prefer the project's prefix, then the global default setting; an empty
+      // string or null resolves to the built-in default inside the builder.
+      const effectivePrefix = input.worktreeBranchPrefix ?? settings.worktreeBranchPrefix;
+      const targetBranch = buildGeneratedWorktreeBranchName(generated.branch, effectivePrefix);
       if (targetBranch === oldBranch) return;
 
       const renamed = yield* gitWorkflow.renameBranch({ cwd, oldBranch, newBranch: targetBranch });
@@ -822,6 +827,7 @@ const make = Effect.gen(function* () {
         threadId: event.payload.threadId,
         branch: thread.branch,
         worktreePath: thread.worktreePath,
+        worktreeBranchPrefix: project?.worktreeBranchPrefix ?? null,
         ...generationInput,
       }).pipe(Effect.forkScoped);
 

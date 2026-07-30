@@ -307,6 +307,7 @@ export function buildHomeThreadGroups(input: {
             repositoryIdentity: null,
             defaultModelSelection: null,
             gitHubAccount: null,
+            worktreeBranchPrefix: null,
             scripts: [],
             createdAt: pendingTask.message.createdAt,
             updatedAt: pendingTask.message.createdAt,

@@ -44,6 +44,7 @@ import {
   resolveServerBackgroundActivitySettings,
 } from "@t3tools/shared/backgroundActivitySettings";
 import { createModelSelection } from "@t3tools/shared/model";
+import { sanitizeWorktreeBranchPrefix, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
 import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
@@ -1578,6 +1579,35 @@ export function GeneralSettingsPanel() {
               placeholder="~/"
               spellCheck={false}
               aria-label="Add project base directory"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Worktree branch prefix"
+          description={`Default prefix for auto-created worktree branches (${sanitizeWorktreeBranchPrefix(
+            settings.worktreeBranchPrefix,
+          )}/…). Leave empty to use "${WORKTREE_BRANCH_PREFIX}". A project can override this in its settings.`}
+          resetAction={
+            settings.worktreeBranchPrefix !== DEFAULT_UNIFIED_SETTINGS.worktreeBranchPrefix ? (
+              <SettingResetButton
+                label="worktree branch prefix"
+                onClick={() =>
+                  updateSettings({
+                    worktreeBranchPrefix: DEFAULT_UNIFIED_SETTINGS.worktreeBranchPrefix,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <DraftInput
+              className="w-full sm:w-72"
+              value={settings.worktreeBranchPrefix}
+              onCommit={(next) => updateSettings({ worktreeBranchPrefix: next })}
+              placeholder={WORKTREE_BRANCH_PREFIX}
+              spellCheck={false}
+              aria-label="Worktree branch prefix"
             />
           }
         />

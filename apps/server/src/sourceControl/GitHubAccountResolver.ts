@@ -66,6 +66,32 @@ export function gitHubAccountGhEnv(resolved: ResolvedGitHubAccount): NodeJS.Proc
 }
 
 /**
+ * Environment that makes BOTH `gh` and plain `git` (push/fetch over HTTPS) act
+ * as `resolved`'s account, for a single process (e.g. an interactive terminal
+ * or a one-off git command) — without touching global config or running
+ * `gh auth switch`.
+ *
+ * On top of {@link gitHubAccountGhEnv} (which points `gh` at the account via
+ * `GH_TOKEN`/`GH_ENTERPRISE_TOKEN` + `GH_HOST`), this wires git's credential
+ * helper to GitHub CLI via `GIT_CONFIG_*` env keys — equivalent to
+ * `gh auth setup-git` but scoped to this process only. The leading empty helper
+ * resets any inherited helper (OS keychain, global config) so the selected
+ * account wins; `!gh auth git-credential` then returns the `GH_TOKEN` above.
+ * This is the same mechanism CI uses (`GH_TOKEN` + gh credential helper).
+ */
+export function gitHubAccountAuthEnv(resolved: ResolvedGitHubAccount): NodeJS.ProcessEnv {
+  const baseUrl = `https://${resolved.account.host}`;
+  return {
+    ...gitHubAccountGhEnv(resolved),
+    GIT_CONFIG_COUNT: "2",
+    GIT_CONFIG_KEY_0: `credential.${baseUrl}.helper`,
+    GIT_CONFIG_VALUE_0: "",
+    GIT_CONFIG_KEY_1: `credential.${baseUrl}.helper`,
+    GIT_CONFIG_VALUE_1: "!gh auth git-credential",
+  };
+}
+
+/**
  * True when `cwd` is `base` itself or lives beneath it. Compares normalized,
  * separator-terminated paths so `/a/repo` does not match `/a/repo-2`.
  */

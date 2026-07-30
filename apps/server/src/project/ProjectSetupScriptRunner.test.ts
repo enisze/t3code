@@ -19,6 +19,7 @@ const makeProject = (scripts: OrchestrationProject["scripts"]): OrchestrationPro
   workspaceRoot: "/repo/project",
   defaultModelSelection: null,
   gitHubAccount: null,
+  worktreeBranchPrefix: null,
   scripts,
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
