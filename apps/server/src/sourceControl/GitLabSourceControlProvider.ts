@@ -245,6 +245,23 @@ export const make = Effect.gen(function* () {
             }),
         ),
       ),
+    mergeChangeRequest: (input) =>
+      gitlab.mergeMergeRequest({ cwd: input.cwd, reference: input.reference }).pipe(
+        Effect.mapError(
+          (error) =>
+            new SourceControlProviderError({
+              provider: "gitlab",
+              operation: "mergeChangeRequest",
+              command: error.command,
+              cwd: input.cwd,
+              reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                input.reference,
+              ),
+              detail: error.detail,
+              cause: error,
+            }),
+        ),
+      ),
   });
 });
 

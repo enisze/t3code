@@ -182,6 +182,28 @@ export const make = Effect.gen(function* () {
               }),
           ),
         ),
+    mergeChangeRequest: (input) =>
+      bitbucket
+        .mergePullRequest({
+          cwd: input.cwd,
+          ...(input.context ? { context: input.context } : {}),
+          reference: input.reference,
+        })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: "bitbucket",
+                operation: "mergeChangeRequest",
+                cwd: input.cwd,
+                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                  input.reference,
+                ),
+                detail: "Failed to merge change request.",
+                cause: error,
+              }),
+          ),
+        ),
   });
 });
 

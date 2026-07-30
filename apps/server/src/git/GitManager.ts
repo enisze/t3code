@@ -16,6 +16,7 @@ import {
   GitActionProgressEvent,
   GitActionProgressPhase,
   GitCommandError,
+  GitMergePullRequestResult,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
   GitPullRequestRefInput,
@@ -93,6 +94,9 @@ export class GitManager extends Context.Service<
     readonly resolvePullRequest: (
       input: GitPullRequestRefInput,
     ) => Effect.Effect<GitResolvePullRequestResult, GitManagerServiceError>;
+    readonly mergePullRequest: (
+      input: GitPullRequestRefInput,
+    ) => Effect.Effect<GitMergePullRequestResult, GitManagerServiceError>;
     readonly preparePullRequestThread: (
       input: GitPreparePullRequestThreadInput,
     ) => Effect.Effect<GitPreparePullRequestThreadResult, GitManagerServiceError>;
@@ -1718,6 +1722,23 @@ export const make = Effect.gen(function* () {
     return { pullRequest };
   });
 
+  const mergePullRequest: GitManager["Service"]["mergePullRequest"] = Effect.fn("mergePullRequest")(
+    function* (input) {
+      const normalizedReference = normalizePullRequestReference(input.reference);
+      const provider = yield* sourceControlProvider(input.cwd);
+      const resolved = yield* provider
+        .getChangeRequest({ cwd: input.cwd, reference: normalizedReference })
+        .pipe(Effect.map((changeRequest) => toResolvedPullRequest(changeRequest)));
+
+      return yield* provider
+        .mergeChangeRequest({ cwd: input.cwd, reference: normalizedReference })
+        .pipe(
+          Effect.as({ pullRequest: { ...resolved, state: "merged" as const } }),
+          Effect.ensuring(invalidateStatus(input.cwd)),
+        );
+    },
+  );
+
   const preparePullRequestThread: GitManager["Service"]["preparePullRequestThread"] = Effect.fn(
     "preparePullRequestThread",
   )(function* (input) {
@@ -2141,6 +2162,7 @@ export const make = Effect.gen(function* () {
     invalidateRemoteStatus,
     invalidateStatus,
     resolvePullRequest,
+    mergePullRequest,
     preparePullRequestThread,
     runStackedAction,
   });

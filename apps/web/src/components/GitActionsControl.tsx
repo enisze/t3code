@@ -26,6 +26,7 @@ import {
   ExternalLinkIcon,
   GitBranchPlusIcon,
   GitCommitIcon,
+  GitMergeIcon,
   InfoIcon,
   LockIcon,
   GlobeIcon,
@@ -71,6 +72,7 @@ import { stackedThreadToast, toastManager, type ThreadToastData } from "~/compon
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useOpenInPreferredEditor } from "~/editorPreferences";
 import {
+  useGitMergePullRequestAction,
   useGitStackedAction,
   useSourceControlActionRunning,
   useSourceControlPublishRepositoryAction,
@@ -153,7 +155,12 @@ function requestVcsStatusRefresh(
   }
   void refresh({ environmentId, input: { cwd } });
 }
-const RUNNING_SOURCE_CONTROL_ACTIONS = ["runStackedAction", "pull", "publishRepository"] as const;
+const RUNNING_SOURCE_CONTROL_ACTIONS = [
+  "runStackedAction",
+  "pull",
+  "publishRepository",
+  "mergePullRequest",
+] as const;
 
 const PUBLISH_PROVIDER_OPTIONS = [
   {
@@ -305,6 +312,13 @@ function getMenuActionDisabledReason({
     return "Push is currently unavailable.";
   }
 
+  if (item.id === "merge") {
+    if (!hasOpenPr) {
+      return `No open ${terminology.singular} to merge.`;
+    }
+    return `Merge ${terminology.singular} is currently unavailable.`;
+  }
+
   if (hasOpenPr) {
     return `View ${terminology.singular} is currently unavailable.`;
   }
@@ -339,6 +353,7 @@ function GitActionItemIcon({
 }) {
   if (icon === "commit") return <GitCommitIcon />;
   if (icon === "push") return <CloudUploadIcon />;
+  if (icon === "merge") return <GitMergeIcon />;
   return <SourceControlIcon />;
 }
 
@@ -1109,6 +1124,7 @@ export default function GitActionsControl({
   const initAction = useVcsInitAction(sourceControlScope);
   const runImmediateGitAction = useGitStackedAction(sourceControlScope);
   const pullAction = useVcsPullAction(sourceControlScope);
+  const mergePrAction = useGitMergePullRequestAction(sourceControlScope);
   const isGitActionRunning = useSourceControlActionRunning(
     sourceControlScope,
     RUNNING_SOURCE_CONTROL_ACTIONS,
@@ -1243,6 +1259,48 @@ export default function GitActionsControl({
       );
     });
   }, [gitStatusForActions, threadToastData]);
+
+  const mergeExistingPr = useCallback(async () => {
+    const pr = gitStatusForActions?.pr?.state === "open" ? gitStatusForActions.pr : null;
+    if (!pr) {
+      toastManager.add({
+        type: "error",
+        title: `No open ${changeRequestTerminology.singular} found.`,
+        data: threadToastData,
+      });
+      return;
+    }
+    const toastId = toastManager.add({
+      type: "loading",
+      title: `Merging ${changeRequestTerminology.singular}...`,
+      timeout: 0,
+      data: threadToastData,
+    });
+    const result = await mergePrAction.run({ reference: String(pr.number) });
+    if (result._tag === "Failure") {
+      if (isAtomCommandInterrupted(result)) {
+        toastManager.close(toastId);
+        return;
+      }
+      const error = squashAtomCommandFailure(result);
+      toastManager.update(
+        toastId,
+        stackedThreadToast({
+          type: "error",
+          title: `Failed to merge ${changeRequestTerminology.singular}`,
+          description: error instanceof Error ? error.message : "An error occurred.",
+          ...(threadToastData !== undefined ? { data: threadToastData } : {}),
+        }),
+      );
+      return;
+    }
+    toastManager.update(toastId, {
+      type: "success",
+      title: `Merged ${changeRequestTerminology.singular}`,
+      description: `${pr.title} (#${pr.number})`,
+      data: threadToastData,
+    });
+  }, [changeRequestTerminology, gitStatusForActions, mergePrAction, threadToastData]);
 
   runGitActionWithToast = useEffectEvent(
     async ({
@@ -1591,6 +1649,10 @@ export default function GitActionsControl({
     if (item.disabled) return;
     if (item.kind === "open_pr") {
       void openExistingPr();
+      return;
+    }
+    if (item.kind === "merge_pr") {
+      void mergeExistingPr();
       return;
     }
     if (item.dialogAction === "push") {
