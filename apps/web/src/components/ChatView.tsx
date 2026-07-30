@@ -1606,6 +1606,20 @@ function ChatViewContent(props: ChatViewProps) {
   const handleNewThreadInActiveProject = useCallback(() => {
     startNewThreadForProject(activeProjectRef, handleNewThread);
   }, [activeProjectRef, handleNewThread]);
+  // Reuse the active thread's worktree for a fresh chat. Passing an explicit
+  // worktreePath keeps the create path from provisioning a new git worktree —
+  // multiple chats share one on-disk tree, matching the sidebar's
+  // "New thread on {branch}" affordance.
+  const newChatWorktreePath = activeThread?.worktreePath ?? null;
+  const newChatWorktreeBranch = activeThread?.branch ?? null;
+  const handleNewChatInWorktree = useCallback(() => {
+    if (!activeProjectRef || !newChatWorktreePath) return;
+    void handleNewThread(activeProjectRef, {
+      branch: newChatWorktreeBranch,
+      worktreePath: newChatWorktreePath,
+      envMode: "worktree",
+    });
+  }, [activeProjectRef, newChatWorktreeBranch, newChatWorktreePath, handleNewThread]);
   const activeEnvironmentShell = useEnvironmentQuery(
     activeThread ? environmentShell.stateAtom(activeThread.environmentId) : null,
   );
@@ -5702,6 +5716,7 @@ function ChatViewContent(props: ChatViewProps) {
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
             onNewThreadInProject={handleNewThreadInActiveProject}
+            {...(newChatWorktreePath ? { onNewChatInWorktree: handleNewChatInWorktree } : {})}
             onRunProjectScript={runProjectScript}
             onAddProjectScript={saveProjectScript}
             onUpdateProjectScript={updateProjectScript}
