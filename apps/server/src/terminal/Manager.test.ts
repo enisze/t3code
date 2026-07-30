@@ -1285,9 +1285,11 @@ it.layer(
       const env = ptyAdapter.spawnInputs[0]?.env;
       assert.equal(env?.GH_HOST, "github.com");
       assert.equal(env?.GH_TOKEN, "gho_project");
-      assert.equal(env?.GIT_CONFIG_COUNT, "2");
+      assert.equal(env?.GIT_CONFIG_COUNT, "4");
       assert.equal(env?.GIT_CONFIG_KEY_1, "credential.https://github.com.helper");
       assert.equal(env?.GIT_CONFIG_VALUE_1, "!gh auth git-credential");
+      assert.equal(env?.GIT_CONFIG_KEY_2, "url.https://github.com/.insteadOf");
+      assert.equal(env?.GIT_CONFIG_VALUE_2, "git@github.com:");
     }),
   );
 

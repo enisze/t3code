@@ -88,6 +88,7 @@ function parseGitHubAccounts(input: SourceControlAuthProbeInput) {
     login: account.account,
     authenticated: account.authenticated,
     active: account.active,
+    ...(account.error === null ? {} : { authError: account.error }),
   }));
 }
 

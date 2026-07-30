@@ -117,13 +117,18 @@ describe("gitHubAccountAuthEnv", () => {
       {
         GH_HOST: "github.com",
         GH_TOKEN: "t0ken",
-        GIT_CONFIG_COUNT: "2",
+        GIT_CONFIG_COUNT: "4",
         // An empty helper resets the list, so the machine-global helper (usually
         // an OS keychain) cannot answer for this host first.
         GIT_CONFIG_KEY_0: "credential.https://github.com.helper",
         GIT_CONFIG_VALUE_0: "",
         GIT_CONFIG_KEY_1: "credential.https://github.com.helper",
         GIT_CONFIG_VALUE_1: "!gh auth git-credential",
+        // SSH remotes for the host are rewritten to HTTPS so the token applies.
+        GIT_CONFIG_KEY_2: "url.https://github.com/.insteadOf",
+        GIT_CONFIG_VALUE_2: "git@github.com:",
+        GIT_CONFIG_KEY_3: "url.https://github.com/.insteadOf",
+        GIT_CONFIG_VALUE_3: "ssh://git@github.com/",
       },
     );
   });
@@ -134,11 +139,15 @@ describe("gitHubAccountAuthEnv", () => {
       {
         GH_HOST: "ghe.corp",
         GH_ENTERPRISE_TOKEN: "t0ken",
-        GIT_CONFIG_COUNT: "2",
+        GIT_CONFIG_COUNT: "4",
         GIT_CONFIG_KEY_0: "credential.https://ghe.corp.helper",
         GIT_CONFIG_VALUE_0: "",
         GIT_CONFIG_KEY_1: "credential.https://ghe.corp.helper",
         GIT_CONFIG_VALUE_1: "!gh auth git-credential",
+        GIT_CONFIG_KEY_2: "url.https://ghe.corp/.insteadOf",
+        GIT_CONFIG_VALUE_2: "git@ghe.corp:",
+        GIT_CONFIG_KEY_3: "url.https://ghe.corp/.insteadOf",
+        GIT_CONFIG_VALUE_3: "ssh://git@ghe.corp/",
       },
     );
   });
@@ -148,13 +157,17 @@ describe("gitHubAccountAuthEnv", () => {
       { account: { host: "github.com", login: "octo" }, token: "t0ken" },
       { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.pager", GIT_CONFIG_VALUE_0: "cat" },
     );
-    assert.equal(env.GIT_CONFIG_COUNT, "3");
+    assert.equal(env.GIT_CONFIG_COUNT, "5");
     // Index 0 stays with the inherited pair instead of being overwritten.
     assert.equal(env.GIT_CONFIG_KEY_0, undefined);
     assert.equal(env.GIT_CONFIG_KEY_1, "credential.https://github.com.helper");
     assert.equal(env.GIT_CONFIG_VALUE_1, "");
     assert.equal(env.GIT_CONFIG_KEY_2, "credential.https://github.com.helper");
     assert.equal(env.GIT_CONFIG_VALUE_2, "!gh auth git-credential");
+    assert.equal(env.GIT_CONFIG_KEY_3, "url.https://github.com/.insteadOf");
+    assert.equal(env.GIT_CONFIG_VALUE_3, "git@github.com:");
+    assert.equal(env.GIT_CONFIG_KEY_4, "url.https://github.com/.insteadOf");
+    assert.equal(env.GIT_CONFIG_VALUE_4, "ssh://git@github.com/");
   });
 
   it("ignores a malformed inherited GIT_CONFIG_COUNT", () => {
@@ -162,7 +175,7 @@ describe("gitHubAccountAuthEnv", () => {
       { account: { host: "github.com", login: "octo" }, token: "t0ken" },
       { GIT_CONFIG_COUNT: "not-a-number" },
     );
-    assert.equal(env.GIT_CONFIG_COUNT, "2");
+    assert.equal(env.GIT_CONFIG_COUNT, "4");
     assert.equal(env.GIT_CONFIG_KEY_0, "credential.https://github.com.helper");
   });
 });
