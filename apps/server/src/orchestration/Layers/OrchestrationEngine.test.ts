@@ -124,6 +124,7 @@ describe("OrchestrationEngine", () => {
             model: "gpt-5-codex",
           },
           gitHubAccount: null,
+          worktreeBranchPrefix: null,
           scripts: [],
           createdAt: "2026-03-03T00:00:00.000Z",
           updatedAt: "2026-03-03T00:00:01.000Z",

@@ -74,7 +74,10 @@ export function useCreateProjectThread() {
           branch: input.branch,
           worktreePath: input.worktreePath,
           startFromOrigin: input.startFromOrigin ?? false,
-          worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
+          worktreeBranchName: buildTemporaryWorktreeBranchName(
+            randomHex,
+            input.project.worktreeBranchPrefix,
+          ),
         }),
       });
       if (AsyncResult.isFailure(result)) {

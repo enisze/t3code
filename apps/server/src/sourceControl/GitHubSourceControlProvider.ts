@@ -44,7 +44,7 @@ function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeReq
 
 function parseGitHubAuth(input: SourceControlAuthProbeInput) {
   const output = combinedAuthOutput(input);
-  const authStatus = parseGitHubAuthStatus(input.stdout);
+  const authStatus = parseGitHubAuthStatus(output);
   const authenticatedAccount = findAuthenticatedGitHubAccount(authStatus.accounts);
   const host = authenticatedAccount?.host;
 
@@ -83,7 +83,7 @@ function parseGitHubAuth(input: SourceControlAuthProbeInput) {
 }
 
 function parseGitHubAccounts(input: SourceControlAuthProbeInput) {
-  return parseGitHubAuthStatus(input.stdout).accounts.map((account) => ({
+  return parseGitHubAuthStatus(combinedAuthOutput(input)).accounts.map((account) => ({
     host: account.host,
     login: account.account,
     authenticated: account.authenticated,
@@ -97,7 +97,7 @@ export const discovery = {
   label: "GitHub",
   executable: "gh",
   versionArgs: ["--version"],
-  authArgs: ["auth", "status", "--json", "hosts"],
+  authArgs: ["auth", "status"],
   parseAuth: parseGitHubAuth,
   parseAccounts: parseGitHubAccounts,
   installHint:

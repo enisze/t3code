@@ -517,6 +517,13 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /**
+   * Global default branch-name prefix for auto-created worktree branches
+   * (e.g. `feature` → `feature/<slug>`). Empty falls back to the built-in
+   * default (`t3code`). A project's own `worktreeBranchPrefix`, when set,
+   * overrides this.
+   */
+  worktreeBranchPrefix: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
@@ -665,6 +672,7 @@ export const ServerSettingsPatch = Schema.Struct({
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
+  worktreeBranchPrefix: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   sourceControlWritingStyle: Schema.optionalKey(
     Schema.Struct({

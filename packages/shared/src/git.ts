@@ -11,13 +11,15 @@ import * as Result from "effect/Result";
 import { detectSourceControlProviderFromRemoteUrl } from "./sourceControl.ts";
 
 export const WORKTREE_BRANCH_PREFIX = "t3code";
-// Canonical form is `t3code/<8 hex>`. Older mobile builds generated `t3code/<uuid>`
+// Canonical form is `<prefix>/<8 hex>`, where `<prefix>` is per-project
+// configurable (default `t3code`). Older mobile builds generated `<prefix>/<uuid>`
 // via Crypto.randomUUID() (always RFC 4122 v4), so the matcher also accepts exactly
 // that shape — version nibble `4`, variant nibble `[89ab]` — to keep those threads
 // eligible for branch regeneration without loosening beyond what was ever generated.
-const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(
-  `^${WORKTREE_BRANCH_PREFIX}\\/(?:[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$`,
-);
+// The prefix is intentionally matched as any single ref segment rather than a fixed
+// literal so branches created under a custom prefix are still recognized.
+const TEMP_WORKTREE_BRANCH_PATTERN =
+  /^[^/\s]+\/(?:[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/;
 
 /**
  * Sanitize an arbitrary string into a valid, lowercase git refName fragment.
@@ -92,8 +94,32 @@ export function deriveLocalBranchNameFromRemoteRef(branchName: string): string {
   return branchName.slice(firstSeparatorIndex + 1);
 }
 
+/**
+ * Normalize a user-provided worktree branch prefix into a single, valid,
+ * lowercase git ref segment (no slashes). Falls back to the default prefix
+ * when the input is empty/null or sanitizes to nothing.
+ */
+export function sanitizeWorktreeBranchPrefix(raw: string | null | undefined): string {
+  if (raw === null || raw === undefined) {
+    return WORKTREE_BRANCH_PREFIX;
+  }
+  const normalized = raw
+    .trim()
+    .toLowerCase()
+    .replace(/['"`]/g, "")
+    .replace(/[^a-z0-9/_-]+/g, "-")
+    // A prefix must be a single ref segment so the temp branch stays `prefix/token`.
+    .replace(/[/]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[._-]+|[._-]+$/g, "")
+    .slice(0, 64)
+    .replace(/[._-]+$/g, "");
+  return normalized.length > 0 ? normalized : WORKTREE_BRANCH_PREFIX;
+}
+
 export function buildTemporaryWorktreeBranchName(
   randomHex: (byteLength: number) => string,
+  prefix?: string | null,
 ): string {
   // Normalize to exactly 8 lowercase hex chars so a UUID-shaped callback
   // still produces the canonical temporary branch form.
@@ -101,7 +127,7 @@ export function buildTemporaryWorktreeBranchName(
     .toLowerCase()
     .replace(/[^0-9a-f]/g, "")
     .slice(0, 8);
-  return `${WORKTREE_BRANCH_PREFIX}/${token}`;
+  return `${sanitizeWorktreeBranchPrefix(prefix)}/${token}`;
 }
 
 export function isTemporaryWorktreeBranch(refName: string): boolean {

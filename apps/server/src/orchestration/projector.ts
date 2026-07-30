@@ -212,6 +212,7 @@ export function projectEvent(
             workspaceRoot: payload.workspaceRoot,
             defaultModelSelection: payload.defaultModelSelection,
             gitHubAccount: payload.gitHubAccount ?? null,
+            worktreeBranchPrefix: payload.worktreeBranchPrefix ?? null,
             scripts: payload.scripts,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -246,6 +247,9 @@ export function projectEvent(
                     : {}),
                   ...(payload.gitHubAccount !== undefined
                     ? { gitHubAccount: payload.gitHubAccount }
+                    : {}),
+                  ...(payload.worktreeBranchPrefix !== undefined
+                    ? { worktreeBranchPrefix: payload.worktreeBranchPrefix }
                     : {}),
                   ...(payload.scripts !== undefined ? { scripts: payload.scripts } : {}),
                   updatedAt: payload.updatedAt,

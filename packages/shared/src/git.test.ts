@@ -7,6 +7,7 @@ import {
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
+  sanitizeWorktreeBranchPrefix,
   WORKTREE_BRANCH_PREFIX,
 } from "./git.ts";
 
@@ -98,6 +99,34 @@ describe("isTemporaryWorktreeBranch", () => {
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/feature/demo`)).toBe(false);
     expect(isTemporaryWorktreeBranch("main")).toBe(false);
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef-extra`)).toBe(false);
+  });
+
+  it("recognizes temporary branches created under a custom prefix", () => {
+    const branch = buildTemporaryWorktreeBranchName(() => "deadbeef", "feature");
+    expect(branch).toBe("feature/deadbeef");
+    expect(isTemporaryWorktreeBranch(branch)).toBe(true);
+    expect(isTemporaryWorktreeBranch("feature/f4ae4e0e-f971-4d48-b4f2-9cf0aa54ab12")).toBe(true);
+  });
+});
+
+describe("sanitizeWorktreeBranchPrefix", () => {
+  it("falls back to the default prefix for empty or nullish input", () => {
+    expect(sanitizeWorktreeBranchPrefix(null)).toBe(WORKTREE_BRANCH_PREFIX);
+    expect(sanitizeWorktreeBranchPrefix(undefined)).toBe(WORKTREE_BRANCH_PREFIX);
+    expect(sanitizeWorktreeBranchPrefix("   ")).toBe(WORKTREE_BRANCH_PREFIX);
+    expect(sanitizeWorktreeBranchPrefix("///")).toBe(WORKTREE_BRANCH_PREFIX);
+  });
+
+  it("normalizes a prefix into a single lowercase ref segment", () => {
+    expect(sanitizeWorktreeBranchPrefix("Feature")).toBe("feature");
+    expect(sanitizeWorktreeBranchPrefix("my feature")).toBe("my-feature");
+    expect(sanitizeWorktreeBranchPrefix("team/wip")).toBe("team-wip");
+  });
+
+  it("keeps the sanitized prefix as a valid single-segment temp branch", () => {
+    const branch = buildTemporaryWorktreeBranchName(() => "deadbeef", "team/wip");
+    expect(branch).toBe("team-wip/deadbeef");
+    expect(isTemporaryWorktreeBranch(branch)).toBe(true);
   });
 });
 

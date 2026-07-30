@@ -59,6 +59,10 @@ import {
 } from "../observability/Metrics.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
+import {
+  GitHubAccountResolver,
+  gitHubAccountAuthEnv,
+} from "../sourceControl/GitHubAccountResolver.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
 
 export {
@@ -1845,6 +1849,21 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     return yield* trySpawn(shellCandidates, spawnEnv, session, index + 1, spawnError);
   });
 
+  /**
+   * Env that makes `gh`/`git` in the spawned shell act as the GitHub account
+   * selected for the project owning `cwd`. Returns `{}` when no account is
+   * attached or the resolver isn't provided, leaving ambient auth untouched.
+   */
+  const resolveTerminalAccountEnv = (cwd: string): Effect.Effect<NodeJS.ProcessEnv> =>
+    Effect.gen(function* () {
+      const resolverOption = yield* Effect.serviceOption(GitHubAccountResolver);
+      if (Option.isNone(resolverOption)) {
+        return {};
+      }
+      const resolved = yield* resolverOption.value.resolveForCwd(cwd);
+      return resolved === null ? {} : gitHubAccountAuthEnv(resolved);
+    });
+
   const startSession = Effect.fn("terminal.startSession")(function* (
     session: TerminalSessionState,
     input: TerminalStartInput,
@@ -1885,7 +1904,15 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           Effect.gen(function* () {
             const shellCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);
             const terminalEnv = createTerminalSpawnEnv(baseEnv, session.runtimeEnv);
-            const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session);
+            // Make `gh` and `git` in this terminal act as the project's selected
+            // GitHub account (if any), so pushes/PRs use the right identity
+            // without the user running `gh auth switch`.
+            const accountEnv = yield* resolveTerminalAccountEnv(session.cwd);
+            const spawnResult = yield* trySpawn(
+              shellCandidates,
+              { ...terminalEnv, ...accountEnv },
+              session,
+            );
             ptyProcess = spawnResult.process;
             startedShell = spawnResult.shellLabel;
 
