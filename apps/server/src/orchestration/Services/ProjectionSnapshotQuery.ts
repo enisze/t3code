@@ -8,6 +8,7 @@
  */
 import type {
   CheckpointRef,
+  GitHubAccountRef,
   OrchestrationCheckpointSummary,
   OrchestrationProject,
   OrchestrationProjectShell,
@@ -28,6 +29,17 @@ import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
 export interface ProjectionSnapshotCounts {
   readonly projectCount: number;
   readonly threadCount: number;
+}
+
+/**
+ * A filesystem path that a `git`/`gh` command's cwd can be matched against to
+ * discover the GitHub account it should act as. Covers both project workspace
+ * roots and thread worktree paths (active AND archived — worktrees for archived
+ * threads still exist on disk and must resolve to their project's account).
+ */
+export interface ProjectionAccountRoute {
+  readonly path: string;
+  readonly account: GitHubAccountRef;
 }
 
 export interface ProjectionSnapshotSequence {
@@ -91,6 +103,17 @@ export interface ProjectionSnapshotQueryShape {
    */
   readonly getArchivedShellSnapshot: () => Effect.Effect<
     OrchestrationShellSnapshot,
+    ProjectionRepositoryError
+  >;
+
+  /**
+   * Read every workspace-root / worktree-path → GitHub account mapping for
+   * projects that have an account attached. Used to resolve which account a
+   * `git`/`gh` command running in a given directory should act as. Includes
+   * archived (but not deleted) threads so their worktrees still resolve.
+   */
+  readonly listAccountRoutes: () => Effect.Effect<
+    ReadonlyArray<ProjectionAccountRoute>,
     ProjectionRepositoryError
   >;
 

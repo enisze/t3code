@@ -1863,8 +1863,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       if (Option.isNone(resolverOption)) {
         return {};
       }
-      const resolved = yield* resolverOption.value.resolveForCwd(cwd);
-      return resolved === null ? {} : gitHubAccountAuthEnv(resolved, spawnEnv);
+      const resolution = yield* resolverOption.value.resolveForCwd(cwd);
+      // In an interactive shell we inject the selected account when we can, but
+      // never fail the spawn: if the account isn't logged in ("unavailable"),
+      // leave ambient auth so the user can `gh auth login` in the terminal.
+      return resolution._tag === "resolved" ? gitHubAccountAuthEnv(resolution, spawnEnv) : {};
     });
 
   const startSession = Effect.fn("terminal.startSession")(function* (

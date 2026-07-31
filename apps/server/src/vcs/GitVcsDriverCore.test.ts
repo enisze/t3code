@@ -16,6 +16,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { GitCommandError } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
+import { GitHubAccountResolver } from "../sourceControl/GitHubAccountResolver.ts";
 import { makeGitVcsDriverCore, splitNullSeparatedGitStdoutPaths } from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 
@@ -1411,6 +1412,51 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           branch: "feature/push",
         });
       }),
+    );
+
+    it.effect("refuses to push when the selected account can't be applied", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* (yield* GitVcsDriver.GitVcsDriver).createRef({ cwd, refName: "feature/push" });
+        yield* (yield* GitVcsDriver.GitVcsDriver).switchRef({ cwd, refName: "feature/push" });
+        yield* writeTextFile(cwd, "feature.txt", "feature\n");
+        yield* (yield* GitVcsDriver.GitVcsDriver).prepareCommitContext(cwd);
+        yield* (yield* GitVcsDriver.GitVcsDriver).commit(cwd, "Add feature", "");
+
+        const error = yield* (yield* GitVcsDriver.GitVcsDriver)
+          .pushCurrentBranch(cwd, null)
+          .pipe(Effect.flip);
+
+        assert.strictEqual(error._tag, "GitCommandError");
+        assert.equal(error.detail.includes("octo"), true);
+        assert.equal(error.detail.includes("gh auth login"), true);
+        // Nothing was pushed — the remote has no feature branch.
+        const remoteHasBranch = yield* git(remote, [
+          "show-ref",
+          "--verify",
+          "--quiet",
+          "refs/heads/feature/push",
+        ]).pipe(
+          Effect.as(true),
+          Effect.catch(() => Effect.succeed(false)),
+        );
+        assert.equal(remoteHasBranch, false);
+      }).pipe(
+        Effect.provideService(
+          GitHubAccountResolver,
+          GitHubAccountResolver.of({
+            resolveForCwd: () =>
+              Effect.succeed({
+                _tag: "unavailable",
+                account: { host: "github.com", login: "octo" },
+              }),
+          }),
+        ),
+      ),
     );
 
     it.effect(

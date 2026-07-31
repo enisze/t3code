@@ -13,7 +13,11 @@ import {
 } from "@t3tools/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import { GitHubAccountResolver, gitHubAccountAuthEnv } from "./GitHubAccountResolver.ts";
+import {
+  GitHubAccountResolver,
+  gitHubAccountAuthEnv,
+  type GitHubAccountResolution,
+} from "./GitHubAccountResolver.ts";
 import {
   decodeGitHubPullRequestJson,
   decodeGitHubPullRequestListJson,
@@ -85,6 +89,33 @@ export class GitHubPermissionError extends Schema.TaggedErrorClass<GitHubPermiss
 ) {
   get detail(): string {
     return "The selected GitHub account doesn't have permission for this action. Check the account attached to this project in its settings.";
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in execute: ${this.detail}`;
+  }
+}
+
+const gitHubAccountFailureFields = {
+  command: Schema.Literal("gh"),
+  cwd: Schema.String,
+  host: Schema.String,
+  login: Schema.String,
+  cause: Schema.Defect(),
+} as const;
+
+/**
+ * The project has a GitHub account attached, but that account isn't logged in
+ * to `gh` (so no token could be minted for it). We refuse rather than fall back
+ * to the machine's active account, which would run the command as the wrong
+ * user.
+ */
+export class GitHubAccountNotLoggedInError extends Schema.TaggedErrorClass<GitHubAccountNotLoggedInError>()(
+  "GitHubAccountNotLoggedInError",
+  gitHubAccountFailureFields,
+) {
+  get detail(): string {
+    return `The GitHub account "${this.login}" is selected for this project but isn't logged in to the GitHub CLI on ${this.host}. Run \`gh auth login\` for that account, or change the account in the project's settings.`;
   }
 
   override get message(): string {
@@ -166,6 +197,7 @@ export class GitHubRepositoryDecodeError extends Schema.TaggedErrorClass<GitHubR
 export const GitHubCliError = Schema.Union([
   GitHubCliUnavailableError,
   GitHubCliAuthenticationError,
+  GitHubAccountNotLoggedInError,
   GitHubPullRequestNotFoundError,
   GitHubPermissionError,
   GitHubMergeBlockedError,
@@ -293,6 +325,37 @@ const RawGitHubRepositoryCloneUrlsSchema = Schema.Struct({
   url: TrimmedNonEmptyString,
   sshUrl: TrimmedNonEmptyString,
 });
+
+const RawGitHubMergeMethodsSchema = Schema.Struct({
+  mergeCommitAllowed: Schema.Boolean,
+  squashMergeAllowed: Schema.Boolean,
+  rebaseMergeAllowed: Schema.Boolean,
+});
+const decodeRawGitHubMergeMethods = Schema.decodeEffect(
+  Schema.fromJsonString(RawGitHubMergeMethodsSchema),
+);
+
+/**
+ * `gh pr merge` requires an explicit merge method; without one it drops into an
+ * interactive prompt that has no TTY here and fails. Hardcoding `--merge` breaks
+ * on the many repositories that disallow merge commits (squash- or rebase-only),
+ * so pick a method the repository actually permits, preferring a real merge
+ * commit, then squash, then rebase.
+ */
+function mergeMethodFlag(
+  methods: Schema.Schema.Type<typeof RawGitHubMergeMethodsSchema>,
+): "--merge" | "--squash" | "--rebase" | null {
+  if (methods.mergeCommitAllowed) {
+    return "--merge";
+  }
+  if (methods.squashMergeAllowed) {
+    return "--squash";
+  }
+  if (methods.rebaseMergeAllowed) {
+    return "--rebase";
+  }
+  return null;
+}
 const decodeRawGitHubRepositoryCloneUrls = Schema.decodeEffect(
   Schema.fromJsonString(RawGitHubRepositoryCloneUrlsSchema),
 );
@@ -349,28 +412,43 @@ export const make = Effect.gen(function* () {
 
   const execute: GitHubCli["Service"]["execute"] = (input) =>
     Effect.serviceOption(GitHubAccountResolver).pipe(
-      Effect.flatMap((resolverOption) =>
-        Option.isNone(resolverOption)
-          ? Effect.succeed(null)
-          : resolverOption.value.resolveForCwd(input.cwd),
+      Effect.flatMap(
+        (resolverOption): Effect.Effect<GitHubAccountResolution> =>
+          Option.isNone(resolverOption)
+            ? Effect.succeed({ _tag: "ambient" })
+            : resolverOption.value.resolveForCwd(input.cwd),
       ),
-      Effect.flatMap((resolved) =>
-        process.run({
-          operation: "GitHubCli.execute",
-          command: "gh",
-          args: input.args,
-          cwd: input.cwd,
-          timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-          // The full auth env, not the `gh`-only one: `gh` shells out to `git`
-          // for the network half of `pr create` (pushing a branch with no
-          // upstream) and `pr checkout`, and those children would otherwise fall
-          // back to the machine credential helper.
-          ...(resolved !== null
-            ? { env: gitHubAccountAuthEnv(resolved, globalThis.process.env) }
-            : {}),
-        }),
-      ),
-      Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)),
+      Effect.flatMap((resolution) => {
+        // The project selected an account we can't act as. Refuse instead of
+        // silently running `gh` as the machine's active (wrong) account.
+        if (resolution._tag === "unavailable") {
+          return Effect.fail(
+            new GitHubAccountNotLoggedInError({
+              command: "gh",
+              cwd: input.cwd,
+              host: resolution.account.host,
+              login: resolution.account.login,
+              cause: new Error("gh could not mint a token for the selected account"),
+            }),
+          );
+        }
+        return process
+          .run({
+            operation: "GitHubCli.execute",
+            command: "gh",
+            args: input.args,
+            cwd: input.cwd,
+            timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+            // The full auth env, not the `gh`-only one: `gh` shells out to `git`
+            // for the network half of `pr create` (pushing a branch with no
+            // upstream) and `pr checkout`, and those children would otherwise
+            // fall back to the machine credential helper.
+            ...(resolution._tag === "resolved"
+              ? { env: gitHubAccountAuthEnv(resolution, globalThis.process.env) }
+              : {}),
+          })
+          .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
+      }),
     );
 
   return GitHubCli.of({
@@ -509,8 +587,33 @@ export const make = Effect.gen(function* () {
     mergePullRequest: (input) =>
       execute({
         cwd: input.cwd,
-        args: ["pr", "merge", input.reference, "--merge"],
-      }).pipe(Effect.asVoid),
+        args: [
+          "repo",
+          "view",
+          "--json",
+          "mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed",
+        ],
+      }).pipe(
+        Effect.flatMap((output) =>
+          decodeRawGitHubMergeMethods(output.stdout).pipe(
+            // If the settings can't be read, fall back to a plain merge commit
+            // and let GitHub surface the real reason if that method is refused.
+            Effect.orElseSucceed(() => ({
+              mergeCommitAllowed: true,
+              squashMergeAllowed: false,
+              rebaseMergeAllowed: false,
+            })),
+          ),
+        ),
+        Effect.map(mergeMethodFlag),
+        Effect.flatMap((flag) =>
+          execute({
+            cwd: input.cwd,
+            args: ["pr", "merge", input.reference, ...(flag ? [flag] : ["--merge"])],
+          }),
+        ),
+        Effect.asVoid,
+      ),
   });
 });
 

@@ -574,6 +574,91 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
     }),
   );
 
+  it.effect("maps workspace roots and worktrees (incl. archived threads) to accounts", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+
+      // Two projects: one with an account attached, one without.
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root,
+          default_model_selection_json, scripts_json,
+          github_account_json, created_at, updated_at, deleted_at
+        )
+        VALUES
+          (
+            'project-account',
+            'Account Project',
+            '/repos/account-project',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            '[]',
+            '{"host":"github.com","login":"octo"}',
+            '2026-04-06T00:00:00.000Z',
+            '2026-04-06T00:00:01.000Z',
+            NULL
+          ),
+          (
+            'project-none',
+            'No Account Project',
+            '/repos/no-account',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            '[]',
+            NULL,
+            '2026-04-06T00:00:00.000Z',
+            '2026-04-06T00:00:01.000Z',
+            NULL
+          )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json,
+          runtime_mode, interaction_mode, branch, worktree_path,
+          latest_turn_id, latest_user_message_at,
+          pending_approval_count, pending_user_input_count,
+          has_actionable_proposed_plan, created_at, updated_at,
+          archived_at, deleted_at
+        )
+        VALUES
+          (
+            'thread-active', 'project-account', 'Active', '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access', 'default', NULL, '/state/worktrees/active',
+            NULL, NULL, 0, 0, 0,
+            '2026-04-06T00:00:02.000Z', '2026-04-06T00:00:03.000Z', NULL, NULL
+          ),
+          (
+            'thread-archived', 'project-account', 'Archived', '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access', 'default', NULL, '/state/worktrees/archived',
+            NULL, NULL, 0, 0, 0,
+            '2026-04-06T00:00:04.000Z', '2026-04-06T00:00:05.000Z', '2026-04-06T00:00:06.000Z', NULL
+          ),
+          (
+            'thread-deleted', 'project-account', 'Deleted', '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access', 'default', NULL, '/state/worktrees/deleted',
+            NULL, NULL, 0, 0, 0,
+            '2026-04-06T00:00:04.000Z', '2026-04-06T00:00:05.000Z', NULL, '2026-04-06T00:00:07.000Z'
+          )
+      `;
+
+      const routes = yield* snapshotQuery.listAccountRoutes();
+      const byPath = new Map(routes.map((route) => [route.path, route.account] as const));
+
+      const account = { host: "github.com", login: "octo" };
+      // Workspace root + BOTH the active and the archived thread's worktree
+      // resolve to the account.
+      assert.deepEqual(byPath.get("/repos/account-project"), account);
+      assert.deepEqual(byPath.get("/state/worktrees/active"), account);
+      assert.deepEqual(byPath.get("/state/worktrees/archived"), account);
+      // The deleted thread and the account-less project never appear.
+      assert.equal(byPath.has("/state/worktrees/deleted"), false);
+      assert.equal(byPath.has("/repos/no-account"), false);
+    }),
+  );
+
   it.effect("keeps settled threads in the shell snapshot with non-null settlement fields", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;
