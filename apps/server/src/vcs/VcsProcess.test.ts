@@ -140,6 +140,47 @@ describe("VcsProcess.run", () => {
     }).pipe(provideLive),
   );
 
+  it.effect("classifies permission failures without retaining stderr", () =>
+    Effect.gen(function* () {
+      const secretStderr = "must have write access to run this command super-secret-token";
+      const error = yield* run({
+        operation: "test.permission",
+        command: "node",
+        args: ["-e", "process.stderr.write(process.argv[1]); process.exit(1)", secretStderr],
+        cwd: process.cwd(),
+      }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(VcsProcessExitError);
+      expect(error).toMatchObject({
+        detail: "The authenticated account lacks permission for this operation.",
+        failureKind: "permission-denied",
+        stderrLength: secretStderr.length,
+      });
+      expect(error.message).not.toContain(secretStderr);
+      expect(error.message).not.toContain("super-secret-token");
+    }).pipe(provideLive),
+  );
+
+  it.effect("classifies merge-blocked failures without retaining stderr", () =>
+    Effect.gen(function* () {
+      const secretStderr = "Pull request is not mergeable super-secret-token";
+      const error = yield* run({
+        operation: "test.merge",
+        command: "node",
+        args: ["-e", "process.stderr.write(process.argv[1]); process.exit(1)", secretStderr],
+        cwd: process.cwd(),
+      }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(VcsProcessExitError);
+      expect(error).toMatchObject({
+        failureKind: "merge-blocked",
+        stderrLength: secretStderr.length,
+      });
+      expect(error.message).not.toContain(secretStderr);
+      expect(error.message).not.toContain("super-secret-token");
+    }).pipe(provideLive),
+  );
+
   it.effect("retains spawn causes without exposing process arguments in the error message", () =>
     Effect.gen(function* () {
       const secretArgument = "--token=super-secret-token";

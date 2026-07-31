@@ -226,6 +226,7 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
+import { WorktreeThreadTabs } from "./chat/WorktreeThreadTabs";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
@@ -5716,13 +5717,19 @@ function ChatViewContent(props: ChatViewProps) {
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
             onNewThreadInProject={handleNewThreadInActiveProject}
-            {...(newChatWorktreePath ? { onNewChatInWorktree: handleNewChatInWorktree } : {})}
             onRunProjectScript={runProjectScript}
             onAddProjectScript={saveProjectScript}
             onUpdateProjectScript={updateProjectScript}
             onDeleteProjectScript={deleteProjectScript}
           />
         </header>
+
+        <WorktreeThreadTabs
+          activeEnvironmentId={activeThread.environmentId}
+          activeThreadId={activeThread.id}
+          worktreePath={newChatWorktreePath}
+          {...(newChatWorktreePath ? { onNewChatInWorktree: handleNewChatInWorktree } : {})}
+        />
 
         <ThreadErrorBanner
           error={threadError}

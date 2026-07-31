@@ -6,17 +6,15 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { MessageSquarePlusIcon } from "lucide-react";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
-import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import ProjectScriptsControl, {
+import {
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
 } from "../ProjectScriptsControl";
-import { OpenInPicker } from "./OpenInPicker";
+import { HeaderOverflowMenu } from "./HeaderOverflowMenu";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useT3ProjectFileScripts } from "~/hooks/useT3ProjectFileScripts";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -37,9 +35,6 @@ interface ChatHeaderProps {
   rightPanelOpen: boolean;
   gitCwd: string | null;
   onNewThreadInProject: () => void;
-  // Only provided when the active thread runs in a worktree — starts a fresh
-  // chat pointed at that same worktree instead of provisioning a new one.
-  onNewChatInWorktree?: () => void;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateProjectScript: (
@@ -76,7 +71,6 @@ export const ChatHeader = memo(function ChatHeader({
   rightPanelOpen,
   gitCwd,
   onNewThreadInProject,
-  onNewChatInWorktree,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
@@ -146,43 +140,29 @@ export const ChatHeader = memo(function ChatHeader({
           rightPanelOpen ? "pr-0" : "pr-16",
         )}
       >
-        {onNewChatInWorktree && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  aria-label="New chat in this worktree"
-                  size="icon-xs"
-                  variant="outline"
-                  onClick={onNewChatInWorktree}
-                />
-              }
-            >
-              <MessageSquarePlusIcon aria-hidden="true" className="size-4" />
-            </TooltipTrigger>
-            <TooltipPopup side="top">New chat in this worktree</TooltipPopup>
-          </Tooltip>
-        )}
-        {activeProjectScripts && (
-          <ProjectScriptsControl
-            scripts={activeProjectScripts}
-            fileScripts={fileScripts}
-            keybindings={keybindings}
-            preferredScriptId={preferredScriptId}
-            onRunScript={onRunProjectScript}
-            onAddScript={onAddProjectScript}
-            onUpdateScript={onUpdateProjectScript}
-            onDeleteScript={onDeleteProjectScript}
-          />
-        )}
-        {showOpenInPicker && (
-          <OpenInPicker
-            environmentId={activeThreadEnvironmentId}
-            keybindings={keybindings}
-            availableEditors={availableEditors}
-            openInCwd={openInCwd}
-          />
-        )}
+        <HeaderOverflowMenu
+          showOpenInPicker={showOpenInPicker}
+          openInPicker={{
+            environmentId: activeThreadEnvironmentId,
+            keybindings,
+            availableEditors,
+            openInCwd,
+          }}
+          projectScripts={
+            activeProjectScripts
+              ? {
+                  scripts: activeProjectScripts,
+                  fileScripts,
+                  keybindings,
+                  preferredScriptId,
+                  onRunScript: onRunProjectScript,
+                  onAddScript: onAddProjectScript,
+                  onUpdateScript: onUpdateProjectScript,
+                  onDeleteScript: onDeleteProjectScript,
+                }
+              : null
+          }
+        />
         {activeProjectName && (
           <GitActionsControl
             gitCwd={gitCwd}

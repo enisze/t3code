@@ -79,6 +79,32 @@ export class GitHubCliCommandError extends Schema.TaggedErrorClass<GitHubCliComm
   }
 }
 
+export class GitHubPermissionError extends Schema.TaggedErrorClass<GitHubPermissionError>()(
+  "GitHubPermissionError",
+  gitHubCliFailureFields,
+) {
+  get detail(): string {
+    return "The selected GitHub account doesn't have permission for this action. Check the account attached to this project in its settings.";
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in execute: ${this.detail}`;
+  }
+}
+
+export class GitHubMergeBlockedError extends Schema.TaggedErrorClass<GitHubMergeBlockedError>()(
+  "GitHubMergeBlockedError",
+  gitHubCliFailureFields,
+) {
+  get detail(): string {
+    return "GitHub wouldn't merge this pull request. It may have conflicts, failing required checks, branch protection, or the repository may not allow the merge-commit method.";
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in execute: ${this.detail}`;
+  }
+}
+
 const gitHubCliDecodeFields = {
   command: Schema.Literal("gh"),
   cwd: Schema.String,
@@ -141,6 +167,8 @@ export const GitHubCliError = Schema.Union([
   GitHubCliUnavailableError,
   GitHubCliAuthenticationError,
   GitHubPullRequestNotFoundError,
+  GitHubPermissionError,
+  GitHubMergeBlockedError,
   GitHubCliCommandError,
   GitHubPullRequestListDecodeError,
   GitHubChangeRequestListDecodeError,
@@ -174,6 +202,12 @@ export function fromVcsError(
     }
     if (error.failureKind === "not-found") {
       return new GitHubPullRequestNotFoundError({ ...context, cause: error });
+    }
+    if (error.failureKind === "permission-denied") {
+      return new GitHubPermissionError({ ...context, cause: error });
+    }
+    if (error.failureKind === "merge-blocked") {
+      return new GitHubMergeBlockedError({ ...context, cause: error });
     }
   }
 

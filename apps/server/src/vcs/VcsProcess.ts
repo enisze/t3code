@@ -83,6 +83,41 @@ const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFai
     return "not-found";
   }
 
+  // Valid identity, insufficient rights — the common multi-account footgun,
+  // where the account chosen for a project isn't a collaborator on its repo.
+  if (
+    normalized.includes("permission") ||
+    normalized.includes("must have write access") ||
+    normalized.includes("must have admin") ||
+    normalized.includes("forbidden") ||
+    normalized.includes("403") ||
+    normalized.includes("resource not accessible") ||
+    normalized.includes("not authorized")
+  ) {
+    return "permission-denied";
+  }
+
+  // The change request exists and the caller may merge, but the platform
+  // refuses this merge right now.
+  if (
+    normalized.includes("not mergeable") ||
+    normalized.includes("is not mergeable") ||
+    normalized.includes("merge conflict") ||
+    normalized.includes("has conflicts") ||
+    normalized.includes("not allowed") ||
+    normalized.includes("merge commits are not allowed") ||
+    normalized.includes("squash merges are not allowed") ||
+    normalized.includes("rebase merges are not allowed") ||
+    normalized.includes("required status") ||
+    normalized.includes("branch protection") ||
+    normalized.includes("at least") || // "at least N approving review(s)"
+    normalized.includes("changes must be made through a pull request") ||
+    normalized.includes("base branch was modified") ||
+    normalized.includes("not up to date")
+  ) {
+    return "merge-blocked";
+  }
+
   return "command-failed";
 };
 
