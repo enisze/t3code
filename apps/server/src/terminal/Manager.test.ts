@@ -1275,6 +1275,7 @@ it.layer(
           GitHubAccountResolver.of({
             resolveForCwd: () =>
               Effect.succeed({
+                _tag: "resolved",
                 account: { host: "github.com", login: "octo" },
                 token: "gho_project",
               }),

@@ -374,6 +374,123 @@ describe("GitHubCli.layer", () => {
       assert.equal(error.message.includes(cause.detail), false);
     }).pipe(Effect.provide(layer)),
   );
+
+  it.effect("merges with a real merge commit when the repository allows it", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              mergeCommitAllowed: true,
+              squashMergeAllowed: true,
+              rebaseMergeAllowed: true,
+            }),
+          ),
+        ),
+      );
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.mergePullRequest({ cwd: "/repo", reference: "#42" });
+
+      expect(mockRun).toHaveBeenNthCalledWith(1, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: [
+          "repo",
+          "view",
+          "--json",
+          "mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+      expect(mockRun).toHaveBeenNthCalledWith(2, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "merge", "#42", "--merge"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("falls back to squash when merge commits are disallowed", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              mergeCommitAllowed: false,
+              squashMergeAllowed: true,
+              rebaseMergeAllowed: true,
+            }),
+          ),
+        ),
+      );
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.mergePullRequest({ cwd: "/repo", reference: "#42" });
+
+      expect(mockRun).toHaveBeenNthCalledWith(2, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "merge", "#42", "--squash"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("falls back to rebase when only rebase merges are allowed", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              mergeCommitAllowed: false,
+              squashMergeAllowed: false,
+              rebaseMergeAllowed: true,
+            }),
+          ),
+        ),
+      );
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.mergePullRequest({ cwd: "/repo", reference: "#42" });
+
+      expect(mockRun).toHaveBeenNthCalledWith(2, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "merge", "#42", "--rebase"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("falls back to a plain merge when repository settings can't be read", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("not json")));
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.mergePullRequest({ cwd: "/repo", reference: "#42" });
+
+      expect(mockRun).toHaveBeenNthCalledWith(2, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "merge", "#42", "--merge"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
 });
 
 describe("GitHubCli account scoping", () => {
@@ -381,7 +498,11 @@ describe("GitHubCli account scoping", () => {
     GitHubAccountResolver,
     GitHubAccountResolver.of({
       resolveForCwd: () =>
-        Effect.succeed({ account: { host: "github.com", login: "octo" }, token: "gho_project" }),
+        Effect.succeed({
+          _tag: "resolved",
+          account: { host: "github.com", login: "octo" },
+          token: "gho_project",
+        }),
     }),
   );
 
@@ -408,5 +529,37 @@ describe("GitHubCli account scoping", () => {
 
       assert.equal(mockRun.mock.calls[0]?.[0]?.env, undefined);
     }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("refuses to run gh as the wrong account when the selected one is unavailable", () =>
+    Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      const error = yield* gh
+        .execute({ cwd: "/repo", args: ["pr", "merge", "#42", "--merge"] })
+        .pipe(Effect.flip);
+
+      // No gh command runs — we fail before acting as the ambient account.
+      assert.equal(mockRun.mock.calls.length, 0);
+      assert.strictEqual(error._tag, "GitHubAccountNotLoggedInError");
+      assert.equal(error.message.includes("octo"), true);
+      assert.equal(error.message.includes("gh auth login"), true);
+    }).pipe(
+      Effect.provide(
+        layer.pipe(
+          Layer.provideMerge(
+            Layer.succeed(
+              GitHubAccountResolver,
+              GitHubAccountResolver.of({
+                resolveForCwd: () =>
+                  Effect.succeed({
+                    _tag: "unavailable",
+                    account: { host: "github.com", login: "octo" },
+                  }),
+              }),
+            ),
+          ),
+        ),
+      ),
+    ),
   );
 });

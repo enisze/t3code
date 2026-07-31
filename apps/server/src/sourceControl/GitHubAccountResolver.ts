@@ -36,17 +36,36 @@ export interface ResolvedGitHubAccount {
   readonly token: string;
 }
 
+/**
+ * Outcome of mapping a `cwd` to the GitHub account its commands should act as.
+ *
+ * - `resolved`: an account is attached and its token was materialized — the
+ *   caller injects {@link gitHubAccountAuthEnv} so `gh`/`git` act as it.
+ * - `ambient`: `cwd` maps to no project, or the owning project has no account
+ *   attached — the caller uses the machine-global active account. This is the
+ *   correct behavior for cloning (no project yet) and for projects that never
+ *   picked an account.
+ * - `unavailable`: the owning project HAS an account attached, but its token
+ *   could not be minted (the account isn't logged in to `gh`, or `gh` failed).
+ *   Silently falling back to the active account here would run the command as
+ *   the WRONG user, so the caller MUST refuse the action with an actionable
+ *   "account not logged in" error instead.
+ */
+export type GitHubAccountResolution =
+  | { readonly _tag: "resolved"; readonly account: GitHubAccountRef; readonly token: string }
+  | { readonly _tag: "ambient" }
+  | { readonly _tag: "unavailable"; readonly account: GitHubAccountRef };
+
 export class GitHubAccountResolver extends Context.Service<
   GitHubAccountResolver,
   {
     /**
-     * Resolve the GitHub account a command running in `cwd` should act as,
-     * along with a freshly materialized token. Returns null when the owning
-     * project has no account attached, when the token cannot be resolved, or
-     * when `cwd` maps to no known project — the caller then falls back to the
-     * machine-global active account.
+     * Resolve the GitHub account a command running in `cwd` should act as.
+     * Distinguishes "no account attached / unknown cwd" (fall back to the
+     * ambient account) from "account attached but its token can't be minted"
+     * (the caller must fail loudly rather than act as the wrong account).
      */
-    readonly resolveForCwd: (cwd: string) => Effect.Effect<ResolvedGitHubAccount | null>;
+    readonly resolveForCwd: (cwd: string) => Effect.Effect<GitHubAccountResolution>;
   }
 >()("t3/sourceControl/GitHubAccountResolver") {}
 
@@ -145,36 +164,21 @@ export const make = Effect.gen(function* () {
   /**
    * Find the account attached to the project owning `cwd`. Matches the longest
    * project workspace root or thread worktree path that contains `cwd`, so a
-   * worktree checked out outside the project root still resolves.
+   * worktree checked out outside the project root — including one belonging to
+   * an archived thread — still resolves.
    */
   const findAccountForCwd = (cwd: string): Effect.Effect<GitHubAccountRef | null> =>
-    snapshotQuery.getShellSnapshot().pipe(
-      Effect.map((snapshot) => {
-        const accountByProjectId = new Map(
-          snapshot.projects
-            .filter((project) => project.gitHubAccount !== null)
-            .map((project) => [project.id, project.gitHubAccount] as const),
-        );
-
+    snapshotQuery.listAccountRoutes().pipe(
+      Effect.map((routes) => {
         let bestPathLength = -1;
         let bestAccount: GitHubAccountRef | null = null;
-        const consider = (basePath: string, account: GitHubAccountRef | null) => {
-          if (account === null) return;
-          if (!isWithin(cwd, basePath)) return;
-          if (basePath.length > bestPathLength) {
-            bestPathLength = basePath.length;
-            bestAccount = account;
+        for (const route of routes) {
+          if (!isWithin(cwd, route.path)) continue;
+          if (route.path.length > bestPathLength) {
+            bestPathLength = route.path.length;
+            bestAccount = route.account;
           }
-        };
-
-        for (const project of snapshot.projects) {
-          consider(project.workspaceRoot, project.gitHubAccount);
         }
-        for (const thread of snapshot.threads) {
-          if (thread.worktreePath === null) continue;
-          consider(thread.worktreePath, accountByProjectId.get(thread.projectId) ?? null);
-        }
-
         return bestAccount;
       }),
       // A projection read failure must not break the underlying git/gh command;
@@ -231,13 +235,16 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const account = yield* findAccountForCwd(cwd);
       if (account === null) {
-        return null;
+        return { _tag: "ambient" } as const;
       }
       const token = yield* resolveToken(cwd, account);
       if (token === null) {
-        return null;
+        // The project explicitly selected this account but we couldn't act as
+        // it. Report it so the caller refuses rather than silently using the
+        // wrong (ambient) account.
+        return { _tag: "unavailable", account } as const;
       }
-      return { account, token } satisfies ResolvedGitHubAccount;
+      return { _tag: "resolved", account, token } as const;
     });
 
   return GitHubAccountResolver.of({ resolveForCwd });

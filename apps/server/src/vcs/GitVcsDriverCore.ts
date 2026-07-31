@@ -912,15 +912,33 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
    * Resolve the env that authenticates git/gh as the project's selected GitHub
    * account for `cwd`. Returns `{}` when no account is attached or the resolver
    * isn't provided (tests/minimal layers), leaving ambient auth untouched.
+   *
+   * Fails with a `GitCommandError` when the project HAS an account attached but
+   * its token can't be minted (the account isn't logged in to `gh`) — pushing
+   * or fetching as the machine's active account would act as the wrong user, so
+   * we refuse instead of silently falling back.
    */
-  const resolveAccountAuthEnv = (cwd: string): Effect.Effect<NodeJS.ProcessEnv> =>
+  const resolveAccountAuthEnv = (
+    operation: string,
+    cwd: string,
+  ): Effect.Effect<NodeJS.ProcessEnv, GitCommandError> =>
     Effect.gen(function* () {
       const resolverOption = yield* Effect.serviceOption(GitHubAccountResolver);
       if (Option.isNone(resolverOption)) {
         return {};
       }
-      const resolved = yield* resolverOption.value.resolveForCwd(cwd);
-      return resolved === null ? {} : gitHubAccountAuthEnv(resolved, process.env);
+      const resolution = yield* resolverOption.value.resolveForCwd(cwd);
+      if (resolution._tag === "unavailable") {
+        return yield* Effect.fail(
+          new GitCommandError({
+            operation,
+            command: "git",
+            cwd,
+            detail: `The GitHub account "${resolution.account.login}" is selected for this project but isn't logged in to the GitHub CLI on ${resolution.account.host}. Run \`gh auth login\` for that account, or change the account in the project's settings.`,
+          }),
+        );
+      }
+      return resolution._tag === "resolved" ? gitHubAccountAuthEnv(resolution, process.env) : {};
     });
 
   /**
@@ -935,8 +953,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
    * can't be silently skipped by a call site that forgot to opt in — the class
    * of bug that made "set an account for a project" only half-work.
    */
-  const resolveNetworkGitEnv = (cwd: string): Effect.Effect<NodeJS.ProcessEnv> =>
-    resolveAccountAuthEnv(cwd).pipe(
+  const resolveNetworkGitEnv = (
+    operation: string,
+    cwd: string,
+  ): Effect.Effect<NodeJS.ProcessEnv, GitCommandError> =>
+    resolveAccountAuthEnv(operation, cwd).pipe(
       Effect.map((authEnv) => ({ ...STATUS_UPSTREAM_REFRESH_ENV, ...authEnv })),
     );
 
@@ -1037,7 +1058,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   ): Effect.Effect<void, GitCommandError> => {
     const fetchCwd =
       path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
-    return resolveNetworkGitEnv(fetchCwd).pipe(
+    return resolveNetworkGitEnv("GitVcsDriver.fetchRemoteForStatus", fetchCwd).pipe(
       Effect.flatMap((env) =>
         executeGit(
           "GitVcsDriver.fetchRemoteForStatus",
@@ -1880,7 +1901,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     // Authenticate the push as the project's selected GitHub account (if any),
     // non-interactively so it fails fast instead of prompting on the server.
-    const authEnv = yield* resolveNetworkGitEnv(cwd);
+    const authEnv = yield* resolveNetworkGitEnv("GitVcsDriver.pushCurrentBranch", cwd);
 
     const requestedRemoteName = options?.remoteName?.trim() || null;
     if (requestedRemoteName) {
@@ -2020,7 +2041,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ["rev-parse", "HEAD"],
       true,
     ).pipe(Effect.map((stdout) => stdout.trim()));
-    const pullEnv = yield* resolveNetworkGitEnv(cwd);
+    const pullEnv = yield* resolveNetworkGitEnv("GitVcsDriver.pullCurrentBranch", cwd);
     yield* executeGit("GitVcsDriver.pullCurrentBranch.pull", cwd, ["pull", "--ff-only"], {
       env: pullEnv,
       timeoutMs: 30_000,
@@ -2615,7 +2636,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const fetchPullRequestBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchPullRequestBranch"] =
     Effect.fn("fetchPullRequestBranch")(function* (input) {
       const remoteName = yield* resolvePrimaryRemoteName(input.cwd);
-      const env = yield* resolveNetworkGitEnv(input.cwd);
+      const env = yield* resolveNetworkGitEnv("GitVcsDriver.fetchPullRequestBranch", input.cwd);
       yield* executeGit(
         "GitVcsDriver.fetchPullRequestBranch",
         input.cwd,
@@ -2635,7 +2656,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const fetchRemote: GitVcsDriver.GitVcsDriver["Service"]["fetchRemote"] = Effect.fn("fetchRemote")(
     function* (input) {
-      const env = yield* resolveNetworkGitEnv(input.cwd);
+      const env = yield* resolveNetworkGitEnv("GitVcsDriver.fetchRemote", input.cwd);
       yield* executeGit(
         "GitVcsDriver.fetchRemote",
         input.cwd,
@@ -2669,7 +2690,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const fetchRemoteBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteBranch"] = Effect.fn(
     "fetchRemoteBranch",
   )(function* (input) {
-    const authEnv = yield* resolveNetworkGitEnv(input.cwd);
+    const authEnv = yield* resolveNetworkGitEnv("GitVcsDriver.fetchRemoteBranch", input.cwd);
     yield* runGitWithEnv(
       "GitVcsDriver.fetchRemoteBranch.fetch",
       input.cwd,
@@ -2696,7 +2717,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const fetchRemoteTrackingBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"] =
     Effect.fn("fetchRemoteTrackingBranch")(function* (input) {
-      const env = yield* resolveNetworkGitEnv(input.cwd);
+      const env = yield* resolveNetworkGitEnv("GitVcsDriver.fetchRemoteTrackingBranch", input.cwd);
       yield* runGitWithEnv(
         "GitVcsDriver.fetchRemoteTrackingBranch",
         input.cwd,

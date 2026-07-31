@@ -258,6 +258,11 @@ function mapProposedPlanRow(
   };
 }
 
+const ProjectionAccountRouteRowSchema = Schema.Struct({
+  path: Schema.String,
+  account: Schema.fromJsonString(GitHubAccountRef),
+});
+
 function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
   return (cause: unknown): ProjectionRepositoryError =>
     Schema.isSchemaError(cause)
@@ -319,6 +324,32 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           deleted_at AS "deletedAt"
         FROM projection_projects
         ORDER BY created_at ASC, project_id ASC
+      `,
+  });
+
+  const listAccountRouteRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionAccountRouteRowSchema,
+    // Union of project workspace roots and thread worktree paths that have an
+    // account attached. Threads are NOT filtered by archived_at — an archived
+    // thread's worktree still exists on disk, and a git/gh command run there
+    // must resolve to its project's account rather than silently using the
+    // machine's active account.
+    execute: () =>
+      sql`
+        SELECT workspace_root AS "path", github_account_json AS "account"
+        FROM projection_projects
+        WHERE deleted_at IS NULL
+          AND github_account_json IS NOT NULL
+        UNION ALL
+        SELECT threads.worktree_path AS "path", projects.github_account_json AS "account"
+        FROM projection_threads AS threads
+        INNER JOIN projection_projects AS projects
+          ON projects.project_id = threads.project_id
+        WHERE threads.deleted_at IS NULL
+          AND threads.worktree_path IS NOT NULL
+          AND projects.deleted_at IS NULL
+          AND projects.github_account_json IS NOT NULL
       `,
   });
 
@@ -2119,11 +2150,22 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         ),
       );
 
+  const listAccountRoutes: ProjectionSnapshotQueryShape["listAccountRoutes"] = () =>
+    listAccountRouteRows(undefined).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.listAccountRoutes:query",
+          "ProjectionSnapshotQuery.listAccountRoutes:decodeRows",
+        ),
+      ),
+    );
+
   return {
     getCommandReadModel,
     getSnapshot,
     getShellSnapshot,
     getArchivedShellSnapshot,
+    listAccountRoutes,
     getSnapshotSequence,
     getCounts,
     getActiveProjectByWorkspaceRoot,

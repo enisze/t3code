@@ -79,19 +79,48 @@ const processOutput = (stdout: string): VcsProcess.VcsProcessOutput => ({
 });
 
 const mockRun = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>();
-const mockGetShellSnapshot = vi.fn<ProjectionSnapshotQuery["Service"]["getShellSnapshot"]>();
+const mockListAccountRoutes = vi.fn<ProjectionSnapshotQuery["Service"]["listAccountRoutes"]>();
+
+// Derive the flat path→account routes the resolver consumes from the same
+// projects/threads fixtures the tests express, mirroring the SQL union in
+// ProjectionSnapshotQuery.listAccountRoutes.
+const routesFromSnapshot = (
+  snapshot: OrchestrationShellSnapshot,
+): ReadonlyArray<{ readonly path: string; readonly account: GitHubAccountRef }> => {
+  const accountByProjectId = new Map(
+    snapshot.projects
+      .filter((project) => project.gitHubAccount !== null)
+      .map((project) => [project.id, project.gitHubAccount as GitHubAccountRef] as const),
+  );
+  const routes: Array<{ path: string; account: GitHubAccountRef }> = [];
+  for (const project of snapshot.projects) {
+    if (project.gitHubAccount !== null) {
+      routes.push({ path: project.workspaceRoot, account: project.gitHubAccount });
+    }
+  }
+  for (const thread of snapshot.threads) {
+    if (thread.worktreePath === null) continue;
+    const account = accountByProjectId.get(thread.projectId);
+    if (account !== undefined) {
+      routes.push({ path: thread.worktreePath, account });
+    }
+  }
+  return routes;
+};
 
 const layerFor = (snapshot: OrchestrationShellSnapshot) => {
-  mockGetShellSnapshot.mockReturnValue(Effect.succeed(snapshot));
+  mockListAccountRoutes.mockReturnValue(Effect.succeed(routesFromSnapshot(snapshot)));
   return resolverLayer.pipe(
     Layer.provide(Layer.mock(VcsProcess.VcsProcess)({ run: mockRun })),
-    Layer.provide(Layer.mock(ProjectionSnapshotQuery)({ getShellSnapshot: mockGetShellSnapshot })),
+    Layer.provide(
+      Layer.mock(ProjectionSnapshotQuery)({ listAccountRoutes: mockListAccountRoutes }),
+    ),
   );
 };
 
 afterEach(() => {
   mockRun.mockReset();
-  mockGetShellSnapshot.mockReset();
+  mockListAccountRoutes.mockReset();
 });
 
 describe("gitHubAccountGhEnv", () => {
@@ -181,11 +210,11 @@ describe("gitHubAccountAuthEnv", () => {
 });
 
 describe("GitHubAccountResolver.resolveForCwd", () => {
-  it.effect("returns null when the owning project has no account", () =>
+  it.effect("resolves to ambient when the owning project has no account", () =>
     Effect.gen(function* () {
       const resolver = yield* GitHubAccountResolver;
       const resolved = yield* resolver.resolveForCwd("/repos/app/src");
-      assert.equal(resolved, null);
+      assert.deepEqual(resolved, { _tag: "ambient" });
       assert.equal(mockRun.mock.calls.length, 0);
     }).pipe(
       Effect.provide(
@@ -207,6 +236,7 @@ describe("GitHubAccountResolver.resolveForCwd", () => {
       const resolver = yield* GitHubAccountResolver;
       const resolved = yield* resolver.resolveForCwd("/repos/app/packages/x");
       assert.deepEqual(resolved, {
+        _tag: "resolved",
         account: { host: "github.com", login: "octo" },
         token: "gho_secret",
       });
@@ -236,6 +266,7 @@ describe("GitHubAccountResolver.resolveForCwd", () => {
       const resolver = yield* GitHubAccountResolver;
       const resolved = yield* resolver.resolveForCwd("/state/worktrees/wt-1/sub");
       assert.deepEqual(resolved, {
+        _tag: "resolved",
         account: { host: "github.com", login: "octo" },
         token: "gho_wt",
       });
@@ -263,7 +294,7 @@ describe("GitHubAccountResolver.resolveForCwd", () => {
     Effect.gen(function* () {
       const resolver = yield* GitHubAccountResolver;
       const resolved = yield* resolver.resolveForCwd("/repos/app-2/src");
-      assert.equal(resolved, null);
+      assert.deepEqual(resolved, { _tag: "ambient" });
     }).pipe(
       Effect.provide(
         layerFor(
@@ -282,12 +313,15 @@ describe("GitHubAccountResolver.resolveForCwd", () => {
     ),
   );
 
-  it.effect("returns null when gh cannot mint a token", () =>
+  it.effect("reports unavailable when the attached account can't mint a token", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValue(Effect.succeed(processOutput("")));
       const resolver = yield* GitHubAccountResolver;
       const resolved = yield* resolver.resolveForCwd("/repos/app");
-      assert.equal(resolved, null);
+      assert.deepEqual(resolved, {
+        _tag: "unavailable",
+        account: { host: "github.com", login: "octo" },
+      });
     }).pipe(
       Effect.provide(
         layerFor(
