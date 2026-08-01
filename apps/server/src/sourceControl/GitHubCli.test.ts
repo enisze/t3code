@@ -1,7 +1,9 @@
 import { assert, it, afterEach, describe, expect, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 
@@ -389,6 +391,14 @@ describe("GitHubCli.layer", () => {
           ),
         ),
       );
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({ mergeable: "MERGEABLE", mergeStateStatus: "CLEAN" }),
+          ),
+        ),
+      );
       mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
 
       const gh = yield* GitHubCli.GitHubCli;
@@ -407,6 +417,13 @@ describe("GitHubCli.layer", () => {
         timeoutMs: 30_000,
       });
       expect(mockRun).toHaveBeenNthCalledWith(2, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "view", "#42", "--json", "mergeable,mergeStateStatus"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+      expect(mockRun).toHaveBeenNthCalledWith(3, {
         operation: "GitHubCli.execute",
         command: "gh",
         args: ["pr", "merge", "#42", "--merge"],
@@ -430,12 +447,20 @@ describe("GitHubCli.layer", () => {
           ),
         ),
       );
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({ mergeable: "MERGEABLE", mergeStateStatus: "CLEAN" }),
+          ),
+        ),
+      );
       mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
 
       const gh = yield* GitHubCli.GitHubCli;
       yield* gh.mergePullRequest({ cwd: "/repo", reference: "#42" });
 
-      expect(mockRun).toHaveBeenNthCalledWith(2, {
+      expect(mockRun).toHaveBeenNthCalledWith(3, {
         operation: "GitHubCli.execute",
         command: "gh",
         args: ["pr", "merge", "#42", "--squash"],
@@ -459,12 +484,20 @@ describe("GitHubCli.layer", () => {
           ),
         ),
       );
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({ mergeable: "MERGEABLE", mergeStateStatus: "CLEAN" }),
+          ),
+        ),
+      );
       mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
 
       const gh = yield* GitHubCli.GitHubCli;
       yield* gh.mergePullRequest({ cwd: "/repo", reference: "#42" });
 
-      expect(mockRun).toHaveBeenNthCalledWith(2, {
+      expect(mockRun).toHaveBeenNthCalledWith(3, {
         operation: "GitHubCli.execute",
         command: "gh",
         args: ["pr", "merge", "#42", "--rebase"],
@@ -477,12 +510,147 @@ describe("GitHubCli.layer", () => {
   it.effect("falls back to a plain merge when repository settings can't be read", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(Effect.succeed(processOutput("not json")));
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({ mergeable: "MERGEABLE", mergeStateStatus: "CLEAN" }),
+          ),
+        ),
+      );
       mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
 
       const gh = yield* GitHubCli.GitHubCli;
       yield* gh.mergePullRequest({ cwd: "/repo", reference: "#42" });
 
+      expect(mockRun).toHaveBeenNthCalledWith(3, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "merge", "#42", "--merge"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("polls until GitHub finishes computing mergeability before merging", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              mergeCommitAllowed: true,
+              squashMergeAllowed: true,
+              rebaseMergeAllowed: true,
+            }),
+          ),
+        ),
+      );
+      // First read: still computing. Second read: settled.
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({ mergeable: "UNKNOWN", mergeStateStatus: "UNKNOWN" }),
+          ),
+        ),
+      );
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({ mergeable: "MERGEABLE", mergeStateStatus: "CLEAN" }),
+          ),
+        ),
+      );
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const merge = yield* gh
+        .mergePullRequest({ cwd: "/repo", reference: "#42" })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      // Let the one-second poll backoff elapse so the second read runs.
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(merge);
+
       expect(mockRun).toHaveBeenNthCalledWith(2, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "view", "#42", "--json", "mergeable,mergeStateStatus"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+      expect(mockRun).toHaveBeenNthCalledWith(3, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "view", "#42", "--json", "mergeable,mergeStateStatus"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+      expect(mockRun).toHaveBeenNthCalledWith(4, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "merge", "#42", "--merge"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("retries a transient merge-blocked failure", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              mergeCommitAllowed: true,
+              squashMergeAllowed: true,
+              rebaseMergeAllowed: true,
+            }),
+          ),
+        ),
+      );
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({ mergeable: "MERGEABLE", mergeStateStatus: "CLEAN" }),
+          ),
+        ),
+      );
+      // First merge attempt: transient rejection. Second: success.
+      mockRun.mockReturnValueOnce(
+        Effect.fail(
+          new VcsProcessExitError({
+            operation: "GitHubCli.execute",
+            command: "gh",
+            cwd: "/repo",
+            exitCode: 1,
+            detail: "blocked",
+            failureKind: "merge-blocked",
+          }),
+        ),
+      );
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const merge = yield* gh
+        .mergePullRequest({ cwd: "/repo", reference: "#42" })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      // Let the one-second retry backoff elapse so the second attempt runs.
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(merge);
+
+      expect(mockRun).toHaveBeenNthCalledWith(3, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "merge", "#42", "--merge"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+      expect(mockRun).toHaveBeenNthCalledWith(4, {
         operation: "GitHubCli.execute",
         command: "gh",
         args: ["pr", "merge", "#42", "--merge"],
