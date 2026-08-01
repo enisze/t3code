@@ -176,6 +176,7 @@ import { openCommandPalette } from "../commandPaletteBus";
 import {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
+  collapseWorktreeSiblings,
   getSidebarThreadIdsToPrewarm,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
@@ -1239,7 +1240,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     return counts;
   }, [memberProjectByScopedKey, project.memberProjects, projectThreads]);
 
-  const { projectStatus, visibleProjectThreads, orderedProjectThreadKeys } = useMemo(() => {
+  const {
+    projectStatus,
+    visibleProjectThreads,
+    orderedProjectThreadKeys,
+    representativeKeyByThreadKey,
+  } = useMemo(() => {
     const lastVisitedAtByThreadKey = new Map(
       projectThreads.map((thread, index) => [
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
@@ -1257,23 +1263,38 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         },
       });
     };
-    const visibleProjectThreads = sortThreads(
+    const sortedThreads = sortThreads(
       projectThreads.filter((thread) => thread.archivedAt === null),
       threadSortOrder,
     );
+    // Chats spawned into the same worktree (via the in-chat worktree tab
+    // strip) collapse to a single row; the siblings stay reachable only as
+    // tabs. The project status dot still reads from every non-archived
+    // thread so a busy sibling never goes unreported behind its row.
+    const { threads: visibleProjectThreads, representativeKeyByThreadKey } =
+      collapseWorktreeSiblings(sortedThreads, (thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      );
     const projectStatus = resolveProjectStatusIndicator(
-      visibleProjectThreads.map((thread) => resolveProjectThreadStatus(thread)),
+      sortedThreads.map((thread) => resolveProjectThreadStatus(thread)),
     );
     return {
       orderedProjectThreadKeys: visibleProjectThreads.map((thread) =>
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       ),
       projectStatus,
+      representativeKeyByThreadKey,
       visibleProjectThreads,
     };
   }, [projectThreads, threadLastVisitedAts, threadSortOrder]);
+  // When the active route is a collapsed worktree sibling, highlight and pin
+  // the representative row that stands in for it.
+  const effectiveActiveRouteThreadKey =
+    activeRouteThreadKey === null
+      ? null
+      : (representativeKeyByThreadKey.get(activeRouteThreadKey) ?? activeRouteThreadKey);
   const pinnedCollapsedThread = useMemo(() => {
-    const activeThreadKey = activeRouteThreadKey ?? undefined;
+    const activeThreadKey = effectiveActiveRouteThreadKey ?? undefined;
     if (!activeThreadKey || projectExpanded) {
       return null;
     }
@@ -1283,7 +1304,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === activeThreadKey,
       ) ?? null
     );
-  }, [activeRouteThreadKey, projectExpanded, visibleProjectThreads]);
+  }, [effectiveActiveRouteThreadKey, projectExpanded, visibleProjectThreads]);
 
   const {
     hasOverflowingThreads,
@@ -2375,7 +2396,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         shouldShowThreadPanel={shouldShowThreadPanel}
         isThreadListExpanded={isThreadListExpanded}
         projectCwd={project.workspaceRoot}
-        activeRouteThreadKey={activeRouteThreadKey}
+        activeRouteThreadKey={effectiveActiveRouteThreadKey}
         threadJumpLabelByKey={threadJumpLabelByKey}
         appSettingsConfirmThreadArchive={appSettingsConfirmThreadArchive}
         renamingThreadKey={renamingThreadKey}
@@ -3327,6 +3348,16 @@ export default function Sidebar() {
     () => sidebarThreads.filter((thread) => thread.archivedAt === null),
     [sidebarThreads],
   );
+  // The active route may be a collapsed worktree sibling that has no row of
+  // its own; keyboard traversal and jump ordering run against the earliest
+  // chat that represents it.
+  const routeRepresentativeThreadKey = useMemo(() => {
+    if (routeThreadKey === null) return null;
+    const { representativeKeyByThreadKey } = collapseWorktreeSiblings(visibleThreads, (thread) =>
+      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+    );
+    return representativeKeyByThreadKey.get(routeThreadKey) ?? routeThreadKey;
+  }, [routeThreadKey, visibleThreads]);
   const sortedProjects = useMemo(() => {
     const sortableProjects = sidebarProjects.map((project) => ({
       ...project,
@@ -3362,17 +3393,26 @@ export default function Sidebar() {
   const visibleSidebarThreadKeys = useMemo(
     () =>
       sortedProjects.flatMap((project) => {
-        const projectThreads = sortThreads(
-          (threadsByProjectKey.get(project.projectKey) ?? []).filter(
-            (thread) => thread.archivedAt === null,
+        // Mirror the row-level collapse so jump labels and prewarming line up
+        // with the rendered rows: worktree siblings fold into their earliest
+        // representative and never claim their own visible slot.
+        const { threads: projectThreads, representativeKeyByThreadKey } = collapseWorktreeSiblings(
+          sortThreads(
+            (threadsByProjectKey.get(project.projectKey) ?? []).filter(
+              (thread) => thread.archivedAt === null,
+            ),
+            sidebarThreadSortOrder,
           ),
-          sidebarThreadSortOrder,
+          (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
         );
         const projectExpanded = resolveProjectExpanded(
           projectExpandedById,
           projectExpansionPreferenceKeys(project),
         );
-        const activeThreadKey = routeThreadKey ?? undefined;
+        const activeThreadKey =
+          routeThreadKey === null
+            ? undefined
+            : (representativeKeyByThreadKey.get(routeThreadKey) ?? routeThreadKey);
         const pinnedCollapsedThread =
           !projectExpanded && activeThreadKey
             ? (projectThreads.find(
@@ -3482,7 +3522,7 @@ export default function Sidebar() {
       if (traversalDirection !== null) {
         const targetThreadKey = resolveAdjacentThreadId({
           threadIds: orderedSidebarThreadKeys,
-          currentThreadId: routeThreadKey,
+          currentThreadId: routeRepresentativeThreadKey,
           direction: traversalDirection,
         });
         if (!targetThreadKey) {
@@ -3529,6 +3569,7 @@ export default function Sidebar() {
     navigateToThread,
     orderedSidebarThreadKeys,
     platform,
+    routeRepresentativeThreadKey,
     routeThreadKey,
     sidebarThreadByKey,
     threadJumpThreadKeys,

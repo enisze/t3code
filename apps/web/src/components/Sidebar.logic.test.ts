@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
+  collapseWorktreeSiblings,
   createThreadJumpHintVisibilityController,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
@@ -1038,6 +1039,82 @@ describe("getVisibleThreadsForProject", () => {
       threads.map((thread) => thread.id),
     );
     expect(result.hiddenThreads).toEqual([]);
+  });
+});
+
+describe("collapseWorktreeSiblings", () => {
+  type CollapsibleThread = {
+    id: string;
+    environmentId: string;
+    worktreePath: string | null;
+    createdAt: string;
+  };
+  const keyOf = (thread: CollapsibleThread) => `${thread.environmentId}:${thread.id}`;
+  const make = (
+    id: string,
+    worktreePath: string | null,
+    createdAt: string,
+    environmentId = "env-1",
+  ): CollapsibleThread => ({ id, environmentId, worktreePath, createdAt });
+
+  it("keeps only the earliest-created chat per worktree, preserving input order", () => {
+    const threads = [
+      make("newer", "/wt/a", "2026-03-09T12:00:00.000Z"),
+      make("standalone", null, "2026-03-09T11:00:00.000Z"),
+      make("older", "/wt/a", "2026-03-09T10:00:00.000Z"),
+    ];
+
+    const { threads: collapsed } = collapseWorktreeSiblings(threads, keyOf);
+
+    // "older" survives (earliest in its worktree) and stays where it sat.
+    expect(collapsed.map((thread) => thread.id)).toEqual(["standalone", "older"]);
+  });
+
+  it("never collapses threads without a worktree", () => {
+    const threads = [
+      make("a", null, "2026-03-09T10:00:00.000Z"),
+      make("b", null, "2026-03-09T10:00:00.000Z"),
+    ];
+
+    const { threads: collapsed } = collapseWorktreeSiblings(threads, keyOf);
+
+    expect(collapsed.map((thread) => thread.id)).toEqual(["a", "b"]);
+  });
+
+  it("does not merge same-path worktrees across environments", () => {
+    const threads = [
+      make("a", "/wt/shared", "2026-03-09T10:00:00.000Z", "env-1"),
+      make("b", "/wt/shared", "2026-03-09T11:00:00.000Z", "env-2"),
+    ];
+
+    const { threads: collapsed } = collapseWorktreeSiblings(threads, keyOf);
+
+    expect(collapsed.map((thread) => thread.id)).toEqual(["a", "b"]);
+  });
+
+  it("maps every sibling and the representative to the representative's key", () => {
+    const threads = [
+      make("older", "/wt/a", "2026-03-09T10:00:00.000Z"),
+      make("newer", "/wt/a", "2026-03-09T12:00:00.000Z"),
+      make("solo", null, "2026-03-09T11:00:00.000Z"),
+    ];
+
+    const { representativeKeyByThreadKey } = collapseWorktreeSiblings(threads, keyOf);
+
+    expect(representativeKeyByThreadKey.get("env-1:newer")).toBe("env-1:older");
+    expect(representativeKeyByThreadKey.get("env-1:older")).toBe("env-1:older");
+    expect(representativeKeyByThreadKey.get("env-1:solo")).toBe("env-1:solo");
+  });
+
+  it("breaks createdAt ties deterministically by id", () => {
+    const threads = [
+      make("beta", "/wt/a", "2026-03-09T10:00:00.000Z"),
+      make("alpha", "/wt/a", "2026-03-09T10:00:00.000Z"),
+    ];
+
+    const { threads: collapsed } = collapseWorktreeSiblings(threads, keyOf);
+
+    expect(collapsed.map((thread) => thread.id)).toEqual(["alpha"]);
   });
 });
 

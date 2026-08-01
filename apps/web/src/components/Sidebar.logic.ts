@@ -671,6 +671,72 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
   };
 }
 
+type WorktreeCollapsibleThread = {
+  readonly id: string;
+  readonly environmentId: string;
+  readonly worktreePath: string | null;
+  readonly createdAt: string;
+};
+
+function isEarlierCreatedThread<T extends WorktreeCollapsibleThread>(
+  candidate: T,
+  incumbent: T,
+): boolean {
+  const byCreatedAt = candidate.createdAt.localeCompare(incumbent.createdAt);
+  return byCreatedAt !== 0 ? byCreatedAt < 0 : candidate.id.localeCompare(incumbent.id) < 0;
+}
+
+/**
+ * Collapse chats that share one on-disk git worktree into a single sidebar
+ * row. Several chats can run in the same worktree — the in-chat worktree tab
+ * strip spawns siblings that reuse it — and listing each as its own row
+ * duplicates the worktree down the sidebar. Only the earliest-created chat in
+ * a group survives as the representative row; its siblings stay reachable
+ * through the tab strip. Threads with no worktree (worktreePath === null)
+ * never collapse — each keeps its own row.
+ *
+ * Survivors keep their input order (each stays at its own position), so the
+ * caller's sort is preserved. `representativeKeyByThreadKey` maps every input
+ * thread's key to its representative's key so the caller can highlight the
+ * representative row when the active route is a collapsed sibling.
+ */
+export function collapseWorktreeSiblings<T extends WorktreeCollapsibleThread>(
+  threads: readonly T[],
+  keyOf: (thread: T) => string,
+): { threads: T[]; representativeKeyByThreadKey: Map<string, string> } {
+  const representativeByGroupKey = new Map<string, T>();
+  for (const thread of threads) {
+    if (thread.worktreePath === null) continue;
+    const groupKey = `${thread.environmentId}\0${thread.worktreePath}`;
+    const incumbent = representativeByGroupKey.get(groupKey);
+    if (incumbent === undefined || isEarlierCreatedThread(thread, incumbent)) {
+      representativeByGroupKey.set(groupKey, thread);
+    }
+  }
+
+  const representativeKeyByGroupKey = new Map<string, string>();
+  for (const [groupKey, thread] of representativeByGroupKey) {
+    representativeKeyByGroupKey.set(groupKey, keyOf(thread));
+  }
+
+  const representativeKeyByThreadKey = new Map<string, string>();
+  const survivors: T[] = [];
+  for (const thread of threads) {
+    const key = keyOf(thread);
+    if (thread.worktreePath === null) {
+      representativeKeyByThreadKey.set(key, key);
+      survivors.push(thread);
+      continue;
+    }
+    const groupKey = `${thread.environmentId}\0${thread.worktreePath}`;
+    const representativeKey = representativeKeyByGroupKey.get(groupKey) ?? key;
+    representativeKeyByThreadKey.set(key, representativeKey);
+    if (representativeKey === key) survivors.push(thread);
+  }
+
+  return { threads: survivors, representativeKeyByThreadKey };
+}
+
 export function getFallbackThreadIdAfterDelete<
   T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt"> & ThreadSortInput,
 >(input: {

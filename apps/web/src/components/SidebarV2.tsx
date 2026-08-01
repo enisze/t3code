@@ -117,6 +117,7 @@ import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat"
 import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
 import {
+  collapseWorktreeSiblings,
   formatWorkingDurationLabel,
   firstValidTimestampMs,
   hasUnseenCompletion,
@@ -1607,68 +1608,84 @@ export default function SidebarV2() {
   // merging, no optimistic holds. Archived threads remain hidden here —
   // archive keeps its original "remove from sidebar" meaning.
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
-  const { activeThreads, snoozedThreads, settledThreads, snoozeNow } = useMemo(() => {
-    const now = `${nowMinute}:00.000Z`;
-    // Snooze classification uses a REAL clock, not the quantized minute:
-    // wake times are second-precise and a woken thread must not linger on
-    // the shelf for the rest of the minute. snoozeWakeTick re-runs this
-    // memo exactly at the next wake boundary.
-    void snoozeWakeTick;
-    const preciseNow = new Date().toISOString();
-    const visible = threads.filter(
-      (thread) =>
-        thread.archivedAt === null &&
-        (scopedProjectKeys === null ||
-          scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
-    );
-    const active: EnvironmentThreadShell[] = [];
-    const snoozed: EnvironmentThreadShell[] = [];
-    const settled: EnvironmentThreadShell[] = [];
-    for (const thread of visible) {
-      // Threads on servers without the settlement capability (old server,
-      // or descriptor not loaded yet) never classify as settled: the user
-      // could neither un-settle nor pin them, so auto-settling them would
-      // strand rows in a tail with no working affordances.
-      const supportsSettlement =
-        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement === true;
-      const supportsSnooze =
-        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
-      const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-      const changeRequestState = changeRequestStateByKey.get(threadKey) ?? null;
-      // Snooze outranks settled classification: an explicitly snoozed thread
-      // belongs to the shelf even if it would also auto-settle (the shelf's
-      // wake time is a stronger statement about when it matters again).
-      if (supportsSnooze && effectiveSnoozed(thread, { now: preciseNow })) {
-        snoozed.push(thread);
-      } else if (
-        supportsSettlement &&
-        effectiveSettled(thread, { now, autoSettleAfterDays, changeRequestState })
-      ) {
-        settled.push(thread);
-      } else {
-        active.push(thread);
+  const { activeThreads, snoozedThreads, settledThreads, snoozeNow, representativeKeyByThreadKey } =
+    useMemo(() => {
+      const now = `${nowMinute}:00.000Z`;
+      // Snooze classification uses a REAL clock, not the quantized minute:
+      // wake times are second-precise and a woken thread must not linger on
+      // the shelf for the rest of the minute. snoozeWakeTick re-runs this
+      // memo exactly at the next wake boundary.
+      void snoozeWakeTick;
+      const preciseNow = new Date().toISOString();
+      const visibleBeforeCollapse = threads.filter(
+        (thread) =>
+          thread.archivedAt === null &&
+          (scopedProjectKeys === null ||
+            scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
+      );
+      // Chats sharing one worktree collapse to a single row (the earliest chat),
+      // classified and shown by that representative; the rest live only in the
+      // chat's worktree tab strip.
+      const { threads: visible, representativeKeyByThreadKey } = collapseWorktreeSiblings(
+        visibleBeforeCollapse,
+        (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      );
+      const active: EnvironmentThreadShell[] = [];
+      const snoozed: EnvironmentThreadShell[] = [];
+      const settled: EnvironmentThreadShell[] = [];
+      for (const thread of visible) {
+        // Threads on servers without the settlement capability (old server,
+        // or descriptor not loaded yet) never classify as settled: the user
+        // could neither un-settle nor pin them, so auto-settling them would
+        // strand rows in a tail with no working affordances.
+        const supportsSettlement =
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement ===
+          true;
+        const supportsSnooze =
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
+        const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+        const changeRequestState = changeRequestStateByKey.get(threadKey) ?? null;
+        // Snooze outranks settled classification: an explicitly snoozed thread
+        // belongs to the shelf even if it would also auto-settle (the shelf's
+        // wake time is a stronger statement about when it matters again).
+        if (supportsSnooze && effectiveSnoozed(thread, { now: preciseNow })) {
+          snoozed.push(thread);
+        } else if (
+          supportsSettlement &&
+          effectiveSettled(thread, { now, autoSettleAfterDays, changeRequestState })
+        ) {
+          settled.push(thread);
+        } else {
+          active.push(thread);
+        }
       }
-    }
-    return {
-      activeThreads: sortThreadsForSidebarV2(active),
-      // Soonest wake first: "what comes back next" is the shelf's question.
-      snoozedThreads: snoozed.toSorted(
-        (left, right) =>
-          firstValidTimestampMs(left.snoozedUntil ?? null) -
-          firstValidTimestampMs(right.snoozedUntil ?? null),
-      ),
-      settledThreads: sortSettledThreadsForSidebarV2(settled),
-      snoozeNow: preciseNow,
-    };
-  }, [
-    autoSettleAfterDays,
-    changeRequestStateByKey,
-    nowMinute,
-    scopedProjectKeys,
-    serverConfigs,
-    snoozeWakeTick,
-    threads,
-  ]);
+      return {
+        activeThreads: sortThreadsForSidebarV2(active),
+        // Soonest wake first: "what comes back next" is the shelf's question.
+        snoozedThreads: snoozed.toSorted(
+          (left, right) =>
+            firstValidTimestampMs(left.snoozedUntil ?? null) -
+            firstValidTimestampMs(right.snoozedUntil ?? null),
+        ),
+        settledThreads: sortSettledThreadsForSidebarV2(settled),
+        snoozeNow: preciseNow,
+        representativeKeyByThreadKey,
+      };
+    }, [
+      autoSettleAfterDays,
+      changeRequestStateByKey,
+      nowMinute,
+      scopedProjectKeys,
+      serverConfigs,
+      snoozeWakeTick,
+      threads,
+    ]);
+  // When the active route is a collapsed worktree sibling, its row is folded
+  // into the earliest chat's; highlight and keep that representative visible.
+  const effectiveRouteThreadKey =
+    routeThreadKey === null
+      ? null
+      : (representativeKeyByThreadKey.get(routeThreadKey) ?? routeThreadKey);
 
   // Arm a timeout for the earliest upcoming wake so the shelf empties the
   // moment a snooze expires instead of on the next minute tick. Sorted
@@ -1705,17 +1722,18 @@ export default function SidebarV2() {
     // The open thread must never hide under "Show more": navigating into a
     // deep settled thread (search, deep link) pulls its row into the visible
     // tail so the highlight and the un-settle affordance stay reachable.
-    if (routeThreadKey !== null) {
+    if (effectiveRouteThreadKey !== null) {
       const routeThread = settledThreads
         .slice(settledVisibleCount)
         .find(
           (thread) =>
-            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
+            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) ===
+            effectiveRouteThreadKey,
         );
       if (routeThread !== undefined) visible.push(routeThread);
     }
     return visible;
-  }, [routeThreadKey, settledThreads, settledVisibleCount]);
+  }, [effectiveRouteThreadKey, settledThreads, settledVisibleCount]);
   const hiddenSettledCount = settledThreads.length - visibleSettledThreads.length;
   const showMoreSettled = useCallback(
     () => setSettledVisibleCount((count) => count + SETTLED_TAIL_PAGE_COUNT),
@@ -1725,13 +1743,14 @@ export default function SidebarV2() {
   const toggleSettledShelf = useCallback(() => setSettledShelfExpanded((value) => !value), []);
   const renderedSettledThreads = useMemo(() => {
     if (settledShelfExpanded) return visibleSettledThreads;
-    if (routeThreadKey === null) return [];
+    if (effectiveRouteThreadKey === null) return [];
     const routeThread = visibleSettledThreads.find(
       (thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) ===
+        effectiveRouteThreadKey,
     );
     return routeThread === undefined ? [] : [routeThread];
-  }, [routeThreadKey, settledShelfExpanded, visibleSettledThreads]);
+  }, [effectiveRouteThreadKey, settledShelfExpanded, visibleSettledThreads]);
 
   // The snoozed shelf is collapsed by default: out of the way, never gone.
   // Collapsed threads don't render (and so don't participate in jump
@@ -1744,13 +1763,14 @@ export default function SidebarV2() {
     // snoozed thread reached by route (deep link, open before snoozing
     // elsewhere) keeps its row — with highlight and wake affordance — same
     // exception the settled tail's "Show more" makes.
-    if (routeThreadKey === null) return [];
+    if (effectiveRouteThreadKey === null) return [];
     const routeThread = snoozedThreads.find(
       (thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) ===
+        effectiveRouteThreadKey,
     );
     return routeThread === undefined ? [] : [routeThread];
-  }, [routeThreadKey, snoozedShelfExpanded, snoozedThreads]);
+  }, [effectiveRouteThreadKey, snoozedShelfExpanded, snoozedThreads]);
 
   const orderedThreads = useMemo(
     () => [...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
@@ -2394,7 +2414,9 @@ export default function SidebarV2() {
         navigateToThreadKey(
           resolveAdjacentThreadId({
             threadIds: orderedThreadKeys,
-            currentThreadId: routeThreadKey,
+            // A collapsed sibling isn't in the ordered rows; step relative to
+            // the representative row that stands in for it.
+            currentThreadId: effectiveRouteThreadKey,
             direction: traversalDirection,
           }),
         );
@@ -2407,6 +2429,7 @@ export default function SidebarV2() {
     window.addEventListener("keydown", onWindowKeyDown);
     return () => window.removeEventListener("keydown", onWindowKeyDown);
   }, [
+    effectiveRouteThreadKey,
     keybindings,
     navigateToThread,
     orderedThreadKeys,
@@ -2674,7 +2697,7 @@ export default function SidebarV2() {
                       // the wake signal must survive the trip. Still-snoozed
                       // rows resolve to null on their own.
                       wokeAt={threadWokeAt(thread, { now: snoozeNow })}
-                      isActive={routeThreadKey === threadKey}
+                      isActive={effectiveRouteThreadKey === threadKey}
                       jumpLabel={showJumpHints ? (jumpLabelByKey.get(threadKey) ?? null) : null}
                       currentEnvironmentId={primaryEnvironmentId}
                       environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}
