@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -128,7 +129,7 @@ export class GitHubMergeBlockedError extends Schema.TaggedErrorClass<GitHubMerge
   gitHubCliFailureFields,
 ) {
   get detail(): string {
-    return "GitHub wouldn't merge this pull request. It may have conflicts, failing required checks, branch protection, or the repository may not allow the merge-commit method.";
+    return "GitHub wouldn't merge this pull request. It may have merge conflicts, failing required status checks, or branch protection rules that block the merge.";
   }
 
   override get message(): string {
@@ -335,6 +336,38 @@ const decodeRawGitHubMergeMethods = Schema.decodeEffect(
   Schema.fromJsonString(RawGitHubMergeMethodsSchema),
 );
 
+const RawGitHubMergeabilitySchema = Schema.Struct({
+  mergeable: Schema.String,
+  mergeStateStatus: Schema.String,
+});
+const decodeRawGitHubMergeability = Schema.decodeEffect(
+  Schema.fromJsonString(RawGitHubMergeabilitySchema),
+);
+const UNKNOWN_MERGEABILITY = {
+  mergeable: "UNKNOWN",
+  mergeStateStatus: "UNKNOWN",
+} as const;
+
+/**
+ * Right after a pull request is opened (or its branch is pushed), GitHub reports
+ * the mergeable state as `UNKNOWN` while it recomputes the merge in the
+ * background. A merge attempted inside that window is rejected with a transient
+ * "not mergeable" / "base branch was modified" error that our classifier can
+ * only see as a hard `merge-blocked` failure. Reading the state forces GitHub to
+ * compute it, so we poll (bounded) until it settles before merging.
+ */
+const MERGEABILITY_POLL_ATTEMPTS = 6;
+const MERGEABILITY_POLL_INTERVAL = Duration.seconds(1);
+
+/**
+ * Even once mergeability is computed, GitHub can briefly return a transient
+ * `merge-blocked` failure. Retry the merge itself a few times; a genuine
+ * conflict, permission problem, or protection rule won't clear on retry, so we
+ * only retry that one classified kind.
+ */
+const MERGE_ATTEMPTS = 3;
+const MERGE_RETRY_INTERVAL = Duration.seconds(1);
+
 /**
  * `gh pr merge` requires an explicit merge method; without one it drops into an
  * interactive prompt that has no TTY here and fails. Hardcoding `--merge` breaks
@@ -449,6 +482,66 @@ export const make = Effect.gen(function* () {
           })
           .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
       }),
+    );
+
+  const resolveMergeMethodFlag = (cwd: string) =>
+    execute({
+      cwd,
+      args: ["repo", "view", "--json", "mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed"],
+    }).pipe(
+      Effect.flatMap((output) =>
+        decodeRawGitHubMergeMethods(output.stdout).pipe(
+          // If the settings can't be read, fall back to a plain merge commit
+          // and let GitHub surface the real reason if that method is refused.
+          Effect.orElseSucceed(() => ({
+            mergeCommitAllowed: true,
+            squashMergeAllowed: false,
+            rebaseMergeAllowed: false,
+          })),
+        ),
+      ),
+      Effect.map(mergeMethodFlag),
+    );
+
+  const awaitMergeabilityComputed = (cwd: string, reference: string) =>
+    Effect.gen(function* () {
+      for (let attempt = 0; attempt < MERGEABILITY_POLL_ATTEMPTS; attempt++) {
+        const state = yield* execute({
+          cwd,
+          args: ["pr", "view", reference, "--json", "mergeable,mergeStateStatus"],
+        }).pipe(
+          Effect.flatMap((output) =>
+            decodeRawGitHubMergeability(output.stdout).pipe(
+              Effect.orElseSucceed(() => UNKNOWN_MERGEABILITY),
+            ),
+          ),
+          // A failed read must not abort the merge; fall through and let the
+          // merge itself report any real problem.
+          Effect.orElseSucceed(() => UNKNOWN_MERGEABILITY),
+        );
+        if (state.mergeable !== "UNKNOWN") {
+          return;
+        }
+        if (attempt < MERGEABILITY_POLL_ATTEMPTS - 1) {
+          yield* Effect.sleep(MERGEABILITY_POLL_INTERVAL);
+        }
+      }
+    });
+
+  const attemptMerge = (
+    cwd: string,
+    args: ReadonlyArray<string>,
+    attemptsLeft: number,
+  ): Effect.Effect<void, GitHubCliError> =>
+    execute({ cwd, args }).pipe(
+      Effect.asVoid,
+      Effect.catchTag("GitHubMergeBlockedError", (error) =>
+        attemptsLeft <= 1
+          ? Effect.fail(error)
+          : Effect.sleep(MERGE_RETRY_INTERVAL).pipe(
+              Effect.flatMap(() => attemptMerge(cwd, args, attemptsLeft - 1)),
+            ),
+      ),
     );
 
   return GitHubCli.of({
@@ -585,34 +678,18 @@ export const make = Effect.gen(function* () {
         args: ["pr", "checkout", input.reference, ...(input.force ? ["--force"] : [])],
       }).pipe(Effect.asVoid),
     mergePullRequest: (input) =>
-      execute({
-        cwd: input.cwd,
-        args: [
-          "repo",
-          "view",
-          "--json",
-          "mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed",
-        ],
-      }).pipe(
-        Effect.flatMap((output) =>
-          decodeRawGitHubMergeMethods(output.stdout).pipe(
-            // If the settings can't be read, fall back to a plain merge commit
-            // and let GitHub surface the real reason if that method is refused.
-            Effect.orElseSucceed(() => ({
-              mergeCommitAllowed: true,
-              squashMergeAllowed: false,
-              rebaseMergeAllowed: false,
-            })),
+      resolveMergeMethodFlag(input.cwd).pipe(
+        // Force GitHub to finish computing mergeability before we merge, so a
+        // merge fired right after create/push doesn't race a transient
+        // "not mergeable" rejection.
+        Effect.tap(() => awaitMergeabilityComputed(input.cwd, input.reference)),
+        Effect.flatMap((flag) =>
+          attemptMerge(
+            input.cwd,
+            ["pr", "merge", input.reference, ...(flag ? [flag] : ["--merge"])],
+            MERGE_ATTEMPTS,
           ),
         ),
-        Effect.map(mergeMethodFlag),
-        Effect.flatMap((flag) =>
-          execute({
-            cwd: input.cwd,
-            args: ["pr", "merge", input.reference, ...(flag ? [flag] : ["--merge"])],
-          }),
-        ),
-        Effect.asVoid,
       ),
   });
 });
