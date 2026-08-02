@@ -85,6 +85,9 @@ export const DiffTheme = Schema.Literals([
 export type DiffTheme = typeof DiffTheme.Type;
 export const DEFAULT_DIFF_THEME: DiffTheme = "pierre-dark";
 
+export const DEFAULT_REVIEW_PROMPT =
+  "Review the current changes. Focus on correctness, regressions, security, performance, and missing tests. Report findings by severity with file and line references.";
+
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -538,6 +541,9 @@ export const ServerSettings = Schema.Struct({
   sourceControlWriterModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  reviewPrompt: TrimmedNonEmptyString.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_REVIEW_PROMPT)),
+  ),
 
   // Legacy single-instance-per-driver settings. Continues to be the source
   // of truth until `providerInstances` (below) lands per-driver migration
@@ -682,6 +688,7 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  reviewPrompt: Schema.optionalKey(TrimmedNonEmptyString),
   observability: Schema.optionalKey(
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),

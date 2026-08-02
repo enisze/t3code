@@ -564,3 +564,9 @@ export function hasServerAcknowledgedLocalDispatch(input: {
     input.localDispatch.sessionUpdatedAt !== (session?.updatedAt ?? null)
   );
 }
+
+export function insertReviewPromptIntoDraft(currentPrompt: string, reviewPrompt: string): string {
+  const current = currentPrompt.trimEnd();
+  const review = reviewPrompt.trim();
+  return current.length > 0 ? `${current}\n\n${review}` : review;
+}

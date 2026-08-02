@@ -35,6 +35,11 @@ T3 Code works with the platforms your team already uses:
 - T3 Code can suggest titles and descriptions based on your commits
 - Supports GitHub Pull Requests, GitLab Merge Requests, and Bitbucket Pull Requests
 
+**Review branch changes without leaving the thread**
+
+- **Changes** beside the Git actions opens the branch diff against its base, including after a pull request has been created
+- **Review** inserts a configurable review prompt into the composer; edit it under **Settings → Source Control → Text generation**
+
 **Stay on top of open reviews**
 
 - See if your current branch already has an open PR/MR

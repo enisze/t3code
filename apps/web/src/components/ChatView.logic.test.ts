@@ -21,6 +21,7 @@ import {
   dismissBranchMismatchForSession,
   getStartedThreadModelChangeBlockReason,
   hasServerAcknowledgedLocalDispatch,
+  insertReviewPromptIntoDraft,
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
@@ -35,6 +36,20 @@ const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+
+describe("insertReviewPromptIntoDraft", () => {
+  it("inserts into an empty composer", () => {
+    expect(insertReviewPromptIntoDraft("", "  Review these changes.  ")).toBe(
+      "Review these changes.",
+    );
+  });
+
+  it("appends without overwriting an existing draft", () => {
+    expect(insertReviewPromptIntoDraft("Keep this context.  \n", "Review these changes.")).toBe(
+      "Keep this context.\n\nReview these changes.",
+    );
+  });
+});
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {

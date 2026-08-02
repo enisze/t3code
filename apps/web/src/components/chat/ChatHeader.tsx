@@ -6,6 +6,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { FileDiffIcon, ScanSearchIcon } from "lucide-react";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
@@ -19,6 +20,7 @@ import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useT3ProjectFileScripts } from "~/hooks/useT3ProjectFileScripts";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { cn } from "~/lib/utils";
+import { Button } from "../ui/button";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -34,6 +36,9 @@ interface ChatHeaderProps {
   availableEditors: ReadonlyArray<EditorId>;
   rightPanelOpen: boolean;
   gitCwd: string | null;
+  canOpenChanges: boolean;
+  onOpenChanges: () => void;
+  onReview: () => void;
   onNewThreadInProject: () => void;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
@@ -70,6 +75,9 @@ export const ChatHeader = memo(function ChatHeader({
   availableEditors,
   rightPanelOpen,
   gitCwd,
+  canOpenChanges,
+  onOpenChanges,
+  onReview,
   onNewThreadInProject,
   onRunProjectScript,
   onAddProjectScript,
@@ -163,6 +171,51 @@ export const ChatHeader = memo(function ChatHeader({
               : null
           }
         />
+        {activeProjectName ? (
+          <>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    disabled={!canOpenChanges}
+                    onClick={onOpenChanges}
+                    aria-label="View branch changes"
+                  />
+                }
+              >
+                <FileDiffIcon className="size-3.5" aria-hidden />
+                <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
+                  Changes
+                </span>
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                {canOpenChanges
+                  ? "View files changed on this branch"
+                  : "Changes are available after this thread starts"}
+              </TooltipPopup>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    onClick={onReview}
+                    aria-label="Insert review prompt"
+                  />
+                }
+              >
+                <ScanSearchIcon className="size-3.5" aria-hidden />
+                <span className="ml-0.5">Review</span>
+              </TooltipTrigger>
+              <TooltipPopup side="top">Insert the configured review prompt</TooltipPopup>
+            </Tooltip>
+          </>
+        ) : null}
         {activeProjectName && (
           <GitActionsControl
             gitCwd={gitCwd}
