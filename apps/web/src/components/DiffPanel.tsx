@@ -11,8 +11,6 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
-  ChevronsDownUpIcon,
-  ChevronsUpDownIcon,
   Columns2Icon,
   PilcrowIcon,
   Rows3Icon,
@@ -742,38 +740,6 @@ export default function DiffPanel({
         )}
       </div>
       <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
-        {codeViewFiles.length > 0 && (
-          <DiffStatLabel
-            additions={diffLineStat.additions}
-            deletions={diffLineStat.deletions}
-            className="mr-1 text-[11px]"
-            layout="inline"
-          />
-        )}
-        {codeViewFiles.length > 0 && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  size="icon-xs"
-                  variant="outline"
-                  aria-label={allDiffFilesCollapsed ? "Expand all files" : "Collapse all files"}
-                  onClick={toggleDiffFileCollapse}
-                />
-              }
-            >
-              {allDiffFilesCollapsed ? (
-                <ChevronsUpDownIcon className="size-3" />
-              ) : (
-                <ChevronsDownUpIcon className="size-3" />
-              )}
-            </TooltipTrigger>
-            <TooltipPopup side="top">
-              {allDiffFilesCollapsed ? "Expand all files" : "Collapse all files"}
-            </TooltipPopup>
-          </Tooltip>
-        )}
         <ToggleGroup
           className="shrink-0"
           variant="outline"
@@ -856,6 +822,28 @@ export default function DiffPanel({
       ) : (
         <>
           <div className="diff-panel-viewport flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+            {codeViewFiles.length > 0 && (
+              <div className="flex shrink-0 items-center gap-2 border-b border-border/70 bg-card/80 px-3 py-2 text-xs">
+                <span className="font-medium text-foreground">
+                  {codeViewFiles.length} changed file{codeViewFiles.length === 1 ? "" : "s"}
+                </span>
+                <DiffStatLabel
+                  additions={diffLineStat.additions}
+                  deletions={diffLineStat.deletions}
+                  layout="inline"
+                />
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost"
+                  className="ml-auto h-6 px-1.5 text-muted-foreground hover:text-foreground"
+                  aria-label={allDiffFilesCollapsed ? "Show all files" : "Hide all files"}
+                  onClick={toggleDiffFileCollapse}
+                >
+                  {allDiffFilesCollapsed ? "Show files" : "Hide files"}
+                </Button>
+              </div>
+            )}
             {isSelectedPatchTruncated && (
               <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-[11px] text-muted-foreground">
                 This diff was truncated because it exceeded the preview limit. The changes shown are

@@ -27,6 +27,18 @@ import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
 
+interface NewThreadOptions {
+  branch?: string | null;
+  worktreePath?: string | null;
+  envMode?: DraftThreadEnvMode;
+  startFromOrigin?: boolean;
+  replace?: boolean;
+  /** Always create a draft instead of reopening this project's saved draft. */
+  forceNew?: boolean;
+  /** Text to place in the fresh draft before routing to it. */
+  initialPrompt?: string;
+}
+
 export function useNewThreadHandler() {
   const projects = useProjects();
   // New-thread defaults are a user preference, and the settings UI only ever
@@ -43,16 +55,7 @@ export function useNewThreadHandler() {
   }, [router]);
 
   return useCallback(
-    (
-      projectRef: ScopedProjectRef,
-      options?: {
-        branch?: string | null;
-        worktreePath?: string | null;
-        envMode?: DraftThreadEnvMode;
-        startFromOrigin?: boolean;
-        replace?: boolean;
-      },
-    ): Promise<void> => {
+    (projectRef: ScopedProjectRef, options?: NewThreadOptions): Promise<void> => {
       const {
         getComposerDraft,
         getDraftSessionByLogicalProjectKey,
@@ -62,6 +65,7 @@ export function useNewThreadHandler() {
         setDraftThreadContext,
         setLogicalProjectDraftThreadId,
         setModelSelection,
+        setPrompt,
       } = useComposerDraftStore.getState();
       const currentRouteTarget = getCurrentRouteTarget();
       // A new thread carries the user's *working mode* from the thread being
@@ -128,7 +132,7 @@ export function useNewThreadHandler() {
           ? getDraftThread(currentRouteTarget.threadRef)
           : getDraftSession(currentRouteTarget.draftId)
         : null;
-      if (reusableStoredDraftThread) {
+      if (reusableStoredDraftThread && !options?.forceNew) {
         return (async () => {
           const isDraftAlreadyOpen =
             currentRouteTarget?.kind === "draft" &&
@@ -211,6 +215,7 @@ export function useNewThreadHandler() {
       }
 
       if (
+        !options?.forceNew &&
         latestActiveDraftThread &&
         currentRouteTarget?.kind === "draft" &&
         latestActiveDraftThread.logicalProjectKey === logicalProjectKey &&
@@ -270,6 +275,9 @@ export function useNewThreadHandler() {
           // complete snapshot — absent options mean "no options", not "keep
           // whatever sticky state just wrote".
           setModelSelection(draftId, carryModelSelection, { replaceOptions: true });
+        }
+        if (options?.initialPrompt !== undefined) {
+          setPrompt(draftId, options.initialPrompt);
         }
 
         await router.navigate({

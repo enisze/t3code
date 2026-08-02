@@ -260,7 +260,6 @@ import {
   deriveComposerSendState,
   dismissBranchMismatchForSession,
   hasServerAcknowledgedLocalDispatch,
-  insertReviewPromptIntoDraft,
   isBranchMismatchDismissedForSession,
   shouldShowBranchMismatchBanner,
   getStartedThreadModelChangeBlockReason,
@@ -3069,24 +3068,26 @@ function ChatViewContent(props: ChatViewProps) {
     onDiffPanelOpen,
     planSidebarOpen,
   ]);
-  const openBranchChanges = useCallback(() => {
+  const openWorkingTreeChanges = useCallback(() => {
     if (!activeThreadRef || !isServerThread || !isGitRepo) return;
-    useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
+    useDiffPanelStore.getState().selectGitScope(activeThreadRef, "unstaged");
     addDiffSurface();
   }, [activeThreadRef, addDiffSurface, isGitRepo, isServerThread]);
-  const insertReviewPrompt = useCallback(() => {
-    const currentPrompt =
-      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.prompt ?? "";
-    setComposerDraftPrompt(
-      composerDraftTarget,
-      insertReviewPromptIntoDraft(currentPrompt, primaryServerSettings.reviewPrompt),
-    );
-    scheduleComposerFocus();
+  const startReviewInNewChat = useCallback(() => {
+    if (!activeProjectRef || !newChatWorktreePath) return;
+    void handleNewThread(activeProjectRef, {
+      branch: newChatWorktreeBranch,
+      worktreePath: newChatWorktreePath,
+      envMode: "worktree",
+      forceNew: true,
+      initialPrompt: primaryServerSettings.reviewPrompt,
+    });
   }, [
-    composerDraftTarget,
+    activeProjectRef,
+    handleNewThread,
+    newChatWorktreeBranch,
+    newChatWorktreePath,
     primaryServerSettings.reviewPrompt,
-    scheduleComposerFocus,
-    setComposerDraftPrompt,
   ]);
   const addFilesSurface = useCallback(() => {
     if (!activeThreadRef || !activeProject) return;
@@ -5737,8 +5738,8 @@ function ChatViewContent(props: ChatViewProps) {
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
             canOpenChanges={isServerThread && isGitRepo}
-            onOpenChanges={openBranchChanges}
-            onReview={insertReviewPrompt}
+            onOpenChanges={openWorkingTreeChanges}
+            onReview={startReviewInNewChat}
             onNewThreadInProject={handleNewThreadInActiveProject}
             onRunProjectScript={runProjectScript}
             onAddProjectScript={saveProjectScript}
