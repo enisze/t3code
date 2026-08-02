@@ -182,7 +182,7 @@ export const ChatHeader = memo(function ChatHeader({
                     variant="outline"
                     disabled={!canOpenChanges}
                     onClick={onOpenChanges}
-                    aria-label="View branch changes"
+                    aria-label="View working tree changes"
                   />
                 }
               >
@@ -193,7 +193,7 @@ export const ChatHeader = memo(function ChatHeader({
               </TooltipTrigger>
               <TooltipPopup side="top">
                 {canOpenChanges
-                  ? "View files changed on this branch"
+                  ? "View all current working tree changes"
                   : "Changes are available after this thread starts"}
               </TooltipPopup>
             </Tooltip>
@@ -205,14 +205,16 @@ export const ChatHeader = memo(function ChatHeader({
                     size="xs"
                     variant="outline"
                     onClick={onReview}
-                    aria-label="Insert review prompt"
+                    aria-label="Start a review in a new chat"
                   />
                 }
               >
                 <ScanSearchIcon className="size-3.5" aria-hidden />
                 <span className="ml-0.5">Review</span>
               </TooltipTrigger>
-              <TooltipPopup side="top">Insert the configured review prompt</TooltipPopup>
+              <TooltipPopup side="top">
+                Start a new chat with the configured review prompt
+              </TooltipPopup>
             </Tooltip>
           </>
         ) : null}
