@@ -975,14 +975,16 @@ export default function DiffPanel({
                     themeType: resolvedTheme as DiffThemeType,
                     unsafeCSS: DIFF_PANEL_UNSAFE_CSS,
                     stickyHeaders: true,
-                    // In wrap mode a long line occupies several visual rows, but the
-                    // virtualizer estimates every off-screen line at a single row. That
-                    // under-counts total height, so the scrollbar bottoms out before the
-                    // last file's tail can be scrolled into view. Over-estimate the row
-                    // height for wrap mode: the library shrinks it back via measured
-                    // deltas as items render, so the last file stays reachable without a
-                    // permanent gap. Scroll mode keeps one row per line (the default 20).
-                    itemMetrics: { diffHeaderHeight: 33, lineHeight: wordWrap ? 24 : 20 },
+                    // Wrapped rows cannot be estimated from source-line count. Render a
+                    // bounded chunk around the viewport so Pierre can measure their real
+                    // heights and extend the scroll range through the final file. Merely
+                    // inflating lineHeight still cuts off lines that wrap more than the
+                    // guessed average. Scroll mode keeps CodeView's minimal chunk size.
+                    itemMetrics: {
+                      diffHeaderHeight: 33,
+                      hunkLineCount: wordWrap ? 50 : 1,
+                      lineHeight: 20,
+                    },
                     layout: { paddingTop: 0, paddingBottom: 8, gap: 8 },
                   }}
                 />
