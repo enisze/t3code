@@ -260,6 +260,7 @@ import {
   deriveComposerSendState,
   dismissBranchMismatchForSession,
   hasServerAcknowledgedLocalDispatch,
+  insertReviewPromptIntoDraft,
   isBranchMismatchDismissedForSession,
   shouldShowBranchMismatchBanner,
   getStartedThreadModelChangeBlockReason,
@@ -3068,6 +3069,25 @@ function ChatViewContent(props: ChatViewProps) {
     onDiffPanelOpen,
     planSidebarOpen,
   ]);
+  const openBranchChanges = useCallback(() => {
+    if (!activeThreadRef || !isServerThread || !isGitRepo) return;
+    useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
+    addDiffSurface();
+  }, [activeThreadRef, addDiffSurface, isGitRepo, isServerThread]);
+  const insertReviewPrompt = useCallback(() => {
+    const currentPrompt =
+      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.prompt ?? "";
+    setComposerDraftPrompt(
+      composerDraftTarget,
+      insertReviewPromptIntoDraft(currentPrompt, primaryServerSettings.reviewPrompt),
+    );
+    scheduleComposerFocus();
+  }, [
+    composerDraftTarget,
+    primaryServerSettings.reviewPrompt,
+    scheduleComposerFocus,
+    setComposerDraftPrompt,
+  ]);
   const addFilesSurface = useCallback(() => {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
@@ -5716,6 +5736,9 @@ function ChatViewContent(props: ChatViewProps) {
             availableEditors={availableEditors}
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
+            canOpenChanges={isServerThread && isGitRepo}
+            onOpenChanges={openBranchChanges}
+            onReview={insertReviewPrompt}
             onNewThreadInProject={handleNewThreadInActiveProject}
             onRunProjectScript={runProjectScript}
             onAddProjectScript={saveProjectScript}

@@ -5,6 +5,7 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   ClientSettingsSchema,
   ClientSettingsPatch,
+  DEFAULT_REVIEW_PROMPT,
   DEFAULT_SERVER_SETTINGS,
   ServerSettings,
   ServerSettingsPatch,
@@ -203,6 +204,19 @@ describe("ServerSettings.sourceControlWritingStyle", () => {
       mode: "custom",
       customInstructions: "Prefer concise wording.",
     });
+  });
+});
+
+describe("ServerSettings.reviewPrompt", () => {
+  it("provides a useful default for legacy configs", () => {
+    expect(decodeServerSettings({}).reviewPrompt).toBe(DEFAULT_REVIEW_PROMPT);
+  });
+
+  it("trims review prompt updates and rejects empty prompts", () => {
+    expect(
+      decodeServerSettingsPatch({ reviewPrompt: "  Review this carefully.  " }).reviewPrompt,
+    ).toBe("Review this carefully.");
+    expect(() => decodeServerSettingsPatch({ reviewPrompt: "   " })).toThrow();
   });
 });
 
