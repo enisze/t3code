@@ -20,13 +20,7 @@ import {
 import { useProject } from "../state/entities";
 import { environmentServerConfigsAtom } from "../state/server";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
-import {
-  Select,
-  SelectItem,
-  SelectPopup,
-  SelectTrigger,
-  SelectValue,
-} from "./ui/select";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 
 // Sentinel routing value for "no pinned account": the composer falls back to
 // the first available provider instance for the environment. Kept out of the
@@ -50,17 +44,22 @@ export function ProjectDefaultAgentField(props: {
   environmentId: EnvironmentId;
   projectId: ProjectId;
   onChange: (selection: ModelSelection | null) => void;
+  kind?: "chat" | "review";
   disabled?: boolean;
   idPrefix: string;
 }) {
-  const { environmentId, projectId, onChange, disabled, idPrefix } = props;
+  const { environmentId, projectId, onChange, kind = "chat", disabled, idPrefix } = props;
   const projectRef = useMemo(
     () => scopeProjectRef(environmentId, projectId),
     [environmentId, projectId],
   );
   // Read the selection live so the control reflects the persisted value even
   // when the enclosing dialog renders from a captured project snapshot.
-  const value = useProject(projectRef)?.defaultModelSelection ?? null;
+  const project = useProject(projectRef);
+  const value =
+    kind === "review"
+      ? (project?.reviewModelSelection ?? null)
+      : (project?.defaultModelSelection ?? null);
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const config = serverConfigs.get(environmentId) ?? null;
 
@@ -68,9 +67,7 @@ export function ProjectDefaultAgentField(props: {
     const providers = config?.providers ?? [];
     const settings = config?.settings;
     const derived = deriveProviderInstanceEntries(providers);
-    const withSettings = settings
-      ? applyProviderInstanceSettings(derived, settings)
-      : derived;
+    const withSettings = settings ? applyProviderInstanceSettings(derived, settings) : derived;
     return sortProviderInstanceEntries(withSettings).filter(isProviderInstancePickerVisible);
   }, [config?.providers, config?.settings]);
 
@@ -113,11 +110,13 @@ export function ProjectDefaultAgentField(props: {
 
   const models = selectedEntry?.models ?? [];
   const accountSelectValue = selectedInstanceId ?? USE_DEFAULT_VALUE;
+  const defaultAccountLabel = kind === "review" ? "Use chat model" : "Use default account";
+  const fieldLabel = kind === "review" ? "Review" : "Chat";
 
   return (
     <div className="grid gap-4 sm:grid-cols-2 sm:gap-3">
       <label className="grid min-w-0 gap-1.5" htmlFor={`${idPrefix}-account`}>
-        <span className="font-medium text-foreground">Default agent</span>
+        <span className="font-medium text-foreground">{fieldLabel} agent</span>
         <Select value={accountSelectValue} onValueChange={handleAccountChange} disabled={disabled}>
           <SelectTrigger id={`${idPrefix}-account`} className="w-full sm:min-h-7.5">
             <SelectValue>
@@ -137,13 +136,13 @@ export function ProjectDefaultAgentField(props: {
                   {selectedInstanceId} (unavailable)
                 </span>
               ) : (
-                "Use default account"
+                defaultAccountLabel
               )}
             </SelectValue>
           </SelectTrigger>
           <SelectPopup align="start" alignItemWithTrigger={false}>
             <SelectItem hideIndicator value={USE_DEFAULT_VALUE}>
-              Use default account
+              {defaultAccountLabel}
             </SelectItem>
             {entries.map((entry) => (
               <SelectItem hideIndicator key={entry.instanceId} value={entry.instanceId}>
@@ -170,7 +169,7 @@ export function ProjectDefaultAgentField(props: {
         </Select>
       </label>
       <label className="grid min-w-0 gap-1.5" htmlFor={`${idPrefix}-model`}>
-        <span className="font-medium text-foreground">Model</span>
+        <span className="font-medium text-foreground">{fieldLabel} model</span>
         <Select
           value={value?.model ?? ""}
           onValueChange={handleModelChange}

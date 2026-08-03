@@ -128,6 +128,10 @@ it.effect("trims branded ids and command string fields at decode boundaries", ()
         provider: "codex",
         model: " gpt-5.2 ",
       },
+      reviewModelSelection: {
+        provider: "claudeAgent",
+        model: " claude-opus-4-6 ",
+      },
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.commandId, "cmd-1");
@@ -138,6 +142,10 @@ it.effect("trims branded ids and command string fields at decode boundaries", ()
     assert.deepStrictEqual(parsed.defaultModelSelection, {
       instanceId: ProviderInstanceId.make("codex"),
       model: "gpt-5.2",
+    });
+    assert.deepStrictEqual(parsed.reviewModelSelection, {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-opus-4-6",
     });
   }),
 );
@@ -184,9 +192,14 @@ it.effect("decodes project.meta-updated payloads with explicit default provider"
         provider: "claudeAgent",
         model: "claude-opus-4-6",
       },
+      reviewModelSelection: {
+        provider: "codex",
+        model: "gpt-5.4",
+      },
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.defaultModelSelection?.instanceId, "claudeAgent");
+    assert.strictEqual(parsed.reviewModelSelection?.instanceId, "codex");
   }),
 );
 
