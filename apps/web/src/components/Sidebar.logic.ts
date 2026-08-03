@@ -698,16 +698,26 @@ function isEarlierCreatedThread<T extends WorktreeCollapsibleThread>(
  * Survivors keep their input order (each stays at its own position), so the
  * caller's sort is preserved. `representativeKeyByThreadKey` maps every input
  * thread's key to its representative's key so the caller can highlight the
- * representative row when the active route is a collapsed sibling.
+ * representative row when the active route is a collapsed sibling. Callers
+ * can provide `mergeGroup` to project group-level presentation state onto the
+ * representative without changing its identity or route.
  */
 export function collapseWorktreeSiblings<T extends WorktreeCollapsibleThread>(
   threads: readonly T[],
   keyOf: (thread: T) => string,
+  mergeGroup?: (representative: T, members: readonly T[]) => T,
 ): { threads: T[]; representativeKeyByThreadKey: Map<string, string> } {
   const representativeByGroupKey = new Map<string, T>();
+  const membersByGroupKey = new Map<string, T[]>();
   for (const thread of threads) {
     if (thread.worktreePath === null) continue;
     const groupKey = `${thread.environmentId}\0${thread.worktreePath}`;
+    const members = membersByGroupKey.get(groupKey);
+    if (members) {
+      members.push(thread);
+    } else {
+      membersByGroupKey.set(groupKey, [thread]);
+    }
     const incumbent = representativeByGroupKey.get(groupKey);
     if (incumbent === undefined || isEarlierCreatedThread(thread, incumbent)) {
       representativeByGroupKey.set(groupKey, thread);
@@ -731,10 +741,23 @@ export function collapseWorktreeSiblings<T extends WorktreeCollapsibleThread>(
     const groupKey = `${thread.environmentId}\0${thread.worktreePath}`;
     const representativeKey = representativeKeyByGroupKey.get(groupKey) ?? key;
     representativeKeyByThreadKey.set(key, representativeKey);
-    if (representativeKey === key) survivors.push(thread);
+    if (representativeKey === key) {
+      survivors.push(mergeGroup?.(thread, membersByGroupKey.get(groupKey) ?? [thread]) ?? thread);
+    }
   }
 
   return { threads: survivors, representativeKeyByThreadKey };
+}
+
+export function mergeWorktreeSiblingRunningStatus<T extends Pick<SidebarThreadSummary, "session">>(
+  representative: T,
+  members: readonly T[],
+): T {
+  const runningSibling = members.find(
+    (thread) => thread.session?.status === "running" || thread.session?.status === "starting",
+  );
+  if (!runningSibling || runningSibling.session === representative.session) return representative;
+  return { ...representative, session: runningSibling.session };
 }
 
 export function getFallbackThreadIdAfterDelete<

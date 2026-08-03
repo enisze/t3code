@@ -122,6 +122,7 @@ import {
   firstValidTimestampMs,
   hasUnseenCompletion,
   isTrailingDoubleClick,
+  mergeWorktreeSiblingRunningStatus,
   orderItemsByPreferredIds,
   resolveAdjacentThreadId,
   resolveSettledTimestamp,
@@ -1530,6 +1531,26 @@ export default function SidebarV2() {
     [updateProject],
   );
 
+  const updateProjectReviewModelSelection = useCallback(
+    async (member: SidebarProjectGroupMember, selection: ModelSelection | null) => {
+      const result = await updateProject({
+        environmentId: member.environmentId,
+        input: { projectId: member.id, reviewModelSelection: selection },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to update project review model",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [updateProject],
+  );
+
   const updateProjectGitHubAccount = useCallback(
     async (member: SidebarProjectGroupMember, account: GitHubAccountRef | null) => {
       const current = member.gitHubAccount;
@@ -1629,6 +1650,7 @@ export default function SidebarV2() {
       const { threads: visible, representativeKeyByThreadKey } = collapseWorktreeSiblings(
         visibleBeforeCollapse,
         (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        mergeWorktreeSiblingRunningStatus,
       );
       const active: EnvironmentThreadShell[] = [];
       const snoozed: EnvironmentThreadShell[] = [];
@@ -2984,6 +3006,15 @@ export default function SidebarV2() {
                     projectId={member.id}
                     onChange={(selection) => {
                       void updateProjectDefaultModelSelection(member, selection);
+                    }}
+                  />
+                  <ProjectDefaultAgentField
+                    kind="review"
+                    idPrefix={`project-review-agent-${member.physicalProjectKey}`}
+                    environmentId={member.environmentId}
+                    projectId={member.id}
+                    onChange={(selection) => {
+                      void updateProjectReviewModelSelection(member, selection);
                     }}
                   />
                   {projectActionsTarget.memberProjects.length > 1 ? (

@@ -2,7 +2,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { getWorktreeTabAfterClose } from "./WorktreeThreadTabs";
+import { getWorktreeTabAfterClose, isWorktreeThreadInProgress } from "./WorktreeThreadTabs";
 
 function shell(id: string): EnvironmentThreadShell {
   return {
@@ -25,5 +25,25 @@ describe("getWorktreeTabAfterClose", () => {
 
   it("returns null when no sibling remains", () => {
     expect(getWorktreeTabAfterClose([tabs[0]!], ThreadId.make("thread-1"))).toBeNull();
+  });
+});
+
+describe("isWorktreeThreadInProgress", () => {
+  it.each(["starting", "running"] as const)("reports %s chats as in progress", (status) => {
+    expect(
+      isWorktreeThreadInProgress({
+        ...shell("thread-1"),
+        session: { status },
+      } as EnvironmentThreadShell),
+    ).toBe(true);
+  });
+
+  it("does not report an idle chat as in progress", () => {
+    expect(
+      isWorktreeThreadInProgress({
+        ...shell("thread-1"),
+        session: { status: "ready" },
+      } as EnvironmentThreadShell),
+    ).toBe(false);
   });
 });

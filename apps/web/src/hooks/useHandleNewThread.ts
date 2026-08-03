@@ -4,7 +4,11 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { DEFAULT_RUNTIME_MODE, type ScopedProjectRef } from "@t3tools/contracts";
+import {
+  DEFAULT_RUNTIME_MODE,
+  type ModelSelection,
+  type ScopedProjectRef,
+} from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 import {
@@ -13,6 +17,7 @@ import {
   type DraftThreadState,
   useComposerDraftStore,
 } from "../composerDraftStore";
+import { markDraftForAutoSubmit } from "../draftAutoSubmit";
 import { newDraftId, newThreadId } from "../lib/utils";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import {
@@ -37,6 +42,10 @@ interface NewThreadOptions {
   forceNew?: boolean;
   /** Text to place in the fresh draft before routing to it. */
   initialPrompt?: string;
+  /** Explicit model for this draft. Takes precedence over carried and sticky state. */
+  modelSelection?: ModelSelection;
+  /** Submit the initial prompt once the destination composer is ready. */
+  autoSubmitInitialPrompt?: boolean;
 }
 
 export function useNewThreadHandler() {
@@ -195,7 +204,7 @@ export function useNewThreadHandler() {
             reusableStoredDraftThread.draftId,
             {
               threadId: reusableStoredDraftThread.threadId,
-              ...(workspaceContext ?? {}),
+              ...workspaceContext,
               ...(carryRuntimeMode ? { runtimeMode: carryRuntimeMode } : {}),
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
             },
@@ -276,8 +285,14 @@ export function useNewThreadHandler() {
           // whatever sticky state just wrote".
           setModelSelection(draftId, carryModelSelection, { replaceOptions: true });
         }
+        if (options?.modelSelection) {
+          setModelSelection(draftId, options.modelSelection, { replaceOptions: true });
+        }
         if (options?.initialPrompt !== undefined) {
           setPrompt(draftId, options.initialPrompt);
+        }
+        if (options?.autoSubmitInitialPrompt) {
+          markDraftForAutoSubmit(draftId);
         }
 
         await router.navigate({

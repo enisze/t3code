@@ -211,7 +211,7 @@ export function SourceControlWritingSettingsSection() {
 
       <SettingsRow
         title="Review prompt"
-        description="Text inserted into the composer when you choose Review beside the Git actions."
+        description="Text submitted automatically when you choose Review beside the Git actions."
         resetAction={
           settings.reviewPrompt !== DEFAULT_UNIFIED_SETTINGS.reviewPrompt ? (
             <SettingResetButton
