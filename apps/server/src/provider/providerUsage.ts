@@ -134,16 +134,21 @@ export function normalizeCodexRateLimits(
 
 // ── Claude normalization + fetch ────────────────────────────────────
 
+// The usage endpoint returns `null` for numeric fields that aren't currently
+// populated (e.g. `utilization: null` on `extra_usage` when credit usage isn't
+// metered as a percentage). Every number must therefore accept null — a single
+// unexpected null previously failed the whole decode, silently dropping all
+// Claude usage. `clampPercent` already normalizes null/undefined to 0.
 const ClaudeUsageWindow = Schema.Struct({
-  utilization: Schema.optional(Schema.Number),
+  utilization: Schema.optional(Schema.NullOr(Schema.Number)),
   resets_at: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
 const ClaudeExtraUsage = Schema.Struct({
-  is_enabled: Schema.optional(Schema.Boolean),
+  is_enabled: Schema.optional(Schema.NullOr(Schema.Boolean)),
   monthly_limit: Schema.optional(Schema.NullOr(Schema.Number)),
   used_credits: Schema.optional(Schema.NullOr(Schema.Number)),
-  utilization: Schema.optional(Schema.Number),
+  utilization: Schema.optional(Schema.NullOr(Schema.Number)),
 });
 
 const ClaudeOAuthUsageResponse = Schema.Struct({
@@ -304,11 +309,26 @@ export const fetchClaudeAccountUsage = Effect.fn("fetchClaudeAccountUsage")(func
     return undefined;
   }
 
-  const payload = yield* httpResponse.json.pipe(
-    Effect.flatMap(Schema.decodeUnknownEffect(ClaudeOAuthUsageResponse)),
+  const rawJson = yield* httpResponse.json.pipe(Effect.orElseSucceed(() => undefined));
+  if (rawJson === undefined) return undefined;
+
+  return yield* parseClaudeUsageResponse(rawJson, input.fetchedAt);
+});
+
+/**
+ * Decode a raw `/api/oauth/usage` body and normalize it into `ProviderUsage`.
+ * Returns `undefined` when the body can't be decoded or carries no usable
+ * windows/credits. Extracted from the fetch so the decode contract (which the
+ * live endpoint stresses with unexpected `null`s) is unit-testable.
+ */
+export const parseClaudeUsageResponse = Effect.fn("parseClaudeUsageResponse")(function* (
+  raw: unknown,
+  fetchedAt: string,
+) {
+  const payload = yield* Schema.decodeUnknownEffect(ClaudeOAuthUsageResponse)(raw).pipe(
     Effect.orElseSucceed(() => null),
   );
   if (!payload) return undefined;
 
-  return normalizeClaudeUsage(payload, input.fetchedAt) ?? undefined;
+  return normalizeClaudeUsage(payload, fetchedAt) ?? undefined;
 });

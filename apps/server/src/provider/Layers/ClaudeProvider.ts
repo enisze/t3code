@@ -933,18 +933,26 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       authMethod: capabilities.tokenSource,
     }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
 
-  // Subscription usage windows are only meaningful for claude.ai OAuth
-  // accounts; API-key / Bedrock / Vertex auth has no 5-hour/weekly caps.
-  const isOauthSubscription =
-    Boolean(capabilities.subscriptionType) &&
-    normalizeClaudeAuthMethod(capabilities.tokenSource) !== "apiKey";
-  const usage = isOauthSubscription
-    ? yield* fetchClaudeAccountUsage({
-        claudeSettings,
-        cliVersion: parsedVersion,
-        fetchedAt: checkedAt,
-      }).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
-    : undefined;
+  // Subscription usage windows come from the claude.ai OAuth usage endpoint
+  // and are meaningful for any first-party OAuth login. We deliberately do
+  // NOT gate on `capabilities.subscriptionType`: the CLI init payload often
+  // omits it for genuine OAuth subscriptions, which previously hid usage even
+  // though the account had 5-hour/weekly caps (Codex, gated differently, still
+  // showed — the visible asymmetry). Skip only API-key auth and third-party
+  // backends (Bedrock / Vertex), which have no OAuth usage endpoint. The fetch
+  // is best-effort and resolves to `undefined` when no OAuth token is present,
+  // so attempting it for a non-subscription first-party account is harmless.
+  const isApiKeyAuth = normalizeClaudeAuthMethod(capabilities.tokenSource) === "apiKey";
+  const isThirdPartyBackend =
+    capabilities.apiProvider === "bedrock" || capabilities.apiProvider === "vertex";
+  const usage =
+    !isApiKeyAuth && !isThirdPartyBackend
+      ? yield* fetchClaudeAccountUsage({
+          claudeSettings,
+          cliVersion: parsedVersion,
+          fetchedAt: checkedAt,
+        }).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+      : undefined;
 
   return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,
