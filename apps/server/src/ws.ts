@@ -1736,22 +1736,27 @@ const makeWsRpcLayer = (
           observeRpcStream(
             WS_METHODS.gitRunStackedAction,
             Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
-              gitWorkflow
-                .runStackedAction(input, {
-                  actionId: input.actionId,
-                  progressReporter: {
-                    publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
-                  },
-                })
-                .pipe(
-                  Effect.matchCauseEffect({
-                    onFailure: (cause) => Queue.failCause(queue, cause),
-                    onSuccess: () =>
-                      refreshGitStatus(input.cwd).pipe(
-                        Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
-                      ),
+              projectionSnapshotQuery.getDefaultModelSelectionForCwd(input.cwd).pipe(
+                // A projection read failure must not break the git action; fall
+                // back to the server-wide source-control writer selection.
+                Effect.catch(() => Effect.succeedNone),
+                Effect.flatMap((projectModelSelection) =>
+                  gitWorkflow.runStackedAction(input, {
+                    actionId: input.actionId,
+                    projectModelSelection: Option.getOrNull(projectModelSelection),
+                    progressReporter: {
+                      publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
+                    },
                   }),
                 ),
+                Effect.matchCauseEffect({
+                  onFailure: (cause) => Queue.failCause(queue, cause),
+                  onSuccess: () =>
+                    refreshGitStatus(input.cwd).pipe(
+                      Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
+                    ),
+                }),
+              ),
             ),
             { "rpc.aggregate": "vcs" },
           ),
@@ -1766,9 +1771,7 @@ const makeWsRpcLayer = (
         [WS_METHODS.gitMergePullRequest]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitMergePullRequest,
-            gitWorkflow
-              .mergePullRequest(input)
-              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            gitWorkflow.mergePullRequest(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
             { "rpc.aggregate": "git" },
           ),
         [WS_METHODS.gitPreparePullRequestThread]: (input) =>

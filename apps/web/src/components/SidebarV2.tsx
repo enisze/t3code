@@ -2275,6 +2275,13 @@ export default function SidebarV2() {
         }
         const thread = threadByKeyRef.current.get(threadKey);
         if (!thread) return;
+        const projectGroup =
+          projectGroups.find((group) =>
+            group.memberProjects.some(
+              (member) =>
+                member.environmentId === thread.environmentId && member.id === thread.projectId,
+            ),
+          ) ?? null;
         // Un-settle works on every settled row: for explicit settles it
         // clears the override, for auto-settled rows it pins the thread
         // active until real activity clears the pin. Environments without
@@ -2323,6 +2330,7 @@ export default function SidebarV2() {
                 : []),
               { id: "rename", label: "Rename thread" },
               { id: "mark-unread", label: "Mark unread" },
+              ...(projectGroup ? [{ id: "project-settings", label: "Project settings…" }] : []),
               { id: "delete", label: "Delete", destructive: true, icon: "trash" },
             ],
             position,
@@ -2375,6 +2383,9 @@ export default function SidebarV2() {
           case "mark-unread":
             markThreadUnread(threadKey, thread.latestTurn?.completedAt);
             return;
+          case "project-settings":
+            if (projectGroup) setProjectActionsTarget(projectGroup);
+            return;
           case "delete": {
             if (confirmThreadDelete) {
               const confirmed = await settlePromise(() =>
@@ -2415,6 +2426,7 @@ export default function SidebarV2() {
       deleteThread,
       handleMultiSelectContextMenu,
       markThreadUnread,
+      projectGroups,
       serverConfigs,
       startThreadRename,
     ],

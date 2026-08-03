@@ -11,6 +11,7 @@ import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -657,6 +658,105 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       assert.equal(byPath.has("/state/worktrees/deleted"), false);
       assert.equal(byPath.has("/repos/no-account"), false);
     }),
+  );
+
+  it.effect(
+    "resolves the owning project's default model selection for a cwd (workspace root, worktree, longest match)",
+    () =>
+      Effect.gen(function* () {
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        const sql = yield* SqlClient.SqlClient;
+
+        yield* sql`DELETE FROM projection_projects`;
+        yield* sql`DELETE FROM projection_threads`;
+
+        // One project with a default model selection, one without.
+        yield* sql`
+          INSERT INTO projection_projects (
+            project_id, title, workspace_root,
+            default_model_selection_json, scripts_json,
+            github_account_json, created_at, updated_at, deleted_at
+          )
+          VALUES
+            (
+              'project-model',
+              'Model Project',
+              '/repos/model-project',
+              '{"instanceId":"codex_work","model":"gpt-5-codex"}',
+              '[]',
+              NULL,
+              '2026-04-06T00:00:00.000Z',
+              '2026-04-06T00:00:01.000Z',
+              NULL
+            ),
+            (
+              'project-none',
+              'No Model Project',
+              '/repos/no-model',
+              NULL,
+              '[]',
+              NULL,
+              '2026-04-06T00:00:00.000Z',
+              '2026-04-06T00:00:01.000Z',
+              NULL
+            )
+        `;
+
+        // An archived thread's worktree still resolves to its project's model.
+        yield* sql`
+          INSERT INTO projection_threads (
+            thread_id, project_id, title, model_selection_json,
+            runtime_mode, interaction_mode, branch, worktree_path,
+            latest_turn_id, latest_user_message_at,
+            pending_approval_count, pending_user_input_count,
+            has_actionable_proposed_plan, created_at, updated_at,
+            archived_at, deleted_at
+          )
+          VALUES
+            (
+              'thread-archived', 'project-model', 'Archived', '{"instanceId":"codex_work","model":"gpt-5-codex"}',
+              'full-access', 'default', NULL, '/state/worktrees/archived',
+              NULL, NULL, 0, 0, 0,
+              '2026-04-06T00:00:04.000Z', '2026-04-06T00:00:05.000Z', '2026-04-06T00:00:06.000Z', NULL
+            )
+        `;
+
+        // Exact workspace root and a file nested beneath it both resolve.
+        const atRoot = yield* snapshotQuery.getDefaultModelSelectionForCwd("/repos/model-project");
+        assert.deepEqual(Option.getOrNull(atRoot), {
+          instanceId: ProviderInstanceId.make("codex_work"),
+          model: "gpt-5-codex",
+        });
+        const nested = yield* snapshotQuery.getDefaultModelSelectionForCwd(
+          "/repos/model-project/packages/app",
+        );
+        assert.deepEqual(Option.getOrNull(nested), {
+          instanceId: ProviderInstanceId.make("codex_work"),
+          model: "gpt-5-codex",
+        });
+
+        // A worktree path (even for an archived thread) resolves too.
+        const fromWorktree = yield* snapshotQuery.getDefaultModelSelectionForCwd(
+          "/state/worktrees/archived/src",
+        );
+        assert.deepEqual(Option.getOrNull(fromWorktree), {
+          instanceId: ProviderInstanceId.make("codex_work"),
+          model: "gpt-5-codex",
+        });
+
+        // A sibling directory that only shares a path prefix does NOT match.
+        const sibling =
+          yield* snapshotQuery.getDefaultModelSelectionForCwd("/repos/model-project-2");
+        assert.equal(Option.isNone(sibling), true);
+
+        // A project without a default model selection yields None.
+        const noModel = yield* snapshotQuery.getDefaultModelSelectionForCwd("/repos/no-model");
+        assert.equal(Option.isNone(noModel), true);
+
+        // A cwd that maps to no project yields None.
+        const unknown = yield* snapshotQuery.getDefaultModelSelectionForCwd("/somewhere/else");
+        assert.equal(Option.isNone(unknown), true);
+      }),
   );
 
   it.effect("keeps settled threads in the shell snapshot with non-null settlement fields", () =>

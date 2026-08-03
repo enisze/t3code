@@ -45,22 +45,60 @@ export function isModelSelectionProviderEnabled(
   );
 }
 
+/**
+ * True when `selection` targets a provider instance that is both enabled in
+ * settings and currently available (its provider config is present in
+ * `providers`). When `providers` is omitted, availability is not checked and
+ * only the enabled flag is consulted.
+ */
+function isModelSelectionUsable(
+  settings: ServerSettings,
+  selection: ModelSelection,
+  providers?: ReadonlyArray<ServerProvider>,
+): boolean {
+  if (!isModelSelectionProviderEnabled(settings, selection)) {
+    return false;
+  }
+  if (providers === undefined) {
+    return true;
+  }
+  const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
+  return provider?.enabled === true && isProviderAvailable(provider);
+}
+
 export function resolveSourceControlWriterModelSelection(
   settings: ServerSettings,
   providers?: ReadonlyArray<ServerProvider>,
 ): ModelSelection {
   const selection = settings.sourceControlWriterModelSelection;
-  if (!selection || !isModelSelectionProviderEnabled(settings, selection)) {
-    return settings.textGenerationModelSelection;
-  }
-  if (providers === undefined) {
+  if (selection && isModelSelectionUsable(settings, selection, providers)) {
     return selection;
   }
+  return settings.textGenerationModelSelection;
+}
 
-  const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
-  return provider?.enabled === true && isProviderAvailable(provider)
-    ? selection
-    : settings.textGenerationModelSelection;
+/**
+ * Resolve the model/account used for source-control text generation (commit
+ * messages, PR content, branch names), preferring the project's own configured
+ * model/account when one is available.
+ *
+ * A project's `defaultModelSelection` already encodes the provider instance
+ * (and, for Codex, the `CODEX_HOME` account) the user runs agents with, so using
+ * it here keeps commit generation on the same working account rather than a
+ * server-wide default that may point at a different, unauthenticated account.
+ *
+ * Falls back to {@link resolveSourceControlWriterModelSelection} when the
+ * project has no selection or its provider instance is disabled/unavailable.
+ */
+export function resolveSourceControlWriterModelSelectionWithProjectPreference(
+  settings: ServerSettings,
+  providers: ReadonlyArray<ServerProvider> | undefined,
+  projectModelSelection: ModelSelection | null,
+): ModelSelection {
+  if (projectModelSelection && isModelSelectionUsable(settings, projectModelSelection, providers)) {
+    return projectModelSelection;
+  }
+  return resolveSourceControlWriterModelSelection(settings, providers);
 }
 
 export interface PersistedServerObservabilitySettings {

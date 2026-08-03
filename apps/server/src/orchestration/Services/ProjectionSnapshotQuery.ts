@@ -9,6 +9,7 @@
 import type {
   CheckpointRef,
   GitHubAccountRef,
+  ModelSelection,
   OrchestrationCheckpointSummary,
   OrchestrationProject,
   OrchestrationProjectShell,
@@ -137,6 +138,17 @@ export interface ProjectionSnapshotQueryShape {
   readonly getActiveProjectByWorkspaceRoot: (
     workspaceRoot: string,
   ) => Effect.Effect<Option.Option<OrchestrationProject>, ProjectionRepositoryError>;
+
+  /**
+   * Resolve the `defaultModelSelection` of the project owning `cwd`, matching
+   * the longest project workspace root or thread worktree path that contains it
+   * (so a worktree checked out outside the project root still resolves). Returns
+   * `None` when `cwd` maps to no project or the owning project has no default
+   * model selection configured.
+   */
+  readonly getDefaultModelSelectionForCwd: (
+    cwd: string,
+  ) => Effect.Effect<Option.Option<ModelSelection>, ProjectionRepositoryError>;
 
   /**
    * Read a single active project shell row by id.

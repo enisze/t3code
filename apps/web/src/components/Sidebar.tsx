@@ -2208,6 +2208,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
+          ...(threadProject ? [{ id: "project-settings", label: "Project settings…" }] : []),
           { id: "delete", label: "Delete", destructive: true, icon: "trash" },
         ],
         position,
@@ -2264,6 +2265,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         copyThreadIdToClipboard(thread.id, { threadId: thread.id });
         return;
       }
+      if (clicked === "project-settings") {
+        if (threadProject) openProjectRenameDialog(threadProject);
+        return;
+      }
       if (clicked !== "delete") return;
       if (appSettingsConfirmThreadDelete) {
         const confirmed = await api.dialogs.confirm(
@@ -2296,6 +2301,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       handleNewThread,
       markThreadUnread,
       memberProjectByScopedKey,
+      openProjectRenameDialog,
       project.workspaceRoot,
       startThreadRename,
     ],

@@ -15,6 +15,7 @@ import {
   normalizePersistedServerSettingString,
   parsePersistedServerObservabilitySettings,
   resolveSourceControlWriterModelSelection,
+  resolveSourceControlWriterModelSelectionWithProjectPreference,
 } from "./serverSettings.ts";
 
 describe("serverSettings helpers", () => {
@@ -262,6 +263,87 @@ describe("serverSettings helpers", () => {
       settings.textGenerationModelSelection,
     );
     expect(settings.sourceControlWriterModelSelection).toBe(sourceControlWriterModelSelection);
+  });
+
+  it("prefers a usable project model selection over the source control writer selection", () => {
+    const writerId = ProviderInstanceId.make("codex_writer");
+    const projectId = ProviderInstanceId.make("codex_project");
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        [writerId]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          config: {},
+        },
+        [projectId]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          config: {},
+        },
+      },
+      sourceControlWriterModelSelection: createModelSelection(writerId, "gpt-5.4-mini"),
+    };
+    const projectModelSelection = createModelSelection(projectId, "gpt-5-codex");
+
+    expect(
+      resolveSourceControlWriterModelSelectionWithProjectPreference(
+        settings,
+        undefined,
+        projectModelSelection,
+      ),
+    ).toBe(projectModelSelection);
+  });
+
+  it("falls back to the writer selection when the project model provider is disabled", () => {
+    const writerId = ProviderInstanceId.make("codex_writer");
+    const projectId = ProviderInstanceId.make("codex_project");
+    const sourceControlWriterModelSelection = createModelSelection(writerId, "gpt-5.4-mini");
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        [writerId]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          config: {},
+        },
+        [projectId]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: false,
+          config: {},
+        },
+      },
+      sourceControlWriterModelSelection,
+    };
+    const projectModelSelection = createModelSelection(projectId, "gpt-5-codex");
+
+    expect(
+      resolveSourceControlWriterModelSelectionWithProjectPreference(
+        settings,
+        undefined,
+        projectModelSelection,
+      ),
+    ).toBe(sourceControlWriterModelSelection);
+  });
+
+  it("falls back to the writer resolution when no project model selection is provided", () => {
+    const writerId = ProviderInstanceId.make("codex_writer");
+    const sourceControlWriterModelSelection = createModelSelection(writerId, "gpt-5.4-mini");
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        [writerId]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          config: {},
+        },
+      },
+      sourceControlWriterModelSelection,
+    };
+
+    expect(
+      resolveSourceControlWriterModelSelectionWithProjectPreference(settings, undefined, null),
+    ).toBe(sourceControlWriterModelSelection);
   });
 
   it("replaces providerInstances maps so omitted instance fields are cleared", () => {
