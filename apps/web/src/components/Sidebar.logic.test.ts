@@ -1232,6 +1232,23 @@ describe("resolveWorktreeActiveThread", () => {
     expect(result.id).toBe("newer");
   });
 
+  it("prefers the chat the user opened over a sibling with newer server activity", () => {
+    const opened = make("opened", "/wt/a", "2026-03-09T10:00:00.000Z");
+    const busier = make("busier", "/wt/a", "2026-03-09T12:00:00.000Z", {
+      latestUserMessageAt: "2026-03-09T18:00:00.000Z",
+      updatedAt: "2026-03-09T18:00:00.000Z",
+    });
+    const result = resolveWorktreeActiveThread({
+      threads: [opened, busier],
+      clicked: opened,
+      keyOf,
+      lastVisitedAtByKey: {
+        "env-1:opened": "2026-03-09T13:00:00.000Z",
+      },
+    });
+    expect(result.id).toBe("opened");
+  });
+
   it("ignores archived siblings and siblings in other worktrees", () => {
     const clicked = make("clicked", "/wt/a", "2026-03-09T10:00:00.000Z");
     const archived = make("archived", "/wt/a", "2026-03-09T11:00:00.000Z", {

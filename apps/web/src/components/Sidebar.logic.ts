@@ -755,12 +755,14 @@ export function collapseWorktreeSiblings<T extends WorktreeCollapsibleThread>(
  * the user was last in — not always the oldest one. This resolves the clicked
  * representative to the most recently active sibling sharing its worktree.
  *
- * "Active" prefers the user's own last-visited time (return to where you left
- * off) and falls back to the thread's last server activity for chats never
- * explicitly opened. Threads with no worktree, or worktrees holding a single
- * live chat, resolve to themselves. Ties keep the earliest-created chat, so a
- * group with no activity signal lands on the same row collapseWorktreeSiblings
- * shows.
+ * The chat the user last opened always wins: a sibling the user has explicitly
+ * visited beats one they never opened, regardless of newer server activity, so
+ * clicking the row returns you to where you left off — not to whichever sibling
+ * an agent happened to touch most recently. Server last-activity only breaks
+ * ties among chats the user never opened. Threads with no worktree, or
+ * worktrees holding a single live chat, resolve to themselves. Ties keep the
+ * earliest-created chat, so a group with no activity signal lands on the same
+ * row collapseWorktreeSiblings shows.
  */
 export function resolveWorktreeActiveThread<
   T extends WorktreeCollapsibleThread &
@@ -773,27 +775,31 @@ export function resolveWorktreeActiveThread<
 }): T {
   const { clicked, keyOf, lastVisitedAtByKey, threads } = input;
   if (clicked.worktreePath === null) return clicked;
-  const activityMs = (thread: T): number => {
-    const visited = lastVisitedAtByKey[keyOf(thread)];
-    const settled = resolveSettledTimestamp(thread);
-    const visitedMs = visited === undefined ? Number.NaN : Date.parse(visited);
-    const settledMs = settled === null ? Number.NaN : Date.parse(settled);
-    return Math.max(
-      Number.isNaN(visitedMs) ? Number.NEGATIVE_INFINITY : visitedMs,
-      Number.isNaN(settledMs) ? Number.NEGATIVE_INFINITY : settledMs,
-    );
+  const parseMs = (value: string | null | undefined): number => {
+    if (value === undefined || value === null) return Number.NEGATIVE_INFINITY;
+    const ms = Date.parse(value);
+    return Number.isNaN(ms) ? Number.NEGATIVE_INFINITY : ms;
   };
+  // Primary rank: the user's own last-opened time. Secondary rank: server
+  // last-activity, used only to order chats the user never opened.
+  const rankOf = (thread: T): readonly [number, number] => [
+    parseMs(lastVisitedAtByKey[keyOf(thread)]),
+    parseMs(resolveSettledTimestamp(thread)),
+  ];
+  const isBetter = (a: readonly [number, number], b: readonly [number, number]): boolean =>
+    a[0] !== b[0] ? a[0] > b[0] : a[1] > b[1];
   let best = clicked;
-  let bestMs = activityMs(clicked);
+  let bestRank = rankOf(clicked);
   for (const thread of threads) {
     if (thread.environmentId === clicked.environmentId && thread.id === clicked.id) continue;
     if (thread.archivedAt !== null) continue;
     if (thread.environmentId !== clicked.environmentId) continue;
     if (thread.worktreePath !== clicked.worktreePath) continue;
-    const ms = activityMs(thread);
-    if (ms > bestMs || (ms === bestMs && isEarlierCreatedThread(thread, best))) {
+    const rank = rankOf(thread);
+    const tied = rank[0] === bestRank[0] && rank[1] === bestRank[1];
+    if (isBetter(rank, bestRank) || (tied && isEarlierCreatedThread(thread, best))) {
       best = thread;
-      bestMs = ms;
+      bestRank = rank;
     }
   }
   return best;
