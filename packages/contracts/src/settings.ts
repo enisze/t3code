@@ -88,6 +88,9 @@ export const DEFAULT_DIFF_THEME: DiffTheme = "pierre-dark";
 export const DEFAULT_REVIEW_PROMPT =
   "Review the current changes. Focus on correctness, regressions, security, performance, and missing tests. Report findings by severity with file and line references.";
 
+export const DEFAULT_RESOLVE_PROMPT =
+  "Resolve the merge conflicts between this branch and its origin/upstream branch. Fetch the latest origin branch, merge or rebase it into the current branch, and resolve every conflict so the working tree is clean. Preserve the intent of both sides, keep the build passing, and explain each conflict you resolved.";
+
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -544,6 +547,9 @@ export const ServerSettings = Schema.Struct({
   reviewPrompt: TrimmedNonEmptyString.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_REVIEW_PROMPT)),
   ),
+  resolvePrompt: TrimmedNonEmptyString.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_RESOLVE_PROMPT)),
+  ),
 
   // Legacy single-instance-per-driver settings. Continues to be the source
   // of truth until `providerInstances` (below) lands per-driver migration
@@ -689,6 +695,7 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   reviewPrompt: Schema.optionalKey(TrimmedNonEmptyString),
+  resolvePrompt: Schema.optionalKey(TrimmedNonEmptyString),
   observability: Schema.optionalKey(
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),

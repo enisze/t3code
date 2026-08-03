@@ -30,6 +30,7 @@ import {
   InfoIcon,
   LockIcon,
   GlobeIcon,
+  WandSparklesIcon,
 } from "lucide-react";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "~/components/Icons";
@@ -81,7 +82,7 @@ import {
 } from "~/lib/sourceControlActions";
 import { useThread } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
-import { serverEnvironment } from "~/state/server";
+import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
 import { sourceControlEnvironment } from "~/state/sourceControl";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -89,6 +90,7 @@ import { vcsEnvironment } from "~/state/vcs";
 import { randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "~/terminal-links";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { markDraftForAutoSubmit } from "~/draftAutoSubmit";
 import { readLocalApi } from "~/localApi";
 import { getSourceControlPresentation } from "~/sourceControlPresentation";
 import { openPullRequestLink } from "~/lib/openPullRequestLink";
@@ -354,6 +356,7 @@ function GitActionItemIcon({
   if (icon === "commit") return <GitCommitIcon />;
   if (icon === "push") return <CloudUploadIcon />;
   if (icon === "merge") return <GitMergeIcon />;
+  if (icon === "resolve") return <WandSparklesIcon />;
   return <SourceControlIcon />;
 }
 
@@ -1012,6 +1015,8 @@ export default function GitActionsControl({
     waitForShell: activeDraftThread !== null,
   });
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  const setComposerPrompt = useComposerDraftStore((store) => store.setPrompt);
+  const primaryServerSettings = useAtomValue(primaryServerSettingsAtom);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
   const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
@@ -1645,8 +1650,31 @@ export default function GitActionsControl({
     }
   };
 
+  const triggerResolveConflicts = () => {
+    const target = draftId ?? activeThreadRef;
+    if (!target) {
+      toastManager.add({
+        type: "error",
+        title: "Open a chat before resolving conflicts.",
+        ...(threadToastData !== undefined ? { data: threadToastData } : {}),
+      });
+      return;
+    }
+    setComposerPrompt(target, primaryServerSettings.resolvePrompt);
+    // Auto-submit is only wired for draft-backed composers (ChatView watches the
+    // draftId). When we only have a thread ref, fill the composer and let the
+    // user send it.
+    if (draftId) {
+      markDraftForAutoSubmit(draftId);
+    }
+  };
+
   const openDialogForMenuItem = (item: GitActionMenuItem) => {
     if (item.disabled) return;
+    if (item.kind === "resolve_conflicts") {
+      triggerResolveConflicts();
+      return;
+    }
     if (item.kind === "open_pr") {
       void openExistingPr();
       return;

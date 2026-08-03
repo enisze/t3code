@@ -346,7 +346,7 @@ describe("when: ref is behind upstream", () => {
     assert.deepInclude(quick, { kind: "run_pull", label: "Pull", disabled: false });
   });
 
-  it("buildMenuItems disables push and create PR", () => {
+  it("buildMenuItems disables push and create PR but offers resolve conflicts", () => {
     const items = buildMenuItems(status({ behindCount: 1, pr: null }), false);
     assert.deepEqual(items, [
       {
@@ -373,7 +373,19 @@ describe("when: ref is behind upstream", () => {
         kind: "open_dialog",
         dialogAction: "create_pr",
       },
+      {
+        id: "resolve",
+        label: "Resolve conflicts",
+        disabled: false,
+        icon: "resolve",
+        kind: "resolve_conflicts",
+      },
     ]);
+  });
+
+  it("buildMenuItems omits resolve conflicts without an upstream", () => {
+    const items = buildMenuItems(status({ behindCount: 1, pr: null, hasUpstream: false }), false);
+    assert.isUndefined(items.find((item) => item.id === "resolve"));
   });
 });
 
@@ -578,6 +590,13 @@ describe("when: working tree has local changes and ref is behind upstream", () =
         icon: "pr",
         kind: "open_dialog",
         dialogAction: "create_pr",
+      },
+      {
+        id: "resolve",
+        label: "Resolve conflicts",
+        disabled: false,
+        icon: "resolve",
+        kind: "resolve_conflicts",
       },
     ]);
   });
