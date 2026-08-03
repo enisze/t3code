@@ -109,6 +109,13 @@ export function useNewThreadHandler() {
           candidate.id === projectRef.projectId &&
           candidate.environmentId === projectRef.environmentId,
       );
+      // A project that pins a model in its settings expects every fresh chat
+      // or review to start on that model, so the project's configured default
+      // wins outright over both the globally sticky last-used model and the
+      // model carried from the thread being viewed. Only when the project has
+      // no default does the carried selection apply.
+      const projectDefaultModelSelection = project?.defaultModelSelection ?? null;
+      const initialModelSelection = projectDefaultModelSelection ?? carryModelSelection;
       const logicalProjectKey = project
         ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
         : scopedProjectKey(projectRef);
@@ -175,11 +182,12 @@ export function useNewThreadHandler() {
               ...(carryRuntimeMode ? { runtimeMode: carryRuntimeMode } : {}),
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
             });
-            if (carryModelSelection) {
-              // The carried selection is a complete snapshot of the viewed
-              // thread's model state: absent options mean "no options", not
-              // "keep the stale draft's options".
-              setModelSelection(reusableStoredDraftThread.draftId, carryModelSelection, {
+            if (initialModelSelection) {
+              // The project default (when set) or otherwise the carried
+              // selection is a complete snapshot of the desired model state:
+              // absent options mean "no options", not "keep the stale draft's
+              // options".
+              setModelSelection(reusableStoredDraftThread.draftId, initialModelSelection, {
                 replaceOptions: true,
               });
             }
@@ -268,13 +276,13 @@ export function useNewThreadHandler() {
           ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
         });
         applyStickyState(draftId);
-        if (carryModelSelection) {
-          // After sticky state so the viewed thread's exact selection
-          // (model + options like effort and context window) wins over the
-          // globally sticky one. replaceOptions: the carried selection is a
-          // complete snapshot — absent options mean "no options", not "keep
-          // whatever sticky state just wrote".
-          setModelSelection(draftId, carryModelSelection, { replaceOptions: true });
+        if (initialModelSelection) {
+          // After sticky state so the project's configured default (or, when
+          // the project pins no model, the viewed thread's exact selection)
+          // wins over the globally sticky one. replaceOptions: the selection
+          // is a complete snapshot — absent options mean "no options", not
+          // "keep whatever sticky state just wrote".
+          setModelSelection(draftId, initialModelSelection, { replaceOptions: true });
         }
         if (options?.initialPrompt !== undefined) {
           setPrompt(draftId, options.initialPrompt);

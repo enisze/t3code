@@ -33,6 +33,7 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
+import { normalizeCodexRateLimits } from "../providerUsage.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
 
@@ -48,6 +49,7 @@ export interface CodexAppServerProviderSnapshot {
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
+  readonly rateLimits?: CodexSchema.V2GetAccountRateLimitsResponse | undefined;
 }
 
 const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
@@ -389,12 +391,16 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
-  const [skillsResponse, models] = yield* Effect.all(
+  const [skillsResponse, models, rateLimits] = yield* Effect.all(
     [
       client.request("skills/list", {
         cwds: [input.cwd],
       }),
       requestAllCodexModels(client),
+      // Best-effort: never fail the probe if the usage lookup is unavailable.
+      client
+        .request("account/rateLimits/read", undefined)
+        .pipe(Effect.orElseSucceed(() => undefined)),
     ],
     { concurrency: "unbounded" },
   );
@@ -406,6 +412,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       appendCustomCodexModels(models, input.customModels ?? []),
     ),
     skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
+    rateLimits,
   } satisfies CodexAppServerProviderSnapshot;
 });
 
@@ -588,6 +595,9 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
 
   const snapshot = probeResult.success.value;
   const accountStatus = accountProbeStatus(snapshot.account);
+  const usage = snapshot.rateLimits
+    ? (normalizeCodexRateLimits(snapshot.rateLimits, checkedAt) ?? undefined)
+    : undefined;
 
   return buildServerProvider({
     presentation: CODEX_PRESENTATION,
@@ -595,6 +605,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     checkedAt,
     models: snapshot.models,
     skills: snapshot.skills,
+    ...(usage ? { usage } : {}),
     probe: {
       installed: true,
       version: snapshot.version ?? null,

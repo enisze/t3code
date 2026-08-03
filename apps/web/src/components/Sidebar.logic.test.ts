@@ -3,6 +3,7 @@ import {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
   collapseWorktreeSiblings,
+  resolveWorktreeActiveThread,
   createThreadJumpHintVisibilityController,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
@@ -1115,6 +1116,116 @@ describe("collapseWorktreeSiblings", () => {
     const { threads: collapsed } = collapseWorktreeSiblings(threads, keyOf);
 
     expect(collapsed.map((thread) => thread.id)).toEqual(["alpha"]);
+  });
+});
+
+describe("resolveWorktreeActiveThread", () => {
+  type ActiveThread = {
+    id: string;
+    environmentId: string;
+    worktreePath: string | null;
+    createdAt: string;
+    archivedAt: string | null;
+    settledAt: string | null;
+    latestUserMessageAt: string | null;
+    latestTurn: null;
+    updatedAt: string;
+  };
+  const keyOf = (thread: ActiveThread) => `${thread.environmentId}:${thread.id}`;
+  const make = (
+    id: string,
+    worktreePath: string | null,
+    createdAt: string,
+    overrides: Partial<ActiveThread> = {},
+  ): ActiveThread => ({
+    id,
+    environmentId: "env-1",
+    worktreePath,
+    createdAt,
+    archivedAt: null,
+    settledAt: null,
+    latestUserMessageAt: null,
+    latestTurn: null,
+    updatedAt: createdAt,
+    ...overrides,
+  });
+
+  it("returns the clicked thread when it has no worktree", () => {
+    const clicked = make("solo", null, "2026-03-09T10:00:00.000Z");
+    const result = resolveWorktreeActiveThread({
+      threads: [clicked],
+      clicked,
+      keyOf,
+      lastVisitedAtByKey: {},
+    });
+    expect(result.id).toBe("solo");
+  });
+
+  it("opens the sibling the user visited most recently", () => {
+    const older = make("older", "/wt/a", "2026-03-09T10:00:00.000Z");
+    const newer = make("newer", "/wt/a", "2026-03-09T12:00:00.000Z");
+    const result = resolveWorktreeActiveThread({
+      threads: [older, newer],
+      clicked: older,
+      keyOf,
+      lastVisitedAtByKey: {
+        "env-1:older": "2026-03-09T13:00:00.000Z",
+        "env-1:newer": "2026-03-09T14:00:00.000Z",
+      },
+    });
+    expect(result.id).toBe("newer");
+  });
+
+  it("falls back to server activity for chats never visited", () => {
+    const older = make("older", "/wt/a", "2026-03-09T10:00:00.000Z");
+    const newer = make("newer", "/wt/a", "2026-03-09T12:00:00.000Z", {
+      latestUserMessageAt: "2026-03-09T15:00:00.000Z",
+      updatedAt: "2026-03-09T15:00:00.000Z",
+    });
+    const result = resolveWorktreeActiveThread({
+      threads: [older, newer],
+      clicked: older,
+      keyOf,
+      lastVisitedAtByKey: {},
+    });
+    expect(result.id).toBe("newer");
+  });
+
+  it("ignores archived siblings and siblings in other worktrees", () => {
+    const clicked = make("clicked", "/wt/a", "2026-03-09T10:00:00.000Z");
+    const archived = make("archived", "/wt/a", "2026-03-09T11:00:00.000Z", {
+      archivedAt: "2026-03-09T20:00:00.000Z",
+      updatedAt: "2026-03-09T20:00:00.000Z",
+    });
+    const otherWorktree = make("other", "/wt/b", "2026-03-09T11:00:00.000Z", {
+      updatedAt: "2026-03-09T21:00:00.000Z",
+    });
+    const result = resolveWorktreeActiveThread({
+      threads: [clicked, archived, otherWorktree],
+      clicked,
+      keyOf,
+      lastVisitedAtByKey: {
+        "env-1:archived": "2026-03-09T22:00:00.000Z",
+        "env-1:other": "2026-03-09T23:00:00.000Z",
+      },
+    });
+    expect(result.id).toBe("clicked");
+  });
+
+  it("keeps the earliest-created chat when siblings share the same activity", () => {
+    const older = make("older", "/wt/a", "2026-03-09T10:00:00.000Z", {
+      updatedAt: "2026-03-09T18:00:00.000Z",
+    });
+    const newer = make("newer", "/wt/a", "2026-03-09T12:00:00.000Z", {
+      updatedAt: "2026-03-09T18:00:00.000Z",
+    });
+    const result = resolveWorktreeActiveThread({
+      threads: [newer, older],
+      clicked: newer,
+      keyOf,
+      lastVisitedAtByKey: {},
+    });
+    expect(result.id).toBe("older");
   });
 });
 

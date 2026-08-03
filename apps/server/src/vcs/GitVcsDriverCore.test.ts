@@ -1414,6 +1414,32 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("surfaces git's stderr when a push fails", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const pathService = yield* Path.Path;
+        // A remote pointing at a path with no repository: git's push fails with
+        // an actionable stderr the user needs to see, not a bare exit code.
+        const missingRemote = pathService.join(yield* makeTmpDir("git-remote-"), "does-not-exist");
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["remote", "add", "origin", missingRemote]);
+        yield* (yield* GitVcsDriver.GitVcsDriver).createRef({ cwd, refName: "feature/push" });
+        yield* (yield* GitVcsDriver.GitVcsDriver).switchRef({ cwd, refName: "feature/push" });
+        yield* writeTextFile(cwd, "feature.txt", "feature\n");
+        yield* (yield* GitVcsDriver.GitVcsDriver).prepareCommitContext(cwd);
+        yield* (yield* GitVcsDriver.GitVcsDriver).commit(cwd, "Add feature", "");
+
+        const error = yield* (yield* GitVcsDriver.GitVcsDriver)
+          .pushCurrentBranch(cwd, null)
+          .pipe(Effect.flip);
+
+        assert.strictEqual(error._tag, "GitCommandError");
+        assert.equal(error.operation, "GitVcsDriver.pushCurrentBranch.pushWithUpstream");
+        // The reason git failed, not just "exited with a non-zero status".
+        assert.match(error.detail, /does not appear to be a git repository/i);
+      }),
+    );
+
     it.effect("refuses to push when the selected account can't be applied", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

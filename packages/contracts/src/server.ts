@@ -154,6 +154,62 @@ export const ServerProviderUpdateState = Schema.Struct({
 });
 export type ServerProviderUpdateState = typeof ServerProviderUpdateState.Type;
 
+/**
+ * A single rate-limit / quota window surfaced by a provider account.
+ *
+ * `usedPercent` is normalized to a 0–100 scale regardless of the upstream
+ * representation. `resetsAt` is the moment the window rolls over (absent when
+ * the upstream does not report one). `windowMinutes` is the nominal length of
+ * the window (e.g. 300 for a 5-hour window, 10080 for weekly) when known — the
+ * UI derives its label from `label` but may use this for sorting/grouping.
+ */
+export const ProviderUsageWindowKind = Schema.Literals([
+  "five_hour",
+  "seven_day",
+  "seven_day_opus",
+  "seven_day_sonnet",
+  "monthly",
+  "primary",
+  "secondary",
+  "overage",
+  "unknown",
+]);
+export type ProviderUsageWindowKind = typeof ProviderUsageWindowKind.Type;
+
+export const ProviderUsageWindow = Schema.Struct({
+  kind: ProviderUsageWindowKind,
+  label: TrimmedNonEmptyString,
+  usedPercent: Schema.Number,
+  resetsAt: Schema.NullOr(IsoDateTime),
+  windowMinutes: Schema.NullOr(Schema.Number),
+});
+export type ProviderUsageWindow = typeof ProviderUsageWindow.Type;
+
+export const ProviderUsageCredits = Schema.Struct({
+  balance: Schema.NullOr(TrimmedNonEmptyString),
+  hasCredits: Schema.Boolean,
+  unlimited: Schema.Boolean,
+  monthlyLimit: Schema.NullOr(Schema.Number),
+  used: Schema.NullOr(Schema.Number),
+});
+export type ProviderUsageCredits = typeof ProviderUsageCredits.Type;
+
+/**
+ * Normalized usage / rate-limit snapshot for an authenticated provider
+ * account. Populated on the provider snapshot during a status probe/refresh
+ * (see `checkCodexProviderStatus` / `checkClaudeProviderStatus`). Absent when
+ * the account is unauthenticated, uses an API key (no subscription windows),
+ * or the upstream usage lookup failed.
+ */
+export const ProviderUsage = Schema.Struct({
+  source: Schema.Literals(["claude", "codex"]),
+  fetchedAt: IsoDateTime,
+  planLabel: Schema.NullOr(TrimmedNonEmptyString),
+  windows: Schema.Array(ProviderUsageWindow),
+  credits: Schema.optionalKey(ProviderUsageCredits),
+});
+export type ProviderUsage = typeof ProviderUsage.Type;
+
 export const ServerProvider = Schema.Struct({
   // Routing key for the configured instance this snapshot represents. This
   // is the only stable identity consumers may use for provider routing.
@@ -190,6 +246,10 @@ export const ServerProvider = Schema.Struct({
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
+  // Normalized rate-limit / quota snapshot for the authenticated account.
+  // Populated during a status probe/refresh; absent for unauthenticated,
+  // API-key, or lookup-failed accounts. Optional for back-compat.
+  usage: Schema.optionalKey(ProviderUsage),
 });
 export type ServerProvider = typeof ServerProvider.Type;
 
