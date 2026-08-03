@@ -48,6 +48,14 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
       detail: provider.message ?? "CLI not detected on PATH.",
     };
   }
+  if (provider.timedOut) {
+    return {
+      headline: "Status check timed out",
+      detail:
+        provider.message ??
+        "The last status check timed out. The provider is still usable; retry to refresh its status.",
+    };
+  }
   if (provider.auth.status === "authenticated") {
     const authLabel = provider.auth.label ?? provider.auth.type;
     return {

@@ -1,8 +1,11 @@
 import {
   EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
+  type ServerProvider,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -44,6 +47,36 @@ const snapshotEvent = (config: ServerConfig): ServerConfigStreamEvent => ({
   config,
 });
 
+const providerSnapshot = (input: {
+  instanceId: string;
+  status: ServerProvider["status"];
+  timedOut?: boolean;
+  models: ServerProvider["models"];
+  version?: string | null;
+}): ServerProvider => ({
+  instanceId: ProviderInstanceId.make(input.instanceId),
+  driver: ProviderDriverKind.make("codex"),
+  enabled: true,
+  installed: true,
+  version: input.version ?? null,
+  status: input.status,
+  ...(input.timedOut ? { timedOut: true } : {}),
+  auth: { status: "authenticated" },
+  checkedAt: "2026-01-01T00:00:00.000Z",
+  models: input.models,
+  slashCommands: [],
+  skills: [],
+});
+
+const configWithProviders = (providers: ServerConfig["providers"]): ServerConfig =>
+  ({ ...CONFIG, providers }) as ServerConfig;
+
+const providerStatusesEvent = (providers: ServerConfig["providers"]): ServerConfigStreamEvent => ({
+  version: 1,
+  type: "providerStatuses",
+  payload: { providers },
+});
+
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
   label: "Test environment",
@@ -78,6 +111,55 @@ describe("server state projection", () => {
     const result = Option.getOrThrow(projected);
     expect(result.config.settings).toBe(settings);
     expect(result.latestEvent.type).toBe("settingsUpdated");
+  });
+
+  it("retains last-known models when a timed-out probe reports an empty catalogue", () => {
+    const models = [
+      { slug: "gpt-5", name: "GPT-5", isCustom: false, capabilities: null },
+    ] as ServerProvider["models"];
+    const initial = applyServerConfigProjection(
+      Option.none(),
+      snapshotEvent(
+        configWithProviders([
+          providerSnapshot({ instanceId: "codex", status: "ready", models, version: "1.0.0" }),
+        ]),
+      ),
+    );
+
+    const projected = applyServerConfigProjection(
+      initial,
+      providerStatusesEvent([
+        providerSnapshot({ instanceId: "codex", status: "error", timedOut: true, models: [] }),
+      ]),
+    );
+
+    const provider = Option.getOrThrow(projected).config.providers[0];
+    expect(provider?.timedOut).toBe(true);
+    expect(provider?.status).toBe("error");
+    expect(provider?.models).toEqual(models);
+    // Version also carries forward when the timed-out probe reported none.
+    expect(provider?.version).toBe("1.0.0");
+  });
+
+  it("does not resurrect models for a hard failure (non-timeout) with an empty catalogue", () => {
+    const models = [
+      { slug: "gpt-5", name: "GPT-5", isCustom: false, capabilities: null },
+    ] as ServerProvider["models"];
+    const initial = applyServerConfigProjection(
+      Option.none(),
+      snapshotEvent(
+        configWithProviders([providerSnapshot({ instanceId: "codex", status: "ready", models })]),
+      ),
+    );
+
+    const projected = applyServerConfigProjection(
+      initial,
+      providerStatusesEvent([
+        providerSnapshot({ instanceId: "codex", status: "error", models: [] }),
+      ]),
+    );
+
+    expect(Option.getOrThrow(projected).config.providers[0]?.models).toEqual([]);
   });
 
   it("retains welcome when a ready event follows in the same stream chunk", () => {

@@ -10,7 +10,9 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  buildServerProvider,
   isCommandMissingCause,
+  isProbeTimedOut,
   providerModelsFromSettings,
   spawnAndCollect,
 } from "./providerSnapshot.ts";
@@ -132,5 +134,103 @@ describe("ProviderCommandNotFoundError", () => {
       expect(error).not.toHaveProperty("stderr");
       expect(error.message).not.toContain("secret-token-value");
     });
+  });
+});
+
+describe("isProbeTimedOut / buildServerProvider timeout flag", () => {
+  const presentation = { displayName: "Codex" };
+
+  it("infers a timeout from the shared 'timed out' message phrasing", () => {
+    expect(
+      isProbeTimedOut({
+        installed: true,
+        version: null,
+        status: "error",
+        auth: { status: "unknown" },
+        message: "Timed out while checking Codex app-server provider status.",
+      }),
+    ).toBe(true);
+  });
+
+  it("prefers the explicit flag over the message heuristic", () => {
+    expect(
+      isProbeTimedOut({
+        installed: true,
+        version: null,
+        status: "error",
+        auth: { status: "unknown" },
+        message: "Something timed out",
+        timedOut: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("marks a timed-out probe on the built snapshot while enabled", () => {
+    const provider = buildServerProvider({
+      presentation,
+      enabled: true,
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [],
+      probe: {
+        installed: true,
+        version: null,
+        status: "error",
+        auth: { status: "unknown" },
+        message: "Timed out while checking Codex app-server provider status.",
+      },
+    });
+
+    expect(provider.timedOut).toBe(true);
+    expect(provider.status).toBe("error");
+  });
+
+  it("does not mark a ready or non-timeout snapshot", () => {
+    const ready = buildServerProvider({
+      presentation,
+      enabled: true,
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [],
+      probe: {
+        installed: true,
+        version: "1.0.0",
+        status: "ready",
+        auth: { status: "authenticated" },
+      },
+    });
+    const failed = buildServerProvider({
+      presentation,
+      enabled: true,
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [],
+      probe: {
+        installed: true,
+        version: null,
+        status: "error",
+        auth: { status: "unknown" },
+        message: "Provider failed its startup checks.",
+      },
+    });
+
+    expect(ready).not.toHaveProperty("timedOut");
+    expect(failed).not.toHaveProperty("timedOut");
+  });
+
+  it("never marks a disabled provider as timed out", () => {
+    const provider = buildServerProvider({
+      presentation,
+      enabled: false,
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [],
+      probe: {
+        installed: true,
+        version: null,
+        status: "error",
+        auth: { status: "unknown" },
+        message: "Timed out while checking Codex app-server provider status.",
+      },
+    });
+
+    expect(provider).not.toHaveProperty("timedOut");
+    expect(provider.status).toBe("disabled");
   });
 });

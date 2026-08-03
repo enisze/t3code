@@ -227,6 +227,12 @@ export const ServerProvider = Schema.Struct({
   installed: Schema.Boolean,
   version: Schema.NullOr(TrimmedNonEmptyString),
   status: ServerProviderState,
+  // Set when the most recent status probe timed out (as opposed to a hard
+  // failure). Absent/`false` for every other outcome. The UI keeps a
+  // timed-out instance selectable — surfacing an exclamation mark instead of
+  // disabling it — because a timeout is usually transient and the CLI itself
+  // is likely still usable.
+  timedOut: Schema.optional(Schema.Boolean),
   auth: ServerProviderAuth,
   checkedAt: IsoDateTime,
   message: Schema.optional(TrimmedNonEmptyString),

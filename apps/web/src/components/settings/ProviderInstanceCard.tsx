@@ -8,6 +8,7 @@ import {
   LoaderIcon,
   PlusIcon,
   Trash2Icon,
+  TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
 import * as Arr from "effect/Array";
@@ -396,11 +397,17 @@ export function ProviderInstanceCard({
   isUpdating = false,
 }: ProviderInstanceCardProps) {
   const enabled = instance.enabled ?? true;
+  // A timed-out probe is transient — surface it as an amber warning with an
+  // exclamation affordance rather than the red "error" treatment, matching the
+  // model picker, which keeps the instance selectable.
+  const isTimedOut = Boolean(liveProvider?.timedOut) && enabled;
   // The server-reported status wins when present; otherwise fall back to
   // "disabled"/"warning" based on the local `enabled` flag so the dot
   // reflects the persisted intent even before the first probe completes.
-  const statusKey: ProviderStatusKey =
-    (liveProvider?.status as ProviderStatusKey | undefined) ?? (enabled ? "warning" : "disabled");
+  const statusKey: ProviderStatusKey = isTimedOut
+    ? "warning"
+    : ((liveProvider?.status as ProviderStatusKey | undefined) ??
+      (enabled ? "warning" : "disabled"));
   const statusStyle = PROVIDER_STATUS_STYLES[statusKey];
   const rawSummary = getProviderSummary(liveProvider);
   const authEmail = liveProvider?.auth.email;
@@ -607,6 +614,23 @@ export function ProviderInstanceCard({
           <div className="min-w-0 flex-1 space-y-1">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               {titleHeadNode}
+              {isTimedOut ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span
+                        className="inline-flex size-5 shrink-0 items-center justify-center text-warning"
+                        aria-label="Status check timed out"
+                      >
+                        <TriangleAlertIcon className="size-3.5" />
+                      </span>
+                    }
+                  />
+                  <TooltipPopup side="top">
+                    {liveProvider?.message ?? "The last status check timed out."}
+                  </TooltipPopup>
+                </Tooltip>
+              ) : null}
               {versionCodeNode}
               {versionAdvisory ? (
                 <Popover>

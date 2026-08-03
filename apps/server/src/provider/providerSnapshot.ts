@@ -51,6 +51,25 @@ export interface ProviderProbeResult {
   readonly status: Exclude<ServerProviderState, "disabled">;
   readonly auth: ServerProviderAuth;
   readonly message?: string;
+  /**
+   * Set explicitly by probe branches that gave up on a timeout. When absent,
+   * `buildServerProvider` still infers a timeout from a "timed out" message so
+   * every timeout branch is covered without each having to opt in.
+   */
+  readonly timedOut?: boolean;
+}
+
+/** Message fragment every provider timeout branch shares (case-insensitive). */
+const TIMEOUT_MESSAGE_PATTERN = /timed out/i;
+
+/**
+ * Decide whether a probe result represents a timeout. Prefers the explicit
+ * flag and falls back to the shared "timed out" message phrasing so a branch
+ * that only sets the message is still treated as a timeout by consumers.
+ */
+export function isProbeTimedOut(probe: ProviderProbeResult): boolean {
+  if (probe.timedOut !== undefined) return probe.timedOut;
+  return probe.message !== undefined && TIMEOUT_MESSAGE_PATTERN.test(probe.message);
 }
 
 export interface ServerProviderPresentation {
@@ -239,6 +258,11 @@ export function buildServerProvider(input: {
     installed: input.probe.installed,
     version: input.probe.version,
     status: input.enabled ? input.probe.status : "disabled",
+    // Only meaningful while enabled and not already ready: a disabled or ready
+    // provider never surfaces the timeout affordance.
+    ...(input.enabled && input.probe.status !== "ready" && isProbeTimedOut(input.probe)
+      ? { timedOut: true }
+      : {}),
     auth: input.probe.auth,
     checkedAt: input.checkedAt,
     ...(input.probe.message ? { message: input.probe.message } : {}),
