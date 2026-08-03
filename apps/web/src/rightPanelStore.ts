@@ -14,15 +14,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
 
-export const RIGHT_PANEL_KINDS = [
-  "plan",
-  "diff",
-  "files",
-  "file",
-  "preview",
-  "terminal",
-  "tasks",
-] as const;
+export const RIGHT_PANEL_KINDS = ["plan", "diff", "files", "file", "preview", "terminal"] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
 export type RightPanelSurface =
@@ -45,11 +37,10 @@ export type RightPanelSurface =
       revealLine: number | null;
       revealRequestId: number;
     }
-  | { id: "plan"; kind: "plan" }
-  | { id: "tasks"; kind: "tasks" };
+  | { id: "plan"; kind: "plan" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
-const RIGHT_PANEL_STORAGE_VERSION = 8;
+const RIGHT_PANEL_STORAGE_VERSION = 7;
 
 export interface ThreadRightPanelState {
   isOpen: boolean;
@@ -101,8 +92,6 @@ const singletonSurface = (
       return { id: "files", kind };
     case "plan":
       return { id: "plan", kind };
-    case "tasks":
-      return { id: "tasks", kind };
   }
 };
 

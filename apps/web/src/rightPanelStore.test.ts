@@ -108,15 +108,6 @@ describe("rightPanelStore", () => {
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refB)).toBeNull();
   });
 
-  it("keeps tasks as a singleton surface", () => {
-    useRightPanelStore.getState().open(refA, "tasks");
-    useRightPanelStore.getState().open(refA, "tasks");
-    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
-    expect(state.surfaces).toEqual([{ id: "tasks", kind: "tasks" }]);
-    expect(state.activeSurfaceId).toBe("tasks");
-    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("tasks");
-  });
-
   it("opening a different kind keeps both surfaces and activates the new one", () => {
     useRightPanelStore.getState().open(refA, "plan");
     useRightPanelStore.getState().open(refA, "preview");

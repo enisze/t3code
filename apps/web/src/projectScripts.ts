@@ -32,6 +32,52 @@ export function buildProjectScript(id: string, input: ProjectScriptInput): Proje
   };
 }
 
+/**
+ * Append a new script to a project's list. When the new script is a setup
+ * script (`runOnWorktreeCreate`), any existing setup script is demoted so at
+ * most one script runs on worktree creation.
+ */
+export function appendProjectScript(
+  scripts: ReadonlyArray<ProjectScript>,
+  input: ProjectScriptInput,
+): { readonly scripts: ProjectScript[]; readonly script: ProjectScript } {
+  const id = nextProjectScriptId(
+    input.name,
+    scripts.map((script) => script.id),
+  );
+  const script = buildProjectScript(id, input);
+  const nextScripts = input.runOnWorktreeCreate
+    ? [
+        ...scripts.map((existing) =>
+          existing.runOnWorktreeCreate ? { ...existing, runOnWorktreeCreate: false } : existing,
+        ),
+        script,
+      ]
+    : [...scripts, script];
+  return { scripts: nextScripts, script };
+}
+
+/**
+ * Replace an existing script by id, demoting any other setup script when the
+ * replacement is a setup script. Returns `null` when `scriptId` isn't present.
+ */
+export function replaceProjectScript(
+  scripts: ReadonlyArray<ProjectScript>,
+  scriptId: string,
+  input: ProjectScriptInput,
+): ProjectScript[] | null {
+  const existing = scripts.find((script) => script.id === scriptId);
+  if (!existing) return null;
+  const updated = buildProjectScript(existing.id, input);
+  return scripts.map((script) =>
+    script.id === scriptId
+      ? updated
+      : input.runOnWorktreeCreate
+        ? { ...script, runOnWorktreeCreate: false }
+        : script,
+  );
+}
+
 function normalizeScriptId(value: string): string {
   const cleaned = value
     .trim()

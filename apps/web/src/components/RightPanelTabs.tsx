@@ -1,15 +1,6 @@
 import type { ContextMenuItem, PreviewSessionSnapshot } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
-import {
-  ClipboardList,
-  FileDiff,
-  Files,
-  Globe2,
-  Play,
-  Plus,
-  TerminalSquare,
-  X,
-} from "lucide-react";
+import { ClipboardList, FileDiff, Files, Globe2, Plus, TerminalSquare, X } from "lucide-react";
 import {
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
@@ -53,11 +44,11 @@ interface RightPanelTabsProps {
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
-  onAddTasks: () => void;
   browserAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
-  tasksAvailable: boolean;
+  /** Persistent dock rendered below the active surface (e.g. the Run/tasks dock). */
+  bottomDock?: ReactNode;
   children: ReactNode;
 }
 
@@ -65,7 +56,6 @@ const SURFACE_DISABLED_REASONS = {
   browser: "Browser previews are only available in the T3 Code desktop app.",
   files: "Files are only available when a project is open.",
   diff: "Diff is only available for server threads in Git repositories.",
-  tasks: "Run tasks are only available when a project is open.",
 } as const;
 
 type TabContextMenuAction = "copy-path" | "close" | "close-others" | "close-to-right" | "close-all";
@@ -103,21 +93,11 @@ function RightPanelEmptyState(props: {
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
-  onAddTasks: () => void;
   browserAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
-  tasksAvailable: boolean;
 }) {
   const actions = [
-    {
-      label: "Run",
-      description: "Run your project's setup and dev scripts.",
-      icon: Play,
-      available: props.tasksAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.tasks,
-      onClick: props.onAddTasks,
-    },
     {
       label: "Browser",
       description: "Open a local app or URL.",
@@ -227,8 +207,6 @@ function surfaceTitle(
       );
     case "plan":
       return "Plan";
-    case "tasks":
-      return "Run";
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -290,8 +268,6 @@ function SurfaceIcon({
       return <TerminalSquare className="size-3.5 shrink-0" />;
     case "plan":
       return <ClipboardList className="size-3.5 shrink-0" />;
-    case "tasks":
-      return <Play className="size-3.5 shrink-0" />;
   }
 }
 
@@ -470,14 +446,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                 </MenuTrigger>
                 <MenuPopup align="start" side="bottom" sideOffset={6} className="min-w-44">
                   <SurfaceMenuItem
-                    available={props.tasksAvailable}
-                    disabledReason={SURFACE_DISABLED_REASONS.tasks}
-                    onClick={props.onAddTasks}
-                  >
-                    <Play />
-                    Run
-                  </SurfaceMenuItem>
-                  <SurfaceMenuItem
                     available={props.browserAvailable}
                     disabledReason={SURFACE_DISABLED_REASONS.browser}
                     onClick={props.onAddBrowser}
@@ -519,16 +487,15 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddTerminal={props.onAddTerminal}
             onAddDiff={props.onAddDiff}
             onAddFiles={props.onAddFiles}
-            onAddTasks={props.onAddTasks}
             browserAvailable={props.browserAvailable}
             diffAvailable={props.diffAvailable}
             filesAvailable={props.filesAvailable}
-            tasksAvailable={props.tasksAvailable}
           />
         ) : (
           props.children
         )}
       </div>
+      {props.bottomDock}
     </PreviewPanelShell>
   );
 }

@@ -86,7 +86,11 @@ import {
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
-import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
+import {
+  legacyProjectCwdPreferenceKey,
+  resolveProjectExpanded,
+  useUiStateStore,
+} from "../uiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
@@ -150,6 +154,7 @@ import {
 } from "./Sidebar.snooze";
 import { GitHubIcon } from "./Icons";
 import { ProjectDefaultAgentField } from "./ProjectDefaultAgentField";
+import { ProjectScriptsField } from "./ProjectScriptsField";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
@@ -1041,6 +1046,16 @@ function latestTurnDiff(
   return null;
 }
 
+// Preference keys a project group's expand/collapse state is stored under.
+// Mirrors the legacy sidebar so grouped chats collapse consistently across both.
+function projectExpansionPreferenceKeys(group: SidebarProjectSnapshot): string[] {
+  return [
+    group.projectKey,
+    ...group.memberProjects.map((member) => member.physicalProjectKey),
+    ...group.memberProjects.map((member) => legacyProjectCwdPreferenceKey(member.workspaceRoot)),
+  ];
+}
+
 // Sentinel Select value for "attach nothing, use the machine-global default
 // gh account". Real accounts encode host+login into an opaque key so the
 // Select can round-trip a value back to a GitHubAccountRef.
@@ -1796,9 +1811,57 @@ export default function SidebarV2() {
         projectKeyByMemberKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null,
     });
   }, [activeThreads, groupByProject, projectGroups, projectKeyByMemberKey, scopedProjectGroup]);
-  const orderedActiveThreads = useMemo(
-    () => activeThreadSections.flatMap((section) => section.threads),
+  const projectExpandedById = useUiStateStore((state) => state.projectExpandedById);
+  const setProjectExpanded = useUiStateStore((state) => state.setProjectExpanded);
+  const preferenceKeysByProjectKey = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const group of projectGroups) {
+      map.set(group.projectKey, projectExpansionPreferenceKeys(group));
+    }
+    return map;
+  }, [projectGroups]);
+  const isProjectExpanded = useCallback(
+    (projectKey: string) => {
+      const keys = preferenceKeysByProjectKey.get(projectKey);
+      return keys ? resolveProjectExpanded(projectExpandedById, keys) : true;
+    },
+    [preferenceKeysByProjectKey, projectExpandedById],
+  );
+  const toggleProjectExpanded = useCallback(
+    (projectKey: string) => {
+      const keys = preferenceKeysByProjectKey.get(projectKey);
+      if (!keys) return;
+      setProjectExpanded(keys, !resolveProjectExpanded(projectExpandedById, keys));
+    },
+    [preferenceKeysByProjectKey, projectExpandedById, setProjectExpanded],
+  );
+  const activeThreadCountByProjectKey = useMemo(
+    () =>
+      new Map(activeThreadSections.map((section) => [section.projectKey, section.threads.length])),
     [activeThreadSections],
+  );
+  // Collapsed project groups drop their rows from render and keyboard nav, but a
+  // collapsed group holding the open thread keeps that one row visible (the same
+  // exception the snoozed shelf makes) so the active chat never hides.
+  const visibleActiveThreadSections = useMemo(
+    () =>
+      activeThreadSections.map((section) => {
+        if (section.projectKey === null || isProjectExpanded(section.projectKey)) return section;
+        const routeThread =
+          effectiveRouteThreadKey === null
+            ? undefined
+            : section.threads.find(
+                (thread) =>
+                  scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) ===
+                  effectiveRouteThreadKey,
+              );
+        return { ...section, threads: routeThread ? [routeThread] : [] };
+      }),
+    [activeThreadSections, effectiveRouteThreadKey, isProjectExpanded],
+  );
+  const orderedActiveThreads = useMemo(
+    () => visibleActiveThreadSections.flatMap((section) => section.threads),
+    [visibleActiveThreadSections],
   );
   const orderedThreads = useMemo(
     () => [...orderedActiveThreads, ...visibleSnoozedThreads],
@@ -2851,18 +2914,26 @@ export default function SidebarV2() {
                   );
                 };
                 const items: ReactNode[] = [];
-                for (const [sectionIndex, section] of activeThreadSections.entries()) {
+                for (const [sectionIndex, section] of visibleActiveThreadSections.entries()) {
                   if (section.projectKey !== null) {
                     const group = projectGroupByKey.get(section.projectKey);
+                    const projectKey = section.projectKey;
+                    const expanded = isProjectExpanded(projectKey);
+                    const count = activeThreadCountByProjectKey.get(projectKey) ?? 0;
                     items.push(
                       <li
-                        key={`project-header-${section.projectKey}`}
+                        key={`project-header-${projectKey}`}
                         data-thread-selection-safe
                         className="list-none"
                       >
-                        <div
+                        <button
+                          type="button"
+                          onClick={() => toggleProjectExpanded(projectKey)}
+                          aria-expanded={expanded}
+                          data-testid="sidebar-v2-project-toggle"
                           className={cn(
-                            "mb-1 flex w-full items-center gap-2 px-2.5",
+                            "flex w-full cursor-pointer items-center gap-2 px-2.5 text-left",
+                            "mb-1",
                             sectionIndex === 0 ? "mt-1" : "mt-3",
                           )}
                         >
@@ -2875,9 +2946,17 @@ export default function SidebarV2() {
                           ) : null}
                           <span className="min-w-0 truncate text-xs font-medium text-muted-foreground">
                             {group?.displayName ?? "Project"}
+                            {!expanded && count > 0 ? ` (${count})` : ""}
                           </span>
                           <span className="h-px flex-1 bg-sidebar-border/60" />
-                        </div>
+                          <ChevronDownIcon
+                            aria-hidden
+                            className={cn(
+                              "size-3 shrink-0 text-muted-foreground transition-transform",
+                              expanded && "rotate-180",
+                            )}
+                          />
+                        </button>
                       </li>,
                     );
                   }
@@ -3113,6 +3192,11 @@ export default function SidebarV2() {
                     onChange={(selection) => {
                       void updateProjectReviewModelSelection(member, selection);
                     }}
+                  />
+                  <ProjectScriptsField
+                    environmentId={member.environmentId}
+                    projectId={member.id}
+                    keybindings={keybindings}
                   />
                   {projectActionsTarget.memberProjects.length > 1 ? (
                     <div className="flex justify-end">
