@@ -2,7 +2,11 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { getWorktreeTabAfterClose, isWorktreeThreadInProgress } from "./WorktreeThreadTabs";
+import {
+  getWorktreeTabAfterClose,
+  isWorktreeThreadInProgress,
+  resolveWorktreeTabStatus,
+} from "./WorktreeThreadTabs";
 
 function shell(id: string): EnvironmentThreadShell {
   return {
@@ -45,5 +49,41 @@ describe("isWorktreeThreadInProgress", () => {
         session: { status: "ready" },
       } as EnvironmentThreadShell),
     ).toBe(false);
+  });
+});
+
+describe("resolveWorktreeTabStatus", () => {
+  function statusShell(overrides: Record<string, unknown>): EnvironmentThreadShell {
+    return {
+      ...shell("thread-1"),
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      session: { status: "running" },
+      ...overrides,
+    } as EnvironmentThreadShell;
+  }
+
+  it("prioritizes pending approvals over a running session", () => {
+    expect(resolveWorktreeTabStatus(statusShell({ hasPendingApprovals: true }))).toBe("approval");
+  });
+
+  it("surfaces pending user input over a running session", () => {
+    expect(resolveWorktreeTabStatus(statusShell({ hasPendingUserInput: true }))).toBe("input");
+  });
+
+  it("ranks approval above input when both are pending", () => {
+    expect(
+      resolveWorktreeTabStatus(
+        statusShell({ hasPendingApprovals: true, hasPendingUserInput: true }),
+      ),
+    ).toBe("approval");
+  });
+
+  it.each(["starting", "running"] as const)("reports a %s session as working", (status) => {
+    expect(resolveWorktreeTabStatus(statusShell({ session: { status } }))).toBe("working");
+  });
+
+  it("reports a settled chat as idle", () => {
+    expect(resolveWorktreeTabStatus(statusShell({ session: { status: "ready" } }))).toBe("idle");
   });
 });

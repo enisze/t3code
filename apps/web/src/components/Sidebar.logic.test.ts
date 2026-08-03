@@ -3,12 +3,14 @@ import {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
   collapseWorktreeSiblings,
+  collectWorktreeSiblingThreads,
   resolveWorktreeActiveThread,
   createThreadJumpHintVisibilityController,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
   getFallbackThreadIdAfterDelete,
+  groupSidebarThreadsByProject,
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
   hasUnseenCompletion,
@@ -1160,6 +1162,80 @@ describe("collapseWorktreeSiblings", () => {
   });
 });
 
+describe("collectWorktreeSiblingThreads", () => {
+  type SiblingThread = {
+    id: string;
+    environmentId: string;
+    worktreePath: string | null;
+    createdAt: string;
+    archivedAt: string | null;
+  };
+  const make = (
+    id: string,
+    worktreePath: string | null,
+    overrides: Partial<SiblingThread> = {},
+  ): SiblingThread => ({
+    id,
+    environmentId: "env-1",
+    worktreePath,
+    createdAt: "2026-03-09T10:00:00.000Z",
+    archivedAt: null,
+    ...overrides,
+  });
+
+  it("returns every non-archived chat sharing the target's worktree", () => {
+    const threads = [
+      make("a", "/wt/a"),
+      make("b", "/wt/a"),
+      make("c", "/wt/other"),
+      make("solo", null),
+    ];
+
+    const collected = collectWorktreeSiblingThreads({ threads, target: threads[0]! });
+
+    // Both /wt/a chats archive together; unrelated worktrees stay untouched.
+    expect(collected.map((thread) => thread.id)).toEqual(["a", "b"]);
+  });
+
+  it("preserves input order so navigation and toasts stay stable", () => {
+    const threads = [make("b", "/wt/a"), make("a", "/wt/a")];
+
+    const collected = collectWorktreeSiblingThreads({ threads, target: threads[1]! });
+
+    expect(collected.map((thread) => thread.id)).toEqual(["b", "a"]);
+  });
+
+  it("skips already-archived siblings", () => {
+    const threads = [
+      make("a", "/wt/a"),
+      make("b", "/wt/a", { archivedAt: "2026-03-09T11:00:00.000Z" }),
+    ];
+
+    const collected = collectWorktreeSiblingThreads({ threads, target: threads[0]! });
+
+    expect(collected.map((thread) => thread.id)).toEqual(["a"]);
+  });
+
+  it("archives only the target itself when it has no worktree", () => {
+    const threads = [make("solo", null), make("other", null)];
+
+    const collected = collectWorktreeSiblingThreads({ threads, target: threads[0]! });
+
+    expect(collected.map((thread) => thread.id)).toEqual(["solo"]);
+  });
+
+  it("never crosses environment boundaries for a shared worktree path", () => {
+    const threads = [
+      make("a", "/wt/shared", { environmentId: "env-1" }),
+      make("b", "/wt/shared", { environmentId: "env-2" }),
+    ];
+
+    const collected = collectWorktreeSiblingThreads({ threads, target: threads[0]! });
+
+    expect(collected.map((thread) => thread.id)).toEqual(["a"]);
+  });
+});
+
 describe("resolveWorktreeActiveThread", () => {
   type ActiveThread = {
     id: string;
@@ -1405,6 +1481,78 @@ describe("getFallbackThreadIdAfterDelete", () => {
     });
 
     expect(fallbackThreadId).toBe(ThreadId.make("thread-next"));
+  });
+});
+describe("groupSidebarThreadsByProject", () => {
+  const resolveProjectKey = (thread: { projectKey: string | null }) => thread.projectKey;
+
+  it("emits sections in projectOrder, preserving thread order within each", () => {
+    const threads = [
+      { id: "a", projectKey: "p2" },
+      { id: "b", projectKey: "p1" },
+      { id: "c", projectKey: "p2" },
+      { id: "d", projectKey: "p1" },
+    ];
+
+    const sections = groupSidebarThreadsByProject({
+      threads,
+      projectOrder: ["p1", "p2"],
+      resolveProjectKey,
+    });
+
+    expect(sections).toEqual([
+      {
+        projectKey: "p1",
+        threads: [
+          { id: "b", projectKey: "p1" },
+          { id: "d", projectKey: "p1" },
+        ],
+      },
+      {
+        projectKey: "p2",
+        threads: [
+          { id: "a", projectKey: "p2" },
+          { id: "c", projectKey: "p2" },
+        ],
+      },
+    ]);
+  });
+
+  it("omits projects with no threads so no empty header renders", () => {
+    const sections = groupSidebarThreadsByProject({
+      threads: [{ id: "a", projectKey: "p2" }],
+      projectOrder: ["p1", "p2", "p3"],
+      resolveProjectKey,
+    });
+
+    expect(sections.map((section) => section.projectKey)).toEqual(["p2"]);
+  });
+
+  it("collects threads with an unknown or null project into a trailing null section", () => {
+    const threads = [
+      { id: "a", projectKey: "p1" },
+      { id: "b", projectKey: "missing" },
+      { id: "c", projectKey: null },
+    ];
+
+    const sections = groupSidebarThreadsByProject({
+      threads,
+      projectOrder: ["p1"],
+      resolveProjectKey,
+    });
+
+    expect(sections).toEqual([
+      { projectKey: "p1", threads: [{ id: "a", projectKey: "p1" }] },
+      {
+        projectKey: null,
+        threads: [
+          { id: "b", projectKey: "missing" },
+          { id: "c", projectKey: null },
+        ],
+      },
+    ]);
+    // No thread is dropped: the flattened order still covers every input.
+    expect(sections.flatMap((section) => section.threads)).toHaveLength(threads.length);
   });
 });
 describe("sortProjectsForSidebar", () => {

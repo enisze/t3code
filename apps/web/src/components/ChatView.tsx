@@ -139,6 +139,7 @@ import {
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
 import { RightPanelTabs } from "./RightPanelTabs";
+import TasksPanel from "./tasks/TasksPanel";
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
@@ -160,6 +161,7 @@ import { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
   buildProjectScript,
   commandForProjectScript,
+  isTaskTerminalId,
   nextProjectScriptId,
   projectScriptIdFromCommand,
 } from "~/projectScripts";
@@ -657,7 +659,12 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   );
   const drawerTerminalSessions = useMemo(
     () =>
-      knownTerminalSessions.filter((session) => !panelTerminalIds.has(session.target.terminalId)),
+      knownTerminalSessions.filter(
+        (session) =>
+          !panelTerminalIds.has(session.target.terminalId) &&
+          // Task terminals are owned by the Run panel; keep them out of the drawer.
+          !isTaskTerminalId(session.target.terminalId),
+      ),
     [knownTerminalSessions, panelTerminalIds],
   );
   const terminalLabelsById = useMemo(() => {
@@ -3098,6 +3105,10 @@ function ChatViewContent(props: ChatViewProps) {
   const addFilesSurface = useCallback(() => {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
+  }, [activeProject, activeThreadRef]);
+  const addTasksSurface = useCallback(() => {
+    if (!activeThreadRef || !activeProject) return;
+    useRightPanelStore.getState().open(activeThreadRef, "tasks");
   }, [activeProject, activeThreadRef]);
   const openFileSurface = useCallback(
     (relativePath: string) => {
@@ -5673,6 +5684,24 @@ function ChatViewContent(props: ChatViewProps) {
         newShortcutLabel={newTerminalShortcutLabel ?? undefined}
         closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
       />
+    ) : activeRightPanelSurface?.kind === "tasks" && activeProject && activeWorkspaceRoot ? (
+      <TasksPanel
+        threadRef={activeThreadRef}
+        threadId={activeThreadRef.threadId}
+        environmentId={activeThreadRef.environmentId}
+        scripts={activeProject.scripts}
+        workspaceRoot={activeWorkspaceRoot}
+        launchContext={{
+          cwd: gitCwd ?? activeWorkspaceRoot,
+          worktreePath: activeThread?.worktreePath ?? null,
+        }}
+        keybindings={keybindings}
+        focusRequestId={terminalFocusRequestId}
+        onAddScript={saveProjectScript}
+        onUpdateScript={updateProjectScript}
+        onDeleteScript={deleteProjectScript}
+        onAddTerminalContext={addTerminalContextToDraft}
+      />
     ) : activeRightPanelSurface?.kind === "diff" ? (
       <Suspense fallback={null}>
         <DiffPanel
@@ -6135,9 +6164,11 @@ function ChatViewContent(props: ChatViewProps) {
           onAddTerminal={addTerminalSurface}
           onAddDiff={addDiffSurface}
           onAddFiles={addFilesSurface}
+          onAddTasks={addTasksSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
+          tasksAvailable={activeProject !== null}
         >
           {rightPanelContent}
         </RightPanelTabs>
@@ -6162,9 +6193,11 @@ function ChatViewContent(props: ChatViewProps) {
             onAddTerminal={addTerminalSurface}
             onAddDiff={addDiffSurface}
             onAddFiles={addFilesSurface}
+            onAddTasks={addTasksSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
+            tasksAvailable={activeProject !== null}
           >
             {rightPanelContent}
           </RightPanelTabs>

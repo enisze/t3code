@@ -105,6 +105,7 @@ import {
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
 import { projectEnvironment } from "../state/projects";
+import { orchestrationEnvironment } from "../state/orchestration";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -120,6 +121,7 @@ import {
   collapseWorktreeSiblings,
   formatWorkingDurationLabel,
   firstValidTimestampMs,
+  groupSidebarThreadsByProject,
   hasUnseenCompletion,
   isTrailingDoubleClick,
   mergeWorktreeSiblingRunningStatus,
@@ -394,6 +396,10 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   environmentLabel: string | null;
   projectCwd: string | null;
   projectTitle: string | null;
+  // When the inbox is grouped by project, a project header already names the
+  // section, so the card's own project favicon + label are suppressed to avoid
+  // repeating it on every row. The tooltip still carries the project name.
+  showProjectLabel: boolean;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
   onThreadActivate: (threadRef: ScopedThreadRef) => void;
@@ -881,20 +887,26 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
         >
           <div className="relative z-10 h-[4.875rem] px-2.5 py-2">
             <div className="flex h-5 min-w-0 items-center gap-1.5">
-              <ProjectFavicon
-                environmentId={thread.environmentId}
-                cwd={props.projectCwd ?? ""}
-                className="size-4 shrink-0"
-              />
-              {props.projectTitle ? (
-                <span
-                  className={cn(
-                    "min-w-0 flex-1 truncate text-xs text-muted-foreground/85",
-                    shouldRecede ? "font-normal" : "font-medium",
+              {props.showProjectLabel ? (
+                <>
+                  <ProjectFavicon
+                    environmentId={thread.environmentId}
+                    cwd={props.projectCwd ?? ""}
+                    className="size-4 shrink-0"
+                  />
+                  {props.projectTitle ? (
+                    <span
+                      className={cn(
+                        "min-w-0 flex-1 truncate text-xs text-muted-foreground/85",
+                        shouldRecede ? "font-normal" : "font-medium",
+                      )}
+                    >
+                      {props.projectTitle}
+                    </span>
+                  ) : (
+                    <span className="flex-1" />
                   )}
-                >
-                  {props.projectTitle}
-                </span>
+                </>
               ) : (
                 <span className="flex-1" />
               )}
@@ -1176,6 +1188,7 @@ export default function SidebarV2() {
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
+  const groupByProject = useClientSettings((s) => s.sidebarV2GroupByProject);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const { settleThread, unsettleThread, snoozeThread, unsnoozeThread, deleteThread } =
     useThreadActions();
@@ -1186,6 +1199,9 @@ export default function SidebarV2() {
     reportFailure: false,
   });
   const updateProject = useAtomCommand(projectEnvironment.update, {
+    reportFailure: false,
+  });
+  const generateContinuationSummary = useAtomCommand(orchestrationEnvironment.continuationSummary, {
     reportFailure: false,
   });
   const updateSettings = useUpdateClientSettings();
@@ -1314,6 +1330,25 @@ export default function SidebarV2() {
           ),
         ),
       ),
+    [projectGroups],
+  );
+  // Maps for the group-by-project inbox: member project ref → its group key
+  // (so a thread resolves to the section it belongs to), and group key → the
+  // snapshot that renders the section header (favicon, display name).
+  const projectKeyByMemberKey = useMemo(
+    () =>
+      new Map(
+        projectGroups.flatMap((group) =>
+          group.memberProjectRefs.map(
+            (projectRef) =>
+              [`${projectRef.environmentId}:${projectRef.projectId}`, group.projectKey] as const,
+          ),
+        ),
+      ),
+    [projectGroups],
+  );
+  const projectGroupByKey = useMemo(
+    () => new Map(projectGroups.map((group) => [group.projectKey, group] as const)),
     [projectGroups],
   );
 
@@ -1744,9 +1779,30 @@ export default function SidebarV2() {
     return routeThread === undefined ? [] : [routeThread];
   }, [effectiveRouteThreadKey, snoozedShelfExpanded, snoozedThreads]);
 
+  // Group-by-project splits the flat inbox into per-project sections. Scoping
+  // to a single project already narrows the list to one project, so grouping
+  // there would only add a redundant lone header — keep it flat. When grouping
+  // is off (or scoped) a single null-keyed section holds every active thread,
+  // so the render path and the flattened jump/selection order are identical to
+  // the ungrouped list.
+  const activeThreadSections = useMemo(() => {
+    if (!groupByProject || scopedProjectGroup !== null) {
+      return [{ projectKey: null as string | null, threads: activeThreads }];
+    }
+    return groupSidebarThreadsByProject({
+      threads: activeThreads,
+      projectOrder: projectGroups.map((group) => group.projectKey),
+      resolveProjectKey: (thread) =>
+        projectKeyByMemberKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null,
+    });
+  }, [activeThreads, groupByProject, projectGroups, projectKeyByMemberKey, scopedProjectGroup]);
+  const orderedActiveThreads = useMemo(
+    () => activeThreadSections.flatMap((section) => section.threads),
+    [activeThreadSections],
+  );
   const orderedThreads = useMemo(
-    () => [...activeThreads, ...visibleSnoozedThreads],
-    [activeThreads, visibleSnoozedThreads],
+    () => [...orderedActiveThreads, ...visibleSnoozedThreads],
+    [orderedActiveThreads, visibleSnoozedThreads],
   );
   const orderedThreadKeys = useMemo(
     () =>
@@ -1791,6 +1847,11 @@ export default function SidebarV2() {
   );
   const settledThreadKeysRef = useRef(settledThreadKeys);
   settledThreadKeysRef.current = settledThreadKeys;
+  // Live PR state per row, reported up from each row's git status. The context
+  // menu reads it through a ref so "Continue in new worktree" only appears for
+  // threads whose PR has merged.
+  const changeRequestStateByKeyRef = useRef(changeRequestStateByKey);
+  changeRequestStateByKeyRef.current = changeRequestStateByKey;
   const snoozedThreadKeys = useMemo(
     () =>
       new Set(
@@ -2255,6 +2316,14 @@ export default function SidebarV2() {
                     },
                   ]
                 : []),
+              ...(changeRequestStateByKeyRef.current.get(threadKey) === "merged"
+                ? [
+                    {
+                      id: "continue-in-new-worktree",
+                      label: "Continue in new worktree",
+                    },
+                  ]
+                : []),
               ...(supportsSettlement
                 ? [
                     isSettled
@@ -2307,6 +2376,58 @@ export default function SidebarV2() {
             );
             if (result._tag === "Failure") {
               const error = squashAtomCommandFailure(result);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Could not create thread",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                }),
+              );
+            }
+            return;
+          }
+          case "continue-in-new-worktree": {
+            // The PR is merged, so the finished chat's context can't be
+            // resumed in place. Summarize it into a compact handoff brief and
+            // seed a brand-new chat on a fresh worktree (branched off origin)
+            // so the user can carry the context onto something new.
+            const summaryResult = await generateContinuationSummary({
+              environmentId: thread.environmentId,
+              input: { threadId: thread.id },
+            });
+            if (summaryResult._tag === "Failure") {
+              if (isAtomCommandInterrupted(summaryResult)) return;
+              const error = squashAtomCommandFailure(summaryResult);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Could not prepare continuation",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                }),
+              );
+              return;
+            }
+            const { summary, sourceTitle } = summaryResult.value;
+            const initialPrompt = [
+              `Continuing from the merged chat "${sourceTitle}". Context handoff:`,
+              "",
+              summary,
+              "",
+              "New task: ",
+            ].join("\n");
+            const createResult = await settlePromise(() =>
+              handleNewThreadRef.current(scopeProjectRef(thread.environmentId, thread.projectId), {
+                branch: null,
+                worktreePath: null,
+                envMode: "worktree",
+                startFromOrigin: true,
+                forceNew: true,
+                modelSelection: thread.modelSelection,
+                initialPrompt,
+              }),
+            );
+            if (createResult._tag === "Failure") {
+              const error = squashAtomCommandFailure(createResult);
               toastManager.add(
                 stackedThreadToast({
                   type: "error",
@@ -2373,6 +2494,7 @@ export default function SidebarV2() {
       attemptUnsnooze,
       confirmThreadDelete,
       deleteThread,
+      generateContinuationSummary,
       handleMultiSelectContextMenu,
       markThreadUnread,
       projectGroups,
@@ -2647,6 +2769,7 @@ export default function SidebarV2() {
                 const renderThreadRow = (
                   thread: EnvironmentThreadShell,
                   section: "active" | "snoozed" | "settled",
+                  options?: { showProjectLabel?: boolean },
                 ) => {
                   const threadKey = scopedThreadKey(
                     scopeThreadRef(thread.environmentId, thread.id),
@@ -2708,6 +2831,7 @@ export default function SidebarV2() {
                           `${thread.environmentId}:${thread.projectId}`,
                         ) ?? null
                       }
+                      showProjectLabel={options?.showProjectLabel ?? true}
                       providerEntryByInstanceId={providerEntryByInstanceId}
                       onThreadClick={handleThreadClick}
                       onThreadActivate={navigateToThread}
@@ -2726,9 +2850,45 @@ export default function SidebarV2() {
                     />
                   );
                 };
-                const items: ReactNode[] = activeThreads.map((thread) =>
-                  renderThreadRow(thread, "active"),
-                );
+                const items: ReactNode[] = [];
+                for (const [sectionIndex, section] of activeThreadSections.entries()) {
+                  if (section.projectKey !== null) {
+                    const group = projectGroupByKey.get(section.projectKey);
+                    items.push(
+                      <li
+                        key={`project-header-${section.projectKey}`}
+                        data-thread-selection-safe
+                        className="list-none"
+                      >
+                        <div
+                          className={cn(
+                            "mb-1 flex w-full items-center gap-2 px-2.5",
+                            sectionIndex === 0 ? "mt-1" : "mt-3",
+                          )}
+                        >
+                          {group ? (
+                            <ProjectFavicon
+                              environmentId={group.environmentId}
+                              cwd={group.workspaceRoot}
+                              className="size-3.5 shrink-0"
+                            />
+                          ) : null}
+                          <span className="min-w-0 truncate text-xs font-medium text-muted-foreground">
+                            {group?.displayName ?? "Project"}
+                          </span>
+                          <span className="h-px flex-1 bg-sidebar-border/60" />
+                        </div>
+                      </li>,
+                    );
+                  }
+                  for (const thread of section.threads) {
+                    items.push(
+                      renderThreadRow(thread, "active", {
+                        showProjectLabel: section.projectKey === null,
+                      }),
+                    );
+                  }
+                }
                 // Snoozed shelf: between the inbox and Settled — out of the
                 // way, never gone. The header always renders while anything
                 // is snoozed (the count is the whole footprint when

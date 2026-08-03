@@ -20,6 +20,7 @@ import * as TextGeneration from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildContinuationSummaryPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
@@ -98,7 +99,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateContinuationSummary",
     value: unknown,
   ): Effect.Effect<string, TextGenerationError> =>
     encodeJsonString(value).pipe(
@@ -159,7 +161,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateContinuationSummary";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -401,10 +404,31 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
+  const generateContinuationSummary: TextGeneration.TextGeneration["Service"]["generateContinuationSummary"] =
+    Effect.fn("CodexTextGeneration.generateContinuationSummary")(function* (input) {
+      const { prompt, outputSchema } = buildContinuationSummaryPrompt({
+        sourceTitle: input.sourceTitle,
+        transcript: input.transcript,
+      });
+
+      const generated = yield* runCodexJson({
+        operation: "generateContinuationSummary",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return {
+        summary: generated.summary.trim(),
+      } satisfies TextGeneration.ContinuationSummaryGenerationResult;
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateContinuationSummary,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

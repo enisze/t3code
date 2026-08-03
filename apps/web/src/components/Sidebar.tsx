@@ -177,6 +177,7 @@ import {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
   collapseWorktreeSiblings,
+  collectWorktreeSiblingThreads,
   getSidebarThreadIdsToPrewarm,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
@@ -1979,13 +1980,38 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
   const attemptArchiveThread = useCallback(
     async (threadRef: ScopedThreadRef) => {
-      const result = await archiveThread(threadRef);
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
+      // A worktree row collapses every chat sharing one on-disk worktree into a
+      // single representative row, so archiving it must archive the whole group
+      // — otherwise the hidden siblings pop back out as their own rows once the
+      // representative is gone. Read the latest thread map from the ref so this
+      // callback stays out of the thread-list dependency chain.
+      const target = sidebarThreadByKeyRef.current.get(scopedThreadKey(threadRef));
+      const groupThreads = target
+        ? collectWorktreeSiblingThreads({
+            threads: [...sidebarThreadByKeyRef.current.values()],
+            target,
+          })
+        : [];
+      const entries =
+        groupThreads.length > 1
+          ? groupThreads.map((thread) => {
+              const ref = scopeThreadRef(thread.environmentId, thread.id);
+              return { threadKey: scopedThreadKey(ref), threadRef: ref };
+            })
+          : [{ threadKey: scopedThreadKey(threadRef), threadRef }];
+
+      const outcome = await archiveSelectedThreadEntries({
+        entries,
+        archive: ({ threadRef: ref }, onArchived) => archiveThread(ref, { onArchived }),
+      });
+      const failure = outcome.mutationFailure ?? outcome.followupFailures[0] ?? null;
+      if (failure && !isAtomCommandInterrupted(failure)) {
+        const error = squashAtomCommandFailure(failure);
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to archive thread",
+            title:
+              entries.length > 1 ? "Failed to archive worktree chats" : "Failed to archive thread",
             description: error instanceof Error ? error.message : "An error occurred.",
           }),
         );

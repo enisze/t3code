@@ -28,6 +28,7 @@ export const ORCHESTRATION_WS_METHODS = {
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
+  generateContinuationSummary: "orchestration.generateContinuationSummary",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
 } as const;
@@ -1397,6 +1398,20 @@ export type OrchestrationGetFullThreadDiffInput = typeof OrchestrationGetFullThr
 export const OrchestrationGetFullThreadDiffResult = ThreadTurnDiff;
 export type OrchestrationGetFullThreadDiffResult = typeof OrchestrationGetFullThreadDiffResult.Type;
 
+export const OrchestrationGenerateContinuationSummaryInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type OrchestrationGenerateContinuationSummaryInput =
+  typeof OrchestrationGenerateContinuationSummaryInput.Type;
+
+export const OrchestrationGenerateContinuationSummaryResult = Schema.Struct({
+  sourceThreadId: ThreadId,
+  sourceTitle: TrimmedNonEmptyString,
+  summary: TrimmedNonEmptyString,
+});
+export type OrchestrationGenerateContinuationSummaryResult =
+  typeof OrchestrationGenerateContinuationSummaryResult.Type;
+
 export const OrchestrationRpcSchemas = {
   dispatchCommand: {
     input: ClientOrchestrationCommand,
@@ -1413,6 +1428,10 @@ export const OrchestrationRpcSchemas = {
   getArchivedShellSnapshot: {
     input: Schema.Struct({}),
     output: OrchestrationShellSnapshot,
+  },
+  generateContinuationSummary: {
+    input: OrchestrationGenerateContinuationSummaryInput,
+    output: OrchestrationGenerateContinuationSummaryResult,
   },
   subscribeThread: {
     input: OrchestrationSubscribeThreadInput,
@@ -1450,6 +1469,14 @@ export class OrchestrationGetTurnDiffError extends Schema.TaggedErrorClass<Orche
 
 export class OrchestrationGetFullThreadDiffError extends Schema.TaggedErrorClass<OrchestrationGetFullThreadDiffError>()(
   "OrchestrationGetFullThreadDiffError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+export class OrchestrationGenerateContinuationSummaryError extends Schema.TaggedErrorClass<OrchestrationGenerateContinuationSummaryError>()(
+  "OrchestrationGenerateContinuationSummaryError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),

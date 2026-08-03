@@ -231,3 +231,41 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
 
   return { prompt, outputSchema };
 }
+
+// ---------------------------------------------------------------------------
+// Continuation handoff summary
+// ---------------------------------------------------------------------------
+
+export interface ContinuationSummaryPromptInput {
+  /** Title of the finished chat being continued from. */
+  sourceTitle: string;
+  /** Windowed role-tagged transcript of the finished conversation. */
+  transcript: string;
+}
+
+export function buildContinuationSummaryPrompt(input: ContinuationSummaryPromptInput) {
+  const prompt = [
+    "You write a concise handoff brief so a fresh coding session can continue prior work.",
+    "The previous chat's pull request has been merged; a new session on a new worktree will build on it.",
+    "Return a JSON object with key: summary.",
+    "Rules:",
+    "- summary must be markdown a new session can act on, not a transcript replay",
+    "- capture, as short sections or bullets: the original goal, the key decisions made,",
+    "  which files/areas were changed, the current state (what shipped/merged), and concrete",
+    "  suggested next steps",
+    "- be faithful to what actually happened; do not invent work that was not done",
+    "- keep it tight (aim for under ~400 words); prefer specifics over generic phrasing",
+    "- do not include a top-level heading or restate these instructions",
+    "",
+    `Previous chat title: ${input.sourceTitle}`,
+    "",
+    "Conversation transcript:",
+    limitSection(input.transcript, 40_000),
+  ].join("\n");
+
+  const outputSchema = Schema.Struct({
+    summary: Schema.String,
+  });
+
+  return { prompt, outputSchema };
+}

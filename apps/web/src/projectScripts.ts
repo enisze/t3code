@@ -85,3 +85,20 @@ export function primaryProjectScript(scripts: ReadonlyArray<ProjectScript>): Pro
   const regular = scripts.find((script) => !script.runOnWorktreeCreate);
   return regular ?? scripts[0] ?? null;
 }
+
+/**
+ * Prefix for terminal ids owned by the right-panel "Run" tasks surface. Task
+ * terminals are kept out of the general terminal drawer so a project's
+ * setup/run tasks each get a stable, dedicated terminal that survives re-runs.
+ */
+export const TASK_TERMINAL_ID_PREFIX = "task-";
+
+/** Fixed terminal id for the plain shell tab inside the tasks surface. */
+export const TASK_SHELL_TERMINAL_ID = "task-shell";
+
+/** Stable terminal id for a project script's dedicated task terminal. */
+export const taskTerminalId = (scriptId: string): string => `${TASK_TERMINAL_ID_PREFIX}${scriptId}`;
+
+/** Whether a terminal id belongs to the tasks surface (a task or its shell). */
+export const isTaskTerminalId = (terminalId: string): boolean =>
+  terminalId.startsWith(TASK_TERMINAL_ID_PREFIX);

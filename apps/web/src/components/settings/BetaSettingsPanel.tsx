@@ -59,6 +59,7 @@ export function BetaSettingsPanel() {
   const sidebarAutoSettleAfterDays = useClientSettings(
     (settings) => settings.sidebarAutoSettleAfterDays,
   );
+  const sidebarV2GroupByProject = useClientSettings((settings) => settings.sidebarV2GroupByProject);
   const updateSettings = useUpdateClientSettings();
 
   return (
@@ -84,6 +85,19 @@ export function BetaSettingsPanel() {
         />
         {sidebarV2Enabled ? (
           <>
+            <SettingsRow
+              title="Group threads by project"
+              description="Break the flat inbox into sections headed by each project, instead of one activity-sorted list. Snoozed and settled threads are unaffected."
+              control={
+                <Switch
+                  checked={sidebarV2GroupByProject}
+                  onCheckedChange={(checked) =>
+                    updateSettings({ sidebarV2GroupByProject: Boolean(checked) })
+                  }
+                  aria-label="Group sidebar v2 threads by project"
+                />
+              }
+            />
             <SettingsRow
               title="Auto-settle inactive threads"
               description="Threads with no activity for this long settle automatically. Threads on merged or closed PRs always settle."
