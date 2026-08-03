@@ -10,16 +10,16 @@ import {
   type ChangeRequestTerminology,
 } from "../sourceControlPresentation";
 
-export type GitActionIconName = "commit" | "push" | "pr" | "merge";
+export type GitActionIconName = "commit" | "push" | "pr" | "merge" | "resolve";
 
 export type GitDialogAction = "commit" | "push" | "create_pr";
 
 export interface GitActionMenuItem {
-  id: "commit" | "push" | "pr" | "merge";
+  id: "commit" | "push" | "pr" | "merge" | "resolve";
   label: string;
   disabled: boolean;
   icon: GitActionIconName;
-  kind: "open_dialog" | "open_pr" | "merge_pr";
+  kind: "open_dialog" | "open_pr" | "merge_pr" | "resolve_conflicts";
   dialogAction?: GitDialogAction;
 }
 
@@ -145,6 +145,21 @@ export function buildMenuItems(
     dialogAction: "push",
   };
 
+  // Offer an AI-assisted "Resolve conflicts" action whenever the branch has
+  // diverged from (or fallen behind) its upstream, i.e. when merging origin
+  // back in may produce conflicts. The action itself is never gated on
+  // `isBusy` because it only hands a prompt to the agent.
+  const resolveItem: GitActionMenuItem | null =
+    hasBranch && gitStatus.hasUpstream && isBehind
+      ? {
+          id: "resolve",
+          label: "Resolve conflicts",
+          disabled: false,
+          icon: "resolve",
+          kind: "resolve_conflicts",
+        }
+      : null;
+
   if (hasOpenPr) {
     return [
       commitItem,
@@ -163,6 +178,7 @@ export function buildMenuItems(
         icon: "merge",
         kind: "merge_pr",
       },
+      ...(resolveItem ? [resolveItem] : []),
     ];
   }
 
@@ -177,6 +193,7 @@ export function buildMenuItems(
       kind: "open_dialog",
       dialogAction: "create_pr",
     },
+    ...(resolveItem ? [resolveItem] : []),
   ];
 }
 
