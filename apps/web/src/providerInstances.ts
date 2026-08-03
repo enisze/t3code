@@ -53,6 +53,12 @@ export interface ProviderInstanceEntry {
   readonly installed: boolean;
   readonly status: ServerProviderState;
   /**
+   * True when the most recent status probe timed out. Such an instance keeps
+   * its (retained) models and stays selectable in pickers — it renders an
+   * exclamation affordance instead of the disabled/error treatment.
+   */
+  readonly timedOut: boolean;
+  /**
    * True when this entry is the default instance for its driver kind —
    * i.e. its instance id equals `defaultInstanceIdForDriver(driverKind)`.
    * The settings panel and picker sort defaults before customs.
@@ -71,7 +77,10 @@ export interface ProviderInstanceEntry {
  * `ready` probe status can remain in the streamed snapshot until reconciliation.
  */
 export function isProviderInstancePickerReady(entry: ProviderInstanceEntry): boolean {
-  return entry.enabled && entry.isAvailable && entry.status === "ready";
+  // A timed-out probe keeps the instance selectable (its models are retained
+  // from the last good probe); the picker flags it with an exclamation rather
+  // than disabling it. Everything else must be genuinely `ready`.
+  return entry.enabled && entry.isAvailable && (entry.status === "ready" || entry.timedOut);
 }
 
 /** Picker rails contain configured, enabled instances only. */
@@ -174,6 +183,7 @@ export function deriveProviderInstanceEntries(
       enabled: snapshot.enabled,
       installed: snapshot.installed,
       status: snapshot.status,
+      timedOut: snapshot.timedOut ?? false,
       isDefault,
       isAvailable: snapshot.availability !== "unavailable",
       snapshot,

@@ -1,6 +1,6 @@
 import { type ProviderInstanceId } from "@t3tools/contracts";
 import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { SparklesIcon, StarIcon } from "lucide-react";
+import { SparklesIcon, StarIcon, TriangleAlertIcon } from "lucide-react";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
@@ -25,11 +25,23 @@ function describeUnavailableInstance(entry: ProviderInstanceEntry): string {
   return msg ? `${label} — ${kind}. ${msg}` : `${label} — ${kind}.`;
 }
 
+/**
+ * Tooltip for an instance whose last probe timed out. It stays selectable, so
+ * the copy explains the exclamation affordance rather than reading as an error.
+ */
+function describeTimedOutInstance(entry: ProviderInstanceEntry): string {
+  const msg = entry.snapshot.message?.trim();
+  return msg
+    ? `${entry.displayName} — Status check timed out. ${msg}`
+    : `${entry.displayName} — Status check timed out.`;
+}
+
 const SELECTED_INDICATOR_CLASS =
   "pointer-events-none absolute -right-1 top-1/2 z-10 h-5 w-0.75 -translate-y-1/2 rounded-l-full bg-primary";
 const BADGE_BASE_CLASS =
   "pointer-events-none absolute -right-0.5 top-0.5 z-10 flex size-3.5 items-center justify-center rounded-full bg-transparent shadow-sm ";
 const NEW_BADGE_CLASS = `${BADGE_BASE_CLASS} text-amber-600  dark:text-amber-300 `;
+const TIMEOUT_BADGE_CLASS = `${BADGE_BASE_CLASS} text-amber-500 dark:text-amber-400 `;
 
 /** Opens toward the rail so the list stays readable (not over the model names). */
 const PICKER_TOOLTIP_SIDE = "left" as const;
@@ -142,7 +154,11 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
             const isDisabled = isUnavailable || isContextDisabled;
             const isSelected = props.selectedInstanceId === entry.instanceId;
             const isHovered = hoveredInstanceId === entry.instanceId;
-            const showNewBadge = props.newBadgeInstanceIds?.has(entry.instanceId) ?? false;
+            // A timed-out instance stays selectable; flag it with an
+            // exclamation badge instead of disabling it or marking it "new".
+            const showTimeoutBadge = entry.timedOut && !isDisabled;
+            const showNewBadge =
+              !showTimeoutBadge && (props.newBadgeInstanceIds?.has(entry.instanceId) ?? false);
             const showInstanceBadge =
               Boolean(entry.accentColor) || (duplicateDriverCounts.get(entry.driverKind) ?? 0) > 1;
 
@@ -150,9 +166,11 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
               ? describeUnavailableInstance(entry)
               : isContextDisabled
                 ? (props.getDisabledInstanceTooltip?.(entry) ?? entry.displayName)
-                : showNewBadge
-                  ? `${entry.displayName} — New`
-                  : entry.displayName;
+                : showTimeoutBadge
+                  ? describeTimedOutInstance(entry)
+                  : showNewBadge
+                    ? `${entry.displayName} — New`
+                    : entry.displayName;
 
             const button = (
               <button
@@ -175,9 +193,11 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                 aria-label={
                   isDisabled
                     ? tooltip
-                    : showNewBadge
-                      ? `${entry.displayName}, new`
-                      : entry.displayName
+                    : showTimeoutBadge
+                      ? `${entry.displayName}, status check timed out`
+                      : showNewBadge
+                        ? `${entry.displayName}, new`
+                        : entry.displayName
                 }
               >
                 <ProviderInstanceIcon
@@ -201,6 +221,11 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                 {showNewBadge ? (
                   <span className={NEW_BADGE_CLASS} aria-hidden>
                     <SparklesIcon className="size-2" />
+                  </span>
+                ) : null}
+                {showTimeoutBadge ? (
+                  <span className={TIMEOUT_BADGE_CLASS} aria-hidden>
+                    <TriangleAlertIcon className="size-2.5" />
                   </span>
                 ) : null}
               </button>

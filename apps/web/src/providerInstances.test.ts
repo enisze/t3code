@@ -18,6 +18,7 @@ function provider(input: {
   availability?: ServerProvider["availability"];
   displayName?: string;
   status?: ServerProvider["status"];
+  timedOut?: boolean;
   models?: ServerProvider["models"];
 }): ServerProvider {
   return {
@@ -28,6 +29,7 @@ function provider(input: {
     installed: true,
     version: null,
     status: input.status ?? "ready",
+    ...(input.timedOut ? { timedOut: true } : {}),
     ...(input.availability ? { availability: input.availability } : {}),
     auth: { status: "authenticated" },
     checkedAt: "2026-01-01T00:00:00.000Z",
@@ -64,6 +66,20 @@ describe("isProviderInstancePickerReady", () => {
       provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),
     ]);
 
+    expect(entry && isProviderInstancePickerReady(entry)).toBe(true);
+  });
+
+  it("keeps a timed-out instance selectable so the picker can flag it instead of disabling it", () => {
+    const [entry] = deriveProviderInstanceEntries([
+      provider({
+        provider: ProviderDriverKind.make("codex"),
+        instanceId: "codex",
+        status: "error",
+        timedOut: true,
+      }),
+    ]);
+
+    expect(entry?.timedOut).toBe(true);
     expect(entry && isProviderInstancePickerReady(entry)).toBe(true);
   });
 });
