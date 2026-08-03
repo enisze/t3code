@@ -181,6 +181,7 @@ import {
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
   isTrailingDoubleClick,
+  mergeWorktreeSiblingRunningStatus,
   resolveProjectStatusIndicator,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
@@ -1269,11 +1270,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     );
     // Chats spawned into the same worktree (via the in-chat worktree tab
     // strip) collapse to a single row; the siblings stay reachable only as
-    // tabs. The project status dot still reads from every non-archived
-    // thread so a busy sibling never goes unreported behind its row.
+    // tabs. A running sibling lends its session status to the representative
+    // so both the row and project status report work happening in the group.
     const { threads: visibleProjectThreads, representativeKeyByThreadKey } =
-      collapseWorktreeSiblings(sortedThreads, (thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      collapseWorktreeSiblings(
+        sortedThreads,
+        (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        mergeWorktreeSiblingRunningStatus,
       );
     const projectStatus = resolveProjectStatusIndicator(
       sortedThreads.map((thread) => resolveProjectThreadStatus(thread)),
@@ -2113,6 +2116,26 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [updateProject],
   );
 
+  const updateProjectReviewModelSelection = useCallback(
+    async (member: SidebarProjectGroupMember, selection: ModelSelection | null) => {
+      const result = await updateProject({
+        environmentId: member.environmentId,
+        input: { projectId: member.id, reviewModelSelection: selection },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to update project review model",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [updateProject],
+  );
+
   const updateProjectGitHubAccount = useCallback(
     async (member: SidebarProjectGroupMember, account: GitHubAccountRef | null) => {
       const result = await updateProject({
@@ -2466,6 +2489,17 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                 projectId={projectRenameTarget.id}
                 onChange={(selection) => {
                   void updateProjectDefaultModelSelection(projectRenameTarget, selection);
+                }}
+              />
+            ) : null}
+            {projectRenameTarget ? (
+              <ProjectDefaultAgentField
+                kind="review"
+                idPrefix={`project-review-agent-${projectRenameTarget.physicalProjectKey}`}
+                environmentId={projectRenameTarget.environmentId}
+                projectId={projectRenameTarget.id}
+                onChange={(selection) => {
+                  void updateProjectReviewModelSelection(projectRenameTarget, selection);
                 }}
               />
             ) : null}

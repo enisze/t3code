@@ -169,6 +169,7 @@ import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import { useClientSettings, useEnvironmentSettings } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+import { consumePendingDraftAutoSubmit, hasPendingDraftAutoSubmit } from "../draftAutoSubmit";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
@@ -3074,15 +3075,20 @@ function ChatViewContent(props: ChatViewProps) {
     addDiffSurface();
   }, [activeThreadRef, addDiffSurface, isGitRepo, isServerThread]);
   const startReviewInNewChat = useCallback(() => {
-    if (!activeProjectRef || !newChatWorktreePath) return;
+    if (!activeProjectRef || !activeProject || !newChatWorktreePath) return;
+    const reviewModelSelection =
+      activeProject.reviewModelSelection ?? activeProject.defaultModelSelection;
     void handleNewThread(activeProjectRef, {
       branch: newChatWorktreeBranch,
       worktreePath: newChatWorktreePath,
       envMode: "worktree",
       forceNew: true,
       initialPrompt: primaryServerSettings.reviewPrompt,
+      ...(reviewModelSelection ? { modelSelection: reviewModelSelection } : {}),
+      autoSubmitInitialPrompt: true,
     });
   }, [
+    activeProject,
     activeProjectRef,
     handleNewThread,
     newChatWorktreeBranch,
@@ -4915,6 +4921,25 @@ function ChatViewContent(props: ChatViewProps) {
       resetLocalDispatch();
     }
   };
+
+  useEffect(() => {
+    if (!draftId || !hasPendingDraftAutoSubmit(draftId)) return;
+    if (
+      !activeThread ||
+      isSendBusy ||
+      isConnecting ||
+      threadDetailLoading ||
+      activeEnvironmentUnavailable ||
+      sendInFlightRef.current ||
+      !composerRef.current?.getSendContext().providerAvailable ||
+      promptRef.current.trim().length === 0
+    ) {
+      return;
+    }
+    if (consumePendingDraftAutoSubmit(draftId)) {
+      void onSend();
+    }
+  });
 
   const onInterrupt = async () => {
     if (!activeThread) return;

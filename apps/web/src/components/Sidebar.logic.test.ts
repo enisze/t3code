@@ -14,6 +14,7 @@ import {
   hasUnseenCompletion,
   isContextMenuPointerDown,
   isTrailingDoubleClick,
+  mergeWorktreeSiblingRunningStatus,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
   resolveSidebarStageBadgeLabel,
@@ -1117,6 +1118,46 @@ describe("collapseWorktreeSiblings", () => {
 
     expect(collapsed.map((thread) => thread.id)).toEqual(["alpha"]);
   });
+
+  it("projects a running sibling's status onto the representative row", () => {
+    const representative = makeThread({
+      id: ThreadId.make("older"),
+      worktreePath: "/wt/a",
+      createdAt: "2026-03-09T10:00:00.000Z",
+    });
+    const runningSibling = makeThread({
+      id: ThreadId.make("newer"),
+      worktreePath: "/wt/a",
+      createdAt: "2026-03-09T12:00:00.000Z",
+      session: {
+        threadId: ThreadId.make("newer"),
+        status: "running",
+        providerName: "Codex",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        runtimeMode: DEFAULT_RUNTIME_MODE,
+        activeTurnId: "turn-1" as never,
+        lastError: null,
+        updatedAt: "2026-03-09T12:01:00.000Z",
+      },
+    });
+
+    const { threads: collapsed } = collapseWorktreeSiblings(
+      [representative, runningSibling],
+      (thread) => `${thread.environmentId}:${thread.id}`,
+      mergeWorktreeSiblingRunningStatus,
+    );
+
+    expect(collapsed).toHaveLength(1);
+    expect(collapsed[0]?.id).toBe("older");
+    const representativeStatus = {
+      ...collapsed[0]!,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      hasActionableProposedPlan: false,
+    };
+    expect(resolveSidebarV2Status(representativeStatus)).toBe("working");
+    expect(resolveThreadStatusPill({ thread: representativeStatus })?.label).toBe("Working");
+  });
 });
 
 describe("resolveWorktreeActiveThread", () => {
@@ -1230,7 +1271,7 @@ describe("resolveWorktreeActiveThread", () => {
 });
 
 function makeProject(overrides: Partial<Project> = {}): Project {
-  const { defaultModelSelection, ...rest } = overrides;
+  const { defaultModelSelection, reviewModelSelection = null, ...rest } = overrides;
   return {
     id: ProjectId.make("project-1"),
     environmentId: localEnvironmentId,
@@ -1242,6 +1283,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
       model: "gpt-5.4",
       ...defaultModelSelection,
     },
+    reviewModelSelection,
     createdAt: "2026-03-09T10:00:00.000Z",
     updatedAt: "2026-03-09T10:00:00.000Z",
     scripts: [],

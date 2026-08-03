@@ -211,6 +211,7 @@ export function projectEvent(
             title: payload.title,
             workspaceRoot: payload.workspaceRoot,
             defaultModelSelection: payload.defaultModelSelection,
+            reviewModelSelection: payload.reviewModelSelection ?? null,
             gitHubAccount: payload.gitHubAccount ?? null,
             worktreeBranchPrefix: payload.worktreeBranchPrefix ?? null,
             scripts: payload.scripts,
@@ -244,6 +245,9 @@ export function projectEvent(
                     : {}),
                   ...(payload.defaultModelSelection !== undefined
                     ? { defaultModelSelection: payload.defaultModelSelection }
+                    : {}),
+                  ...(payload.reviewModelSelection !== undefined
+                    ? { reviewModelSelection: payload.reviewModelSelection }
                     : {}),
                   ...(payload.gitHubAccount !== undefined
                     ? { gitHubAccount: payload.gitHubAccount }

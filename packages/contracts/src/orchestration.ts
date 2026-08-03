@@ -215,6 +215,7 @@ export const OrchestrationProject = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
+  reviewModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   /**
    * GitHub account (from `gh auth status`) to run this project's GitHub
    * operations as. Null means fall back to the machine-global active account.
@@ -406,6 +407,7 @@ export const OrchestrationProjectShell = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
+  reviewModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   gitHubAccount: Schema.NullOr(GitHubAccountRef).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -541,6 +543,7 @@ export const ProjectCreateCommand = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  reviewModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   gitHubAccount: Schema.optional(Schema.NullOr(GitHubAccountRef)),
   worktreeBranchPrefix: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   createdAt: IsoDateTime,
@@ -553,6 +556,7 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  reviewModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   gitHubAccount: Schema.optional(Schema.NullOr(GitHubAccountRef)),
   worktreeBranchPrefix: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
@@ -941,6 +945,7 @@ export const ProjectCreatedPayload = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
+  reviewModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   gitHubAccount: Schema.optional(Schema.NullOr(GitHubAccountRef)),
   worktreeBranchPrefix: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   scripts: Schema.Array(ProjectScript),
@@ -954,6 +959,7 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  reviewModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   gitHubAccount: Schema.optional(Schema.NullOr(GitHubAccountRef)),
   worktreeBranchPrefix: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),

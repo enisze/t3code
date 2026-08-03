@@ -13,6 +13,7 @@ import { useThreadShells } from "~/state/entities";
 import { buildThreadRouteParams } from "~/threadRoutes";
 import { cn } from "~/lib/utils";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import { Spinner } from "~/components/ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useThreadActions } from "~/hooks/useThreadActions";
 import { useClientSettings } from "~/hooks/useSettings";
@@ -37,6 +38,10 @@ export function getWorktreeTabAfterClose(
   const closingIndex = tabs.findIndex((tab) => tab.id === closingThreadId);
   if (closingIndex === -1) return null;
   return tabs[closingIndex + 1] ?? tabs[closingIndex - 1] ?? null;
+}
+
+export function isWorktreeThreadInProgress(shell: EnvironmentThreadShell): boolean {
+  return shell.session?.status === "running" || shell.session?.status === "starting";
 }
 
 export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
@@ -119,8 +124,7 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
         <div className="flex h-full w-max min-w-full items-center gap-1">
           {tabs.map((shell) => {
             const active = shell.id === activeThreadId;
-            const isRunning =
-              shell.session?.status === "running" && shell.session.activeTurnId != null;
+            const isInProgress = isWorktreeThreadInProgress(shell);
             const isClosing = shell.id === closingThreadId;
             return (
               <div
@@ -158,7 +162,22 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
                   />
                   <TooltipPopup side="bottom">{shell.title}</TooltipPopup>
                 </Tooltip>
-                {!isRunning && (
+                {isInProgress ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span
+                          role="status"
+                          aria-label={`${shell.title} is in progress`}
+                          className="mr-1 inline-flex size-5 shrink-0 items-center justify-center text-sky-600 dark:text-sky-400"
+                        />
+                      }
+                    >
+                      <Spinner aria-hidden="true" className="size-3.5" />
+                    </TooltipTrigger>
+                    <TooltipPopup side="bottom">Chat in progress</TooltipPopup>
+                  </Tooltip>
+                ) : (
                   <Tooltip>
                     <TooltipTrigger
                       render={
