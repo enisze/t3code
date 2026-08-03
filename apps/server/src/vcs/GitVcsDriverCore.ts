@@ -386,6 +386,21 @@ function gitCommandContext(
   } as const;
 }
 
+// Git writes the actionable reason for a failed remote op (push/fetch) to
+// stderr — "Permission denied", "403", "could not read Username", "remote:
+// Repository not found". Surfacing it turns the opaque "exited with a non-zero
+// status" into something a user can act on (e.g. the selected GitHub account
+// lacks push access). Callers gate this to commands whose args are constructed
+// internally (remote/branch names, never user input), so — unlike the general
+// executeGit path, which stays redacted because git echoes argument values into
+// stderr — there is no argument secret to leak. The account token is passed via
+// the credential helper's stdin protocol and git redacts URL credentials, so
+// the token never appears in this output either.
+function appendGitOutputToDetail(baseDetail: string, stdout: string, stderr: string): string {
+  const gitOutput = stderr.trim() || stdout.trim();
+  return gitOutput.length > 0 ? `${baseDetail}\n${gitOutput}` : baseDetail;
+}
+
 function parseDefaultBranchFromRemoteHeadRef(value: string, remoteName: string): string | null {
   const trimmed = value.trim();
   const prefix = `refs/remotes/${remoteName}/`;
@@ -961,6 +976,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.map((authEnv) => ({ ...STATUS_UPSTREAM_REFRESH_ENV, ...authEnv })),
     );
 
+  // Remote-touching git commands (push/fetch) whose args are built internally.
+  // On failure the git stderr IS the actionable reason (auth denied, no remote,
+  // wrong account), so — unlike the redacted general executeGit path — surface
+  // it in the error detail. Runs with allowNonZeroExit so we can read stderr
+  // before deciding to fail.
   const runGitWithEnv = (
     operation: string,
     cwd: string,
@@ -968,7 +988,26 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     env: NodeJS.ProcessEnv,
     allowNonZeroExit = false,
   ): Effect.Effect<void, GitCommandError> =>
-    executeGit(operation, cwd, args, { allowNonZeroExit, env }).pipe(Effect.asVoid);
+    executeGit(operation, cwd, args, { allowNonZeroExit: true, env }).pipe(
+      Effect.flatMap((result) => {
+        if (allowNonZeroExit || result.exitCode === 0) {
+          return Effect.void;
+        }
+        return Effect.fail(
+          new GitCommandError({
+            ...gitCommandContext({ operation, cwd, args }),
+            detail: appendGitOutputToDetail(
+              "Git command exited with a non-zero status.",
+              result.stdout,
+              result.stderr,
+            ),
+            ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+            stdoutLength: result.stdout.length,
+            stderrLength: result.stderr.length,
+          }),
+        );
+      }),
+    );
 
   const runGitStdout = (
     operation: string,

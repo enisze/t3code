@@ -128,6 +128,7 @@ import {
   resolveSettledTimestamp,
   resolveSidebarV2Status,
   resolveWorkingStartedAt,
+  resolveWorktreeActiveThread,
   shouldNavigateAfterProjectRemoval,
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebarV2,
@@ -1870,19 +1871,34 @@ export default function SidebarV2() {
   // starting a session un-settles server-side.
   const navigateToThread = useCallback(
     (threadRef: ScopedThreadRef) => {
+      // A worktree row collapses to its earliest-created chat, but clicking it
+      // should reopen whichever sibling was last active, not always the oldest.
+      const clicked = threads.find(
+        (thread) =>
+          thread.environmentId === threadRef.environmentId && thread.id === threadRef.threadId,
+      );
+      const target = clicked
+        ? resolveWorktreeActiveThread({
+            threads,
+            clicked,
+            keyOf: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+            lastVisitedAtByKey: useUiStateStore.getState().threadLastVisitedAtById,
+          })
+        : null;
+      const resolvedRef = target ? scopeThreadRef(target.environmentId, target.id) : threadRef;
       if (useThreadSelectionStore.getState().selectedThreadKeys.size > 0) {
         clearSelection();
       }
-      setSelectionAnchor(scopedThreadKey(threadRef));
+      setSelectionAnchor(scopedThreadKey(resolvedRef));
       if (isMobile) {
         setOpenMobile(false);
       }
       void router.navigate({
         to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(threadRef),
+        params: buildThreadRouteParams(resolvedRef),
       });
     },
-    [clearSelection, isMobile, router, setOpenMobile, setSelectionAnchor],
+    [clearSelection, isMobile, router, setOpenMobile, setSelectionAnchor, threads],
   );
 
   const [renamingThreadKey, setRenamingThreadKey] = useState<string | null>(null);

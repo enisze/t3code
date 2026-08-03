@@ -12,6 +12,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient } from "effect/unstable/http";
 import {
   createModelCapabilities,
   getModelSelectionStringOptionValue,
@@ -42,6 +43,7 @@ import {
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
+import { fetchClaudeAccountUsage } from "../providerUsage.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -788,7 +790,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+  | ChildProcessSpawner.ChildProcessSpawner
+  | FileSystem.FileSystem
+  | Path.Path
+  | HttpClient.HttpClient
 > {
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
@@ -927,6 +932,20 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       subscriptionType: capabilities.subscriptionType,
       authMethod: capabilities.tokenSource,
     }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
+
+  // Subscription usage windows are only meaningful for claude.ai OAuth
+  // accounts; API-key / Bedrock / Vertex auth has no 5-hour/weekly caps.
+  const isOauthSubscription =
+    Boolean(capabilities.subscriptionType) &&
+    normalizeClaudeAuthMethod(capabilities.tokenSource) !== "apiKey";
+  const usage = isOauthSubscription
+    ? yield* fetchClaudeAccountUsage({
+        claudeSettings,
+        cliVersion: parsedVersion,
+        fetchedAt: checkedAt,
+      }).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+    : undefined;
+
   return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,
     enabled: claudeSettings.enabled,
@@ -934,6 +953,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     models,
     slashCommands: dedupedSlashCommands,
     skills,
+    ...(usage ? { usage } : {}),
     probe: {
       installed: true,
       version: parsedVersion,

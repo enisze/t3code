@@ -749,6 +749,56 @@ export function collapseWorktreeSiblings<T extends WorktreeCollapsibleThread>(
   return { threads: survivors, representativeKeyByThreadKey };
 }
 
+/**
+ * When a worktree collapses to one representative row (the earliest-created
+ * chat, see collapseWorktreeSiblings), clicking that row should reopen the chat
+ * the user was last in — not always the oldest one. This resolves the clicked
+ * representative to the most recently active sibling sharing its worktree.
+ *
+ * "Active" prefers the user's own last-visited time (return to where you left
+ * off) and falls back to the thread's last server activity for chats never
+ * explicitly opened. Threads with no worktree, or worktrees holding a single
+ * live chat, resolve to themselves. Ties keep the earliest-created chat, so a
+ * group with no activity signal lands on the same row collapseWorktreeSiblings
+ * shows.
+ */
+export function resolveWorktreeActiveThread<
+  T extends WorktreeCollapsibleThread &
+    SettledTimestampInput & { readonly archivedAt: string | null },
+>(input: {
+  threads: readonly T[];
+  clicked: T;
+  keyOf: (thread: T) => string;
+  lastVisitedAtByKey: Readonly<Record<string, string | undefined>>;
+}): T {
+  const { clicked, keyOf, lastVisitedAtByKey, threads } = input;
+  if (clicked.worktreePath === null) return clicked;
+  const activityMs = (thread: T): number => {
+    const visited = lastVisitedAtByKey[keyOf(thread)];
+    const settled = resolveSettledTimestamp(thread);
+    const visitedMs = visited === undefined ? Number.NaN : Date.parse(visited);
+    const settledMs = settled === null ? Number.NaN : Date.parse(settled);
+    return Math.max(
+      Number.isNaN(visitedMs) ? Number.NEGATIVE_INFINITY : visitedMs,
+      Number.isNaN(settledMs) ? Number.NEGATIVE_INFINITY : settledMs,
+    );
+  };
+  let best = clicked;
+  let bestMs = activityMs(clicked);
+  for (const thread of threads) {
+    if (thread.environmentId === clicked.environmentId && thread.id === clicked.id) continue;
+    if (thread.archivedAt !== null) continue;
+    if (thread.environmentId !== clicked.environmentId) continue;
+    if (thread.worktreePath !== clicked.worktreePath) continue;
+    const ms = activityMs(thread);
+    if (ms > bestMs || (ms === bestMs && isEarlierCreatedThread(thread, best))) {
+      best = thread;
+      bestMs = ms;
+    }
+  }
+  return best;
+}
+
 export function mergeWorktreeSiblingRunningStatus<T extends Pick<SidebarThreadSummary, "session">>(
   representative: T,
   members: readonly T[],

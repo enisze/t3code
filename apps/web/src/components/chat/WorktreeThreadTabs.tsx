@@ -197,25 +197,25 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
               </div>
             );
           })}
+          {onNewChatInWorktree && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label="New chat in this worktree"
+                    className="relative inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    onClick={onNewChatInWorktree}
+                  />
+                }
+              >
+                <MessageSquarePlusIcon aria-hidden="true" className="size-4" />
+              </TooltipTrigger>
+              <TooltipPopup side="bottom">New chat in this worktree</TooltipPopup>
+            </Tooltip>
+          )}
         </div>
       </ScrollArea>
-      {onNewChatInWorktree && (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                aria-label="New chat in this worktree"
-                className="relative inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                onClick={onNewChatInWorktree}
-              />
-            }
-          >
-            <MessageSquarePlusIcon aria-hidden="true" className="size-4" />
-          </TooltipTrigger>
-          <TooltipPopup side="bottom">New chat in this worktree</TooltipPopup>
-        </Tooltip>
-      )}
     </div>
   );
 });
