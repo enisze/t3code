@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
+
 import { FileFinder, type MixedItem, type MixedSearchResult } from "@ff-labs/fff-node";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -169,6 +173,59 @@ function withDirectoryAncestors(entries: ReadonlyArray<ProjectEntry>): ProjectEn
   return [...entryByPath.values()];
 }
 
+/**
+ * The fff finder honors `.gitignore`, so `.env*` files (which are almost always
+ * ignored) never appear in the file tree. We supplement the listing with a
+ * bounded filesystem walk that surfaces them anyway, while still skipping the
+ * heavy directories a walk would otherwise drown in.
+ */
+const ENV_WALK_SKIP_DIRS = new Set<string>([
+  "node_modules",
+  ".git",
+  ".hg",
+  ".svn",
+  "dist",
+  "build",
+  "out",
+  "coverage",
+  ".next",
+  ".turbo",
+  ".cache",
+  "target",
+]);
+const ENV_WALK_MAX_DIRS = 5_000;
+
+function isEnvFileName(name: string): boolean {
+  return name === ".env" || name.startsWith(".env.");
+}
+
+async function collectEnvEntries(cwd: string): Promise<ProjectEntry[]> {
+  const entries: ProjectEntry[] = [];
+  const stack: string[] = [cwd];
+  let visited = 0;
+  while (stack.length > 0 && visited < ENV_WALK_MAX_DIRS) {
+    const dir = stack.pop();
+    if (dir === undefined) break;
+    visited += 1;
+    const dirents = await NodeFSP.readdir(dir, { withFileTypes: true }).catch(() => null);
+    if (!dirents) continue;
+    for (const dirent of dirents) {
+      const fullPath = NodePath.join(dir, dirent.name);
+      if (dirent.isDirectory()) {
+        if (!ENV_WALK_SKIP_DIRS.has(dirent.name)) {
+          stack.push(fullPath);
+        }
+      } else if (isEnvFileName(dirent.name)) {
+        const relativePath = toPosixPath(NodePath.relative(cwd, fullPath));
+        if (relativePath && !relativePath.startsWith("..")) {
+          entries.push({ path: relativePath, kind: "file" });
+        }
+      }
+    }
+  }
+  return entries;
+}
+
 const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (cwd: string) {
   const result = yield* Effect.try({
     try: () =>
@@ -289,8 +346,11 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (cwd: strin
     function* () {
       const result = yield* runMixedSearch("", WORKSPACE_INDEX_PAGE_SIZE);
       const mapped = mapMixedSearchResult(result, WORKSPACE_INDEX_MAX_ENTRIES);
-      const sortedEntries = withDirectoryAncestors(mapped.entries).toSorted((left, right) =>
-        left.path.localeCompare(right.path),
+      const envEntries = yield* Effect.tryPromise(() => collectEnvEntries(cwd)).pipe(
+        Effect.orElseSucceed(() => [] as ProjectEntry[]),
+      );
+      const sortedEntries = withDirectoryAncestors([...mapped.entries, ...envEntries]).toSorted(
+        (left, right) => left.path.localeCompare(right.path),
       );
       const entries = sortedEntries.slice(0, WORKSPACE_INDEX_MAX_ENTRIES);
       return {

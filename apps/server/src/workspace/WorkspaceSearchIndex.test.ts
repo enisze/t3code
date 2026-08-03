@@ -1,3 +1,7 @@
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import { FileFinder } from "@ff-labs/fff-node";
 import { afterEach, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
@@ -118,6 +122,50 @@ it.effect("preserves search and refresh failures with operation context", () =>
         reason: "FileFinder.scanFiles threw unexpectedly.",
         cause: refreshCause,
       });
+    }),
+  ),
+);
+
+it.effect("surfaces gitignored .env files that the native finder omits", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      // The fff finder honors .gitignore and never returns `.env*`. We create a
+      // real workspace on disk and mock the finder to return nothing, so the
+      // only entries that can appear come from the supplemental env walk.
+      const cwd = yield* Effect.acquireRelease(
+        Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-env-walk-"))),
+        (dir) => Effect.promise(() => NodeFSP.rm(dir, { recursive: true, force: true })),
+      );
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(NodePath.join(cwd, ".env"), "SECRET=1");
+        await NodeFSP.writeFile(NodePath.join(cwd, ".env.local"), "SECRET=2");
+        await NodeFSP.mkdir(NodePath.join(cwd, "apps", "web"), { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(cwd, "apps", "web", ".env.staging"), "SECRET=3");
+        // Heavy directories must be skipped by the walk.
+        await NodeFSP.mkdir(NodePath.join(cwd, "node_modules", "pkg"), { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(cwd, "node_modules", "pkg", ".env"), "SECRET=4");
+      });
+
+      const finder = {
+        destroy: vi.fn(),
+        isScanning: vi.fn(() => false),
+        mixedSearch: vi.fn(() => ({ ok: true, value: { items: [], totalMatched: 0 } })),
+        scanFiles: vi.fn(),
+      } as unknown as FileFinder;
+      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+
+      const searchIndex = yield* WorkspaceSearchIndex.make(cwd);
+      const result = yield* searchIndex.list();
+      const paths = result.entries.map((entry) => entry.path);
+
+      expect(paths).toContain(".env");
+      expect(paths).toContain(".env.local");
+      expect(paths).toContain("apps/web/.env.staging");
+      // Directory ancestors of nested env files are materialized for the tree.
+      expect(paths).toContain("apps");
+      expect(paths).toContain("apps/web");
+      // node_modules is never walked, so its .env stays hidden.
+      expect(paths).not.toContain("node_modules/pkg/.env");
     }),
   ),
 );
