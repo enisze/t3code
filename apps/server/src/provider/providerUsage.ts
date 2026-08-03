@@ -9,7 +9,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import * as CodexSchema from "effect-codex-app-server/schema";
 
-import { resolveClaudeHomePath } from "./Drivers/ClaudeHome.ts";
+import { makeClaudeCredentialsServiceName, resolveClaudeConfigDir } from "./Drivers/ClaudeHome.ts";
 import { spawnAndCollect } from "./providerSnapshot.ts";
 
 // ── Shared helpers ──────────────────────────────────────────────────
@@ -231,8 +231,10 @@ function normalizeClaudeUsage(
  * Resolve the Claude OAuth access token for an instance. Prefers the
  * on-disk `.credentials.json` inside the instance's `CLAUDE_CONFIG_DIR`
  * (correct per-instance, used on Linux and by disk-backed instances) and
- * falls back to the macOS login keychain entry (`Claude Code-credentials`),
- * which Claude Code uses by default on macOS. Returns `null` when no token
+ * falls back to the macOS login keychain entry, which Claude Code uses by
+ * default on macOS. The keychain service name is derived per-instance
+ * (`makeClaudeCredentialsServiceName`) so each account reads its own token
+ * rather than sharing the default account's. Returns `null` when no token
  * can be recovered.
  */
 const resolveClaudeAccessToken = Effect.fn("resolveClaudeAccessToken")(function* (
@@ -240,8 +242,8 @@ const resolveClaudeAccessToken = Effect.fn("resolveClaudeAccessToken")(function*
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const homePath = yield* resolveClaudeHomePath(claudeSettings);
-  const credentialsPath = path.join(homePath, ".credentials.json");
+  const configDir = yield* resolveClaudeConfigDir(claudeSettings);
+  const credentialsPath = path.join(configDir, ".credentials.json");
 
   const decodeToken = (raw: string) =>
     Schema.decodeUnknownEffect(ClaudeCredentialsFileJson)(raw).pipe(
@@ -261,9 +263,14 @@ const resolveClaudeAccessToken = Effect.fn("resolveClaudeAccessToken")(function*
 
   if (process.platform !== "darwin") return null;
 
+  // Each non-default CLAUDE_CONFIG_DIR gets its own keychain entry
+  // (`Claude Code-credentials-<sha256(configDir)[:8]>`); the default account
+  // uses the bare service name. Querying the correct per-instance service is
+  // what keeps two accounts from reporting the same usage/limits.
+  const service = yield* makeClaudeCredentialsServiceName(claudeSettings);
   const keychain = yield* spawnAndCollect(
     "security",
-    ChildProcess.make("security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"]),
+    ChildProcess.make("security", ["find-generic-password", "-s", service, "-w"]),
     // `catchCause` (not `orElseSucceed`) so a spawn defect — e.g. `security`
     // missing, or a stubbed spawner throwing — degrades to "no token" instead
     // of surfacing as a fiber defect.
