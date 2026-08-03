@@ -1,8 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import type { ProviderUsage, ServerProvider } from "@t3tools/contracts";
+import type { ProviderUsage, ProviderUsageWindow, ServerProvider } from "@t3tools/contracts";
 import { useParams } from "@tanstack/react-router";
-import { ChevronDownIcon, GaugeIcon, RefreshCwIcon } from "lucide-react";
+import { ChevronUpIcon, GaugeIcon, RefreshCwIcon } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 
 import { cn } from "../../lib/utils";
@@ -23,6 +23,24 @@ function summaryColor(usedPercent: number): string {
 }
 
 /**
+ * Picks the window the collapsed pill summarizes: the shortest-duration
+ * ("hourly") rate-limit window — Claude's 5-hour, Codex's `primary`. That is
+ * the limit users actually hit during a session, so the collapsed number
+ * tracks it rather than the slow-moving weekly/monthly max. Falls back to the
+ * first reported window when none carry a `windowMinutes`.
+ */
+function summaryWindow(usage: ProviderUsage): ProviderUsageWindow | null {
+  const windows = usage.windows;
+  if (windows.length === 0) return null;
+  return windows.reduce((shortest, window) =>
+    (window.windowMinutes ?? Number.POSITIVE_INFINITY) <
+    (shortest.windowMinutes ?? Number.POSITIVE_INFINITY)
+      ? window
+      : shortest,
+  );
+}
+
+/**
  * Bottom-pinned, collapsible "Usage limits" widget for the main sidebar
  * footer. Surfaces the current 5-hour / weekly / monthly limits for every
  * authenticated provider account that reported usage (Claude, Codex, …), so
@@ -32,8 +50,11 @@ function summaryColor(usedPercent: number): string {
  * The collapsed summary percentage is scoped to the provider instance backing
  * the chat the user currently has open — its thread `modelSelection`, falling
  * back to the owning project's `defaultModelSelection` — rather than the worst
- * percent across every account. Off a chat route (or when the active provider
- * reports no usage) the summary shows a dash instead of an unrelated max.
+ * percent across every account. Within that account it reflects the hourly
+ * (shortest) window (see `summaryWindow`) so the number tracks the limit users
+ * hit mid-session, not the slow weekly/monthly max; the tooltip lists every
+ * window. Off a chat route (or when the active provider reports no usage) the
+ * summary shows a dash.
  */
 export function SettingsUsagePill() {
   const providers = useAtomValue(primaryServerProvidersAtom);
@@ -86,10 +107,16 @@ export function SettingsUsagePill() {
     activeInstanceId !== null
       ? providers.find((provider) => provider.instanceId === activeInstanceId)
       : undefined;
-  const activePercent =
-    activeProvider?.usage && activeProvider.usage.windows.length > 0
-      ? activeProvider.usage.windows.reduce((max, window) => Math.max(max, window.usedPercent), 0)
-      : null;
+  // Summarize the hourly window, not the max across windows, so the collapsed
+  // number reflects the short-term limit users hit mid-session. Every window
+  // is still listed in the tooltip and the expanded meters below.
+  const activeWindow = activeProvider?.usage ? summaryWindow(activeProvider.usage) : null;
+  const activePercent = activeWindow?.usedPercent ?? null;
+  const summaryTitle = activeProvider?.usage
+    ? activeProvider.usage.windows
+        .map((w) => `${w.label}: ${Math.round(w.usedPercent)}%`)
+        .join(" · ")
+    : undefined;
 
   return (
     <Collapsible
@@ -111,6 +138,7 @@ export function SettingsUsagePill() {
           </span>
           <span
             className="shrink-0 text-xs font-medium tabular-nums"
+            title={summaryTitle}
             style={{
               color:
                 activePercent === null
@@ -120,7 +148,7 @@ export function SettingsUsagePill() {
           >
             {activePercent === null ? "—" : `${Math.round(activePercent)}%`}
           </span>
-          <ChevronDownIcon
+          <ChevronUpIcon
             className={cn(
               "size-3.5 shrink-0 text-muted-foreground transition-transform",
               open && "rotate-180",

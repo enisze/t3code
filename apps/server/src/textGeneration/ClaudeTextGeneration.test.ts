@@ -342,4 +342,34 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
         }),
     ),
   );
+
+  it.effect("generates a trimmed continuation summary through the Claude provider", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            summary: "  ## Goal\nShip the sidebar rename.\n\n## Next steps\n- Add tests  ",
+          },
+        }),
+        stdinMustContain:
+          "You write a concise handoff brief so a fresh coding session can continue prior work.",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateContinuationSummary({
+            cwd: process.cwd(),
+            sourceTitle: "Inline provider rename",
+            transcript: "User: rename providers inline\n\nAssistant: done, PR merged",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: "claude-sonnet-4-6",
+            },
+          });
+
+          expect(generated.summary).toBe(
+            "## Goal\nShip the sidebar rename.\n\n## Next steps\n- Add tests",
+          );
+        }),
+    ),
+  );
 });

@@ -151,6 +151,10 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT)),
   ),
   sidebarV2Enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // When set, sidebar v2 breaks its flat inbox into per-project sections
+  // (headed by the project name) instead of one activity-sorted list. Off by
+  // default so v2 keeps its single-stream shape until the user opts in.
+  sidebarV2GroupByProject: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   // Whether `sidebarV2Enabled` reflects an explicit choice in Settings → Beta.
   // Client settings persist as a whole blob, so every user who has ever touched
   // any setting already has `sidebarV2Enabled: false` stored — without this bit
@@ -757,6 +761,7 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   sidebarV2Enabled: Schema.optionalKey(Schema.Boolean),
+  sidebarV2GroupByProject: Schema.optionalKey(Schema.Boolean),
   sidebarV2ConfiguredByUser: Schema.optionalKey(Schema.Boolean),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   wordWrap: Schema.optionalKey(Schema.Boolean),

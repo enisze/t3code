@@ -47,6 +47,8 @@ interface RightPanelTabsProps {
   browserAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
+  /** Persistent dock rendered below the active surface (e.g. the Run/tasks dock). */
+  bottomDock?: ReactNode;
   children: ReactNode;
 }
 
@@ -493,6 +495,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           props.children
         )}
       </div>
+      {props.bottomDock}
     </PreviewPanelShell>
   );
 }

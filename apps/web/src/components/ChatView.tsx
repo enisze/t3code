@@ -139,6 +139,7 @@ import {
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
 import { RightPanelTabs } from "./RightPanelTabs";
+import TasksDock from "./tasks/TasksDock";
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
@@ -158,10 +159,11 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
-  buildProjectScript,
+  appendProjectScript,
   commandForProjectScript,
-  nextProjectScriptId,
+  isTaskTerminalId,
   projectScriptIdFromCommand,
+  replaceProjectScript,
 } from "~/projectScripts";
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
@@ -657,7 +659,12 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   );
   const drawerTerminalSessions = useMemo(
     () =>
-      knownTerminalSessions.filter((session) => !panelTerminalIds.has(session.target.terminalId)),
+      knownTerminalSessions.filter(
+        (session) =>
+          !panelTerminalIds.has(session.target.terminalId) &&
+          // Task terminals are owned by the Run panel; keep them out of the drawer.
+          !isTaskTerminalId(session.target.terminalId),
+      ),
     [knownTerminalSessions, panelTerminalIds],
   );
   const terminalLabelsById = useMemo(() => {
@@ -2442,6 +2449,32 @@ function ChatViewContent(props: ChatViewProps) {
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
   // Default true while loading to avoid toolbar flicker.
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
+  // Open the right panel (diff + the Run dock below it) by default the first time
+  // a project thread is shown. Users can still toggle it closed; a closed panel
+  // that keeps surfaces stays closed on return, so this only defaults fresh threads.
+  const autoOpenedRightPanelKeysRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!activeThreadRef || !activeProject || !activeThreadKey || shouldUsePlanSidebarSheet) return;
+    if (autoOpenedRightPanelKeysRef.current.has(activeThreadKey)) return;
+    autoOpenedRightPanelKeysRef.current.add(activeThreadKey);
+    const state = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      activeThreadRef,
+    );
+    if (state.isOpen || state.surfaces.length > 0) return;
+    if (isServerThread && isGitRepo) {
+      useRightPanelStore.getState().open(activeThreadRef, "diff");
+    } else {
+      useRightPanelStore.getState().show(activeThreadRef);
+    }
+  }, [
+    activeThreadRef,
+    activeProject,
+    activeThreadKey,
+    isServerThread,
+    isGitRepo,
+    shouldUsePlanSidebarSheet,
+  ]);
   const showComposerContextStrip = isGitRepo && activeProject !== null;
   const initialDiffPanelGitScope =
     gitStatusQuery.data?.hasWorkingTreeChanges === true ? "unstaged" : "branch";
@@ -2896,19 +2929,10 @@ function ChatViewContent(props: ChatViewProps) {
       if (!activeProject) {
         return AsyncResult.success(undefined);
       }
-      const nextId = nextProjectScriptId(
-        input.name,
-        activeProject.scripts.map((script) => script.id),
+      const { scripts: nextScripts, script: nextScript } = appendProjectScript(
+        activeProject.scripts,
+        input,
       );
-      const nextScript = buildProjectScript(nextId, input);
-      const nextScripts = input.runOnWorktreeCreate
-        ? [
-            ...activeProject.scripts.map((script) =>
-              script.runOnWorktreeCreate ? { ...script, runOnWorktreeCreate: false } : script,
-            ),
-            nextScript,
-          ]
-        : [...activeProject.scripts, nextScript];
 
       return persistProjectScripts({
         projectId: activeProject.id,
@@ -2916,7 +2940,7 @@ function ChatViewContent(props: ChatViewProps) {
         previousScripts: activeProject.scripts,
         nextScripts,
         keybinding: input.keybinding,
-        keybindingCommand: commandForProjectScript(nextId),
+        keybindingCommand: commandForProjectScript(nextScript.id),
       });
     },
     [activeProject, persistProjectScripts],
@@ -2929,19 +2953,10 @@ function ChatViewContent(props: ChatViewProps) {
       if (!activeProject) {
         return AsyncResult.success(undefined);
       }
-      const existingScript = activeProject.scripts.find((script) => script.id === scriptId);
-      if (!existingScript) {
+      const nextScripts = replaceProjectScript(activeProject.scripts, scriptId, input);
+      if (!nextScripts) {
         return AsyncResult.failure(Cause.fail(new Error("Script not found.")));
       }
-
-      const updatedScript = buildProjectScript(existingScript.id, input);
-      const nextScripts = activeProject.scripts.map((script) =>
-        script.id === scriptId
-          ? updatedScript
-          : input.runOnWorktreeCreate
-            ? { ...script, runOnWorktreeCreate: false }
-            : script,
-      );
 
       return persistProjectScripts({
         projectId: activeProject.id,
@@ -5719,6 +5734,27 @@ function ChatViewContent(props: ChatViewProps) {
     ) : null
   ) : null;
 
+  const tasksDock =
+    activeThreadRef && activeProject && activeWorkspaceRoot ? (
+      <TasksDock
+        threadRef={activeThreadRef}
+        threadId={activeThreadRef.threadId}
+        environmentId={activeThreadRef.environmentId}
+        scripts={activeProject.scripts}
+        workspaceRoot={activeWorkspaceRoot}
+        launchContext={{
+          cwd: gitCwd ?? activeWorkspaceRoot,
+          worktreePath: activeThread?.worktreePath ?? null,
+        }}
+        keybindings={keybindings}
+        focusRequestId={terminalFocusRequestId}
+        onAddScript={saveProjectScript}
+        onUpdateScript={updateProjectScript}
+        onDeleteScript={deleteProjectScript}
+        onAddTerminalContext={addTerminalContextToDraft}
+      />
+    ) : null;
+
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
       {rightPanelOpen && !shouldUsePlanSidebarSheet ? panelLayoutControls : null}
@@ -6138,6 +6174,7 @@ function ChatViewContent(props: ChatViewProps) {
           browserAvailable={isPreviewSupportedInRuntime()}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
+          bottomDock={tasksDock}
         >
           {rightPanelContent}
         </RightPanelTabs>
@@ -6165,6 +6202,7 @@ function ChatViewContent(props: ChatViewProps) {
             browserAvailable={isPreviewSupportedInRuntime()}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
+            bottomDock={tasksDock}
           >
             {rightPanelContent}
           </RightPanelTabs>

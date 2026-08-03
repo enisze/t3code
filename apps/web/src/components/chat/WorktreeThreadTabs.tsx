@@ -4,7 +4,13 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { MessageSquarePlusIcon, XIcon } from "lucide-react";
+import {
+  CircleAlertIcon,
+  MessageSquareDotIcon,
+  MessageSquarePlusIcon,
+  XIcon,
+  type LucideIcon,
+} from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "@tanstack/react-router";
 
@@ -43,6 +49,37 @@ export function getWorktreeTabAfterClose(
 export function isWorktreeThreadInProgress(shell: EnvironmentThreadShell): boolean {
   return shell.session?.status === "running" || shell.session?.status === "starting";
 }
+
+// What the tab's trailing slot should convey. A thread that's paused on an
+// approval or a user-input prompt is usually still `running`, so it would spin
+// like it's busy — surface it as "needs you" instead so the tab strip reads at
+// a glance which chat is waiting on the user.
+export type WorktreeTabStatus = "approval" | "input" | "working" | "idle";
+
+export function resolveWorktreeTabStatus(shell: EnvironmentThreadShell): WorktreeTabStatus {
+  if (shell.hasPendingApprovals) return "approval";
+  if (shell.hasPendingUserInput) return "input";
+  if (isWorktreeThreadInProgress(shell)) return "working";
+  return "idle";
+}
+
+// Color language mirrors the sidebar status pills (amber = act now / approval,
+// indigo = awaiting input) so the two surfaces read as one system.
+const WORKTREE_TAB_ATTENTION: Record<
+  "approval" | "input",
+  { Icon: LucideIcon; label: string; className: string }
+> = {
+  approval: {
+    Icon: CircleAlertIcon,
+    label: "Waiting for your approval",
+    className: "text-amber-600 dark:text-amber-400",
+  },
+  input: {
+    Icon: MessageSquareDotIcon,
+    label: "Waiting for your input",
+    className: "text-indigo-600 dark:text-indigo-400",
+  },
+};
 
 export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
   activeEnvironmentId,
@@ -124,7 +161,9 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
         <div className="flex h-full w-max min-w-full items-center gap-1">
           {tabs.map((shell) => {
             const active = shell.id === activeThreadId;
-            const isInProgress = isWorktreeThreadInProgress(shell);
+            const status = resolveWorktreeTabStatus(shell);
+            const attention =
+              status === "approval" || status === "input" ? WORKTREE_TAB_ATTENTION[status] : null;
             const isClosing = shell.id === closingThreadId;
             return (
               <div
@@ -162,7 +201,25 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
                   />
                   <TooltipPopup side="bottom">{shell.title}</TooltipPopup>
                 </Tooltip>
-                {isInProgress ? (
+                {attention ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span
+                          role="status"
+                          aria-label={`${shell.title}: ${attention.label}`}
+                          className={cn(
+                            "mr-1 inline-flex size-5 shrink-0 items-center justify-center",
+                            attention.className,
+                          )}
+                        />
+                      }
+                    >
+                      <attention.Icon aria-hidden="true" className="size-3.5" />
+                    </TooltipTrigger>
+                    <TooltipPopup side="bottom">{attention.label}</TooltipPopup>
+                  </Tooltip>
+                ) : status === "working" ? (
                   <Tooltip>
                     <TooltipTrigger
                       render={

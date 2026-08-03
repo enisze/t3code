@@ -816,6 +816,89 @@ export function mergeWorktreeSiblingRunningStatus<T extends Pick<SidebarThreadSu
   return { ...representative, session: runningSibling.session };
 }
 
+/**
+ * Expand a single archive target into every chat that shares its worktree.
+ * The sidebar collapses chats living in one on-disk worktree to a single row
+ * (see collapseWorktreeSiblings), so archiving that row must archive the whole
+ * group — otherwise the collapsed siblings resurface as their own rows the
+ * moment the representative is gone. Threads with no worktree
+ * (worktreePath === null) archive only themselves. Already-archived threads
+ * are skipped, and survivors keep the input order so navigation and toasts see
+ * a stable sequence. Returns an empty list when the target is unknown.
+ */
+export function collectWorktreeSiblingThreads<
+  T extends WorktreeCollapsibleThread & { readonly archivedAt: string | null },
+>(input: { threads: readonly T[]; target: Pick<T, "environmentId" | "id" | "worktreePath"> }): T[] {
+  const { target, threads } = input;
+  if (target.worktreePath === null) {
+    return threads.filter(
+      (thread) =>
+        thread.environmentId === target.environmentId &&
+        thread.id === target.id &&
+        thread.archivedAt === null,
+    );
+  }
+  return threads.filter(
+    (thread) =>
+      thread.environmentId === target.environmentId &&
+      thread.worktreePath === target.worktreePath &&
+      thread.archivedAt === null,
+  );
+}
+
+export type SidebarProjectThreadSection<T> = {
+  /** The project group these threads belong to, or null for a trailing
+      catch-all section of threads whose project isn't in `projectOrder`. */
+  projectKey: string | null;
+  threads: T[];
+};
+
+/**
+ * Split an already-ordered thread list into per-project sections for sidebar
+ * v2's optional "group by project" mode. Sections follow `projectOrder` (the
+ * caller's project sort), and within each section threads keep their incoming
+ * order so the activity sort is preserved inside a project. Threads whose
+ * resolved project key isn't in `projectOrder` are never dropped — they land
+ * in a trailing section keyed null so the flattened result still covers every
+ * input thread (jump shortcuts and range-select index against that flattened
+ * order). Empty sections are omitted so no project header renders without rows.
+ */
+export function groupSidebarThreadsByProject<T>(input: {
+  threads: readonly T[];
+  projectOrder: readonly string[];
+  resolveProjectKey: (thread: T) => string | null;
+}): SidebarProjectThreadSection<T>[] {
+  const { projectOrder, resolveProjectKey, threads } = input;
+  const knownKeys = new Set(projectOrder);
+  const threadsByKey = new Map<string, T[]>();
+  const ungrouped: T[] = [];
+  for (const thread of threads) {
+    const key = resolveProjectKey(thread);
+    if (key === null || !knownKeys.has(key)) {
+      ungrouped.push(thread);
+      continue;
+    }
+    const bucket = threadsByKey.get(key);
+    if (bucket) {
+      bucket.push(thread);
+    } else {
+      threadsByKey.set(key, [thread]);
+    }
+  }
+
+  const sections: SidebarProjectThreadSection<T>[] = [];
+  for (const projectKey of projectOrder) {
+    const sectionThreads = threadsByKey.get(projectKey);
+    if (sectionThreads && sectionThreads.length > 0) {
+      sections.push({ projectKey, threads: sectionThreads });
+    }
+  }
+  if (ungrouped.length > 0) {
+    sections.push({ projectKey: null, threads: ungrouped });
+  }
+  return sections;
+}
+
 export function getFallbackThreadIdAfterDelete<
   T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt"> & ThreadSortInput,
 >(input: {

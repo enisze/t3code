@@ -26,6 +26,7 @@ import {
   type OrchestrationShellStreamEvent,
   type OrchestrationShellStreamItem,
   type OrchestrationThreadStreamItem,
+  OrchestrationGenerateContinuationSummaryError,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
   OrchestrationGetTurnDiffError,
@@ -81,6 +82,7 @@ import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -335,6 +337,50 @@ function toAuthAccessStreamEvent(
   }
 }
 
+/** Max characters of role-tagged transcript fed to the continuation summarizer. */
+const CONTINUATION_TRANSCRIPT_MAX_CHARS = 24_000;
+
+/**
+ * Build a compact role-tagged transcript for the continuation summarizer.
+ *
+ * When the conversation is long, keep the opening message (the original goal)
+ * plus the most recent exchanges rather than shipping the entire transcript to
+ * the model — the summary needs intent and current state, not every turn, and
+ * this keeps the one-time generation cost bounded.
+ */
+function buildContinuationTranscript(
+  messages: ReadonlyArray<{ readonly role: string; readonly text: string }>,
+): string {
+  const lines = messages
+    .map((message) => {
+      const text = message.text.trim();
+      if (text.length === 0) return null;
+      const label =
+        message.role === "user"
+          ? "User"
+          : message.role === "assistant"
+            ? "Assistant"
+            : message.role;
+      return `${label}: ${text}`;
+    })
+    .filter((line): line is string => line !== null);
+  if (lines.length === 0) return "";
+
+  const joined = lines.join("\n\n");
+  if (joined.length <= CONTINUATION_TRANSCRIPT_MAX_CHARS) return joined;
+
+  const head = lines[0] ?? "";
+  let budget = CONTINUATION_TRANSCRIPT_MAX_CHARS - head.length;
+  const tail: string[] = [];
+  for (let index = lines.length - 1; index >= 1; index--) {
+    const line = lines[index] ?? "";
+    if (budget - line.length < 0) break;
+    budget -= line.length;
+    tail.unshift(line);
+  }
+  return [head, "[… earlier conversation omitted …]", ...tail].join("\n\n");
+}
+
 const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
@@ -361,6 +407,7 @@ const makeWsRpcLayer = (
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const textGeneration = yield* TextGeneration.TextGeneration;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -1261,6 +1308,95 @@ const makeWsRpcLayer = (
                   }),
               ),
             ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.generateContinuationSummary]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.generateContinuationSummary,
+            Effect.gen(function* () {
+              const threadOption = yield* projectionSnapshotQuery
+                .getThreadDetailById(input.threadId)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationGenerateContinuationSummaryError({
+                        message: "Failed to load thread",
+                        cause,
+                      }),
+                  ),
+                );
+              if (Option.isNone(threadOption)) {
+                return yield* new OrchestrationGenerateContinuationSummaryError({
+                  message: "Thread not found",
+                });
+              }
+              const thread = threadOption.value;
+
+              const projectOption = yield* projectionSnapshotQuery
+                .getProjectShellById(thread.projectId)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationGenerateContinuationSummaryError({
+                        message: "Failed to load project",
+                        cause,
+                      }),
+                  ),
+                );
+              const cwd =
+                thread.worktreePath ??
+                (Option.isSome(projectOption) ? projectOption.value.workspaceRoot : null);
+              if (cwd === null) {
+                return yield* new OrchestrationGenerateContinuationSummaryError({
+                  message: "Project not found for thread",
+                });
+              }
+
+              const transcript = buildContinuationTranscript(thread.messages);
+              if (transcript.trim().length === 0) {
+                return yield* new OrchestrationGenerateContinuationSummaryError({
+                  message: "Thread has no conversation to summarize",
+                });
+              }
+
+              const { textGenerationModelSelection } = yield* serverSettings.getSettings.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationGenerateContinuationSummaryError({
+                      message: "Failed to load server settings",
+                      cause,
+                    }),
+                ),
+              );
+              const generated = yield* textGeneration
+                .generateContinuationSummary({
+                  cwd,
+                  sourceTitle: thread.title,
+                  transcript,
+                  modelSelection: textGenerationModelSelection,
+                })
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationGenerateContinuationSummaryError({
+                        message: "Failed to generate continuation summary",
+                        cause,
+                      }),
+                  ),
+                );
+              const summary = generated.summary.trim();
+              if (summary.length === 0) {
+                return yield* new OrchestrationGenerateContinuationSummaryError({
+                  message: "Generated summary was empty",
+                });
+              }
+
+              return {
+                sourceThreadId: thread.id,
+                sourceTitle: thread.title,
+                summary,
+              };
+            }),
             { "rpc.aggregate": "orchestration" },
           ),
         [ORCHESTRATION_WS_METHODS.subscribeThread]: (input) =>

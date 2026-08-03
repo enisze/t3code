@@ -292,6 +292,10 @@ function createTextGeneration(
       Effect.succeed({
         title: "Update workflow",
       }),
+    generateContinuationSummary: () =>
+      Effect.succeed({
+        summary: "Continue the stacked git actions work.",
+      }),
     ...overrides,
   };
 
@@ -335,6 +339,17 @@ function createTextGeneration(
           (cause) =>
             new TextGenerationError({
               operation: "generateThreadTitle",
+              detail: "fake text generation failed",
+              ...(cause !== undefined ? { cause } : {}),
+            }),
+        ),
+      ),
+    generateContinuationSummary: (input) =>
+      implementation.generateContinuationSummary(input).pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation: "generateContinuationSummary",
               detail: "fake text generation failed",
               ...(cause !== undefined ? { cause } : {}),
             }),
