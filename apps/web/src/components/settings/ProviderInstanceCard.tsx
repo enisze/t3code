@@ -6,6 +6,7 @@ import {
   CopyIcon,
   DownloadIcon,
   LoaderIcon,
+  PencilIcon,
   PlusIcon,
   Trash2Icon,
   TriangleAlertIcon,
@@ -32,6 +33,7 @@ import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import { DraftInput } from "../ui/draft-input";
+import { Input } from "../ui/input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { ScrollArea } from "../ui/scroll-area";
 import { Switch } from "../ui/switch";
@@ -470,6 +472,20 @@ export function ProviderInstanceCard({
     );
   };
 
+  // Inline rename from the card header, so the name is editable without
+  // expanding the card to reach the "Display name" field below.
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameDraft, setRenameDraft] = useState("");
+  const beginRename = () => {
+    setRenameDraft(instance.displayName?.trim() ?? "");
+    setIsRenaming(true);
+  };
+  const commitRename = () => {
+    if (!isRenaming) return;
+    setIsRenaming(false);
+    updateDisplayName(renameDraft);
+  };
+
   const updateEnabled = (value: boolean) => {
     onUpdate({ ...instance, enabled: value });
   };
@@ -539,9 +555,50 @@ export function ProviderInstanceCard({
   const titleHeadNode = (
     <>
       {titleIconNode}
-      <h3 className="truncate text-sm font-medium tracking-[-0.005em] text-foreground">
-        {displayName}
-      </h3>
+      {isRenaming ? (
+        <Input
+          autoFocus
+          size="sm"
+          value={renameDraft}
+          onChange={(event) => setRenameDraft(event.target.value)}
+          onBlur={commitRename}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              commitRename();
+            } else if (event.key === "Escape") {
+              event.preventDefault();
+              setIsRenaming(false);
+            }
+          }}
+          placeholder={driverOption?.label ?? "Instance label"}
+          spellCheck={false}
+          className="w-44 max-w-full"
+          aria-label={`Rename ${displayName}`}
+        />
+      ) : (
+        <>
+          <h3 className="truncate text-sm font-medium tracking-[-0.005em] text-foreground">
+            {displayName}
+          </h3>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  className="size-5 shrink-0 rounded-sm p-0 text-muted-foreground/60 transition-colors hover:text-foreground focus-visible:text-foreground group-hover/provider-card:text-muted-foreground"
+                  onClick={beginRename}
+                  aria-label={`Rename ${displayName}`}
+                >
+                  <PencilIcon className="size-3" />
+                </Button>
+              }
+            />
+            <TooltipPopup side="top">Rename</TooltipPopup>
+          </Tooltip>
+        </>
+      )}
       {String(instanceId) !== String(instance.driver) ? (
         <code className="truncate rounded bg-muted/60 px-1 py-0.5 text-[10px] text-muted-foreground">
           {instanceId}
@@ -608,7 +665,7 @@ export function ProviderInstanceCard({
   ) : null;
 
   return (
-    <div className="rounded-xl transition-colors hover:bg-muted/20">
+    <div className="group/provider-card rounded-xl transition-colors hover:bg-muted/20">
       <div className="px-3 py-3 sm:px-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0 flex-1 space-y-1">

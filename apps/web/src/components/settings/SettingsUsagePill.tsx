@@ -1,12 +1,16 @@
 import { useAtomValue } from "@effect/atom-react";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { ProviderUsage, ServerProvider } from "@t3tools/contracts";
+import { useParams } from "@tanstack/react-router";
 import { ChevronDownIcon, GaugeIcon, RefreshCwIcon } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 
 import { cn } from "../../lib/utils";
+import { useProject, useThreadShell } from "../../state/entities";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { primaryServerProvidersAtom, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { resolveThreadRouteRef } from "../../threadRoutes";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { ProviderUsageMeters } from "./ProviderUsageSection";
 
@@ -24,10 +28,23 @@ function summaryColor(usedPercent: number): string {
  * authenticated provider account that reported usage (Claude, Codex, …), so
  * the state is visible alongside the chats list without opening each provider
  * card. Self-hides when no account reports usage.
+ *
+ * The collapsed summary percentage is scoped to the provider instance backing
+ * the chat the user currently has open — its thread `modelSelection`, falling
+ * back to the owning project's `defaultModelSelection` — rather than the worst
+ * percent across every account. Off a chat route (or when the active provider
+ * reports no usage) the summary shows a dash instead of an unrelated max.
  */
 export function SettingsUsagePill() {
   const providers = useAtomValue(primaryServerProvidersAtom);
   const primaryEnvironment = usePrimaryEnvironment();
+  const activeThreadRef = useParams({ strict: false, select: resolveThreadRouteRef });
+  const activeThreadShell = useThreadShell(activeThreadRef);
+  const activeProjectRef =
+    activeThreadShell !== null
+      ? scopeProjectRef(activeThreadShell.environmentId, activeThreadShell.projectId)
+      : null;
+  const activeProject = useProject(activeProjectRef);
   const refreshServerProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
@@ -58,13 +75,21 @@ export function SettingsUsagePill() {
   );
   if (withUsage.length === 0) return null;
 
-  const worstPercent = withUsage.reduce((worst, provider) => {
-    const localWorst = provider.usage.windows.reduce(
-      (max, window) => Math.max(max, window.usedPercent),
-      0,
-    );
-    return Math.max(worst, localWorst);
-  }, 0);
+  // Summary reflects only the active chat's provider instance (its own model
+  // selection, else the project default), so the number matches the account
+  // that chat actually spends against — not whichever account is most maxed.
+  const activeInstanceId =
+    activeThreadShell?.modelSelection.instanceId ??
+    activeProject?.defaultModelSelection?.instanceId ??
+    null;
+  const activeProvider =
+    activeInstanceId !== null
+      ? providers.find((provider) => provider.instanceId === activeInstanceId)
+      : undefined;
+  const activePercent =
+    activeProvider?.usage && activeProvider.usage.windows.length > 0
+      ? activeProvider.usage.windows.reduce((max, window) => Math.max(max, window.usedPercent), 0)
+      : null;
 
   return (
     <Collapsible
@@ -86,9 +111,14 @@ export function SettingsUsagePill() {
           </span>
           <span
             className="shrink-0 text-xs font-medium tabular-nums"
-            style={{ color: summaryColor(worstPercent) }}
+            style={{
+              color:
+                activePercent === null
+                  ? "var(--color-muted-foreground)"
+                  : summaryColor(activePercent),
+            }}
           >
-            {Math.round(worstPercent)}%
+            {activePercent === null ? "—" : `${Math.round(activePercent)}%`}
           </span>
           <ChevronDownIcon
             className={cn(
