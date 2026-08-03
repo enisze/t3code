@@ -6,6 +6,7 @@ import {
   FolderGit2Icon,
   FolderGitIcon,
   FolderIcon,
+  GitPullRequestIcon,
   HistoryIcon,
   MonitorIcon,
 } from "lucide-react";
@@ -13,6 +14,9 @@ import { memo, useCallback, useMemo } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { useProject, useThread, useThreadShellsForProjectRefs } from "../state/entities";
+import { useEnvironmentQuery } from "../state/query";
+import { vcsEnvironment } from "../state/vcs";
+import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useIsMobile } from "../hooks/useMediaQuery";
 import {
   type EnvMode,
@@ -33,6 +37,7 @@ import {
   Menu,
   MenuGroup,
   MenuGroupLabel,
+  MenuItem,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
@@ -71,6 +76,8 @@ interface MobileRunContextSelectorProps {
   onEnvModeChange: (mode: EnvMode) => void;
   previousWorktreeLabel: string | null;
   onUsePreviousWorktree: () => void;
+  checkoutPullRequestLabel: string;
+  onCheckoutPullRequest: (() => void) | undefined;
 }
 
 const MobileRunContextSelector = memo(function MobileRunContextSelector({
@@ -86,6 +93,8 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   onEnvModeChange,
   previousWorktreeLabel,
   onUsePreviousWorktree,
+  checkoutPullRequestLabel,
+  onCheckoutPullRequest,
 }: MobileRunContextSelectorProps) {
   const activeEnvironment = useMemo(
     () => availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null,
@@ -209,6 +218,17 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
             ) : null}
           </MenuRadioGroup>
         </MenuGroup>
+        {onCheckoutPullRequest ? (
+          <>
+            <MenuSeparator />
+            <MenuItem onClick={onCheckoutPullRequest}>
+              <span className="flex min-w-0 items-center gap-1.5">
+                <GitPullRequestIcon className="size-3" />
+                <span className="min-w-0 truncate">{checkoutPullRequestLabel}</span>
+              </span>
+            </MenuItem>
+          </>
+        ) : null}
       </MenuPopup>
     </Menu>
   );
@@ -290,6 +310,27 @@ export const BranchToolbar = memo(function BranchToolbar({
     });
   }, [activeProjectRef, draftId, previousWorktreeSeed, setDraftThreadContext, threadRef]);
 
+  // Surface "checkout from a PR" as a first-class workspace option (alongside
+  // local/worktree) whenever the composer allows it — the branch-status query
+  // shares its cache key with the branch selector, so this adds no extra fetch.
+  const branchCwd = activeWorktreePath ?? activeProject?.workspaceRoot ?? null;
+  const gitStatusQuery = useEnvironmentQuery(
+    branchCwd === null
+      ? null
+      : vcsEnvironment.status({
+          environmentId,
+          input: { cwd: branchCwd },
+        }),
+  );
+  const sourceControlPresentation = useMemo(
+    () => getSourceControlPresentation(gitStatusQuery.data?.sourceControlProvider),
+    [gitStatusQuery.data?.sourceControlProvider],
+  );
+  const checkoutPullRequestLabel = `Checkout ${sourceControlPresentation.terminology.singular}`;
+  const handleCheckoutPullRequest = useCallback(() => {
+    onCheckoutPullRequestRequest?.("");
+  }, [onCheckoutPullRequestRequest]);
+
   const showEnvironmentPicker = Boolean(
     availableEnvironments && availableEnvironments.length > 1 && onEnvironmentChange,
   );
@@ -319,6 +360,10 @@ export const BranchToolbar = memo(function BranchToolbar({
           onEnvModeChange={onEnvModeChange}
           previousWorktreeLabel={previousWorktreeLabel}
           onUsePreviousWorktree={onUsePreviousWorktree}
+          checkoutPullRequestLabel={checkoutPullRequestLabel}
+          onCheckoutPullRequest={
+            onCheckoutPullRequestRequest ? handleCheckoutPullRequest : undefined
+          }
         />
       ) : (
         <div className="flex min-w-0 flex-1 items-center gap-1">
@@ -340,6 +385,10 @@ export const BranchToolbar = memo(function BranchToolbar({
             onEnvModeChange={onEnvModeChange}
             previousWorktreeLabel={previousWorktreeLabel}
             onUsePreviousWorktree={onUsePreviousWorktree}
+            checkoutPullRequestLabel={checkoutPullRequestLabel}
+            {...(onCheckoutPullRequestRequest
+              ? { onCheckoutPullRequest: handleCheckoutPullRequest }
+              : {})}
           />
         </div>
       )}

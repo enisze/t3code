@@ -1,4 +1,10 @@
-import { FolderGit2Icon, FolderGitIcon, FolderIcon, HistoryIcon } from "lucide-react";
+import {
+  FolderGit2Icon,
+  FolderGitIcon,
+  FolderIcon,
+  GitPullRequestIcon,
+  HistoryIcon,
+} from "lucide-react";
 import { memo, useMemo } from "react";
 
 import {
@@ -13,11 +19,13 @@ import {
   SelectGroupLabel,
   SelectItem,
   SelectPopup,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "./ui/select";
 
 export const PREVIOUS_WORKTREE_SELECT_VALUE = "previous-worktree";
+export const CHECKOUT_PULL_REQUEST_SELECT_VALUE = "checkout-pull-request";
 
 interface BranchToolbarEnvModeSelectorProps {
   envLocked: boolean;
@@ -26,6 +34,8 @@ interface BranchToolbarEnvModeSelectorProps {
   onEnvModeChange: (mode: EnvMode) => void;
   previousWorktreeLabel?: string | null;
   onUsePreviousWorktree?: () => void;
+  checkoutPullRequestLabel?: string;
+  onCheckoutPullRequest?: () => void;
 }
 
 export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSelector({
@@ -35,8 +45,12 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   onEnvModeChange,
   previousWorktreeLabel,
   onUsePreviousWorktree,
+  checkoutPullRequestLabel,
+  onCheckoutPullRequest,
 }: BranchToolbarEnvModeSelectorProps) {
   const showPreviousWorktree = Boolean(previousWorktreeLabel && onUsePreviousWorktree);
+  const showCheckoutPullRequest = Boolean(onCheckoutPullRequest);
+  const pullRequestLabel = checkoutPullRequestLabel ?? "Checkout pull request";
   const envModeItems = useMemo(
     () => [
       { value: "local", label: resolveCurrentWorkspaceLabel(activeWorktreePath) },
@@ -44,8 +58,17 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
       ...(showPreviousWorktree && previousWorktreeLabel
         ? [{ value: PREVIOUS_WORKTREE_SELECT_VALUE, label: previousWorktreeLabel }]
         : []),
+      ...(showCheckoutPullRequest
+        ? [{ value: CHECKOUT_PULL_REQUEST_SELECT_VALUE, label: pullRequestLabel }]
+        : []),
     ],
-    [activeWorktreePath, previousWorktreeLabel, showPreviousWorktree],
+    [
+      activeWorktreePath,
+      previousWorktreeLabel,
+      pullRequestLabel,
+      showCheckoutPullRequest,
+      showPreviousWorktree,
+    ],
   );
 
   if (envLocked) {
@@ -73,6 +96,10 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
       onValueChange={(value: string | null) => {
         if (value === PREVIOUS_WORKTREE_SELECT_VALUE) {
           onUsePreviousWorktree?.();
+          return;
+        }
+        if (value === CHECKOUT_PULL_REQUEST_SELECT_VALUE) {
+          onCheckoutPullRequest?.();
           return;
         }
         onEnvModeChange(value as EnvMode);
@@ -122,6 +149,17 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
             </SelectItem>
           ) : null}
         </SelectGroup>
+        {showCheckoutPullRequest ? (
+          <>
+            <SelectSeparator />
+            <SelectItem value={CHECKOUT_PULL_REQUEST_SELECT_VALUE}>
+              <span className="inline-flex items-center gap-1.5">
+                <GitPullRequestIcon className="size-3" />
+                {pullRequestLabel}
+              </span>
+            </SelectItem>
+          </>
+        ) : null}
       </SelectPopup>
     </Select>
   );

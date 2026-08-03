@@ -22,7 +22,6 @@ import {
   useSidebar,
 } from "../ui/sidebar";
 import { T3ConnectSidebarAvatar, T3ConnectSidebarSignIn } from "../clerk/T3ConnectSidebarSignIn";
-import { SettingsUsagePill } from "./SettingsUsagePill";
 
 export type SettingsSectionPath =
   | "/settings/general"
@@ -97,7 +96,6 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter className="p-2">
-        <SettingsUsagePill />
         <T3ConnectSidebarSignIn />
         <div className="flex items-center gap-1">
           <SidebarMenu className="min-w-0 flex-1">

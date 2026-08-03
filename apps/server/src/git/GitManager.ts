@@ -68,6 +68,14 @@ export interface GitActionProgressReporter {
 export interface GitRunStackedActionOptions {
   readonly actionId?: string;
   readonly progressReporter?: GitActionProgressReporter;
+  /**
+   * The owning project's configured model/account, resolved by the caller from
+   * the action's `cwd`. When set (and its provider instance is usable), it is
+   * preferred over the server-wide source-control writer selection for commit
+   * message / PR / branch text generation, so generation runs on the same
+   * account the project's agents use.
+   */
+  readonly projectModelSelection?: ModelSelection | null;
 }
 
 interface SourceControlTextGenerationSettings {
@@ -2012,23 +2020,19 @@ export const make = Effect.gen(function* () {
         let commitMessageForStep = input.commitMessage;
         let preResolvedCommitSuggestion: CommitAndBranchSuggestion | undefined = undefined;
 
-        const textGenerationSettings = yield* serverSettingsService.getSettings.pipe(
-          Effect.flatMap((settings) =>
-            settings.sourceControlWriterModelSelection === null
-              ? Effect.succeed({
-                  modelSelection: settings.textGenerationModelSelection,
-                  style: settings.sourceControlWritingStyle,
-                })
-              : providerRegistry.getProviders.pipe(
-                  Effect.map((providers) => ({
-                    modelSelection: ServerSettings.resolveSourceControlWriterModelSelection(
-                      settings,
-                      providers,
-                    ),
-                    style: settings.sourceControlWritingStyle,
-                  })),
-                ),
-          ),
+        const textGenerationSettings = yield* Effect.all([
+          serverSettingsService.getSettings,
+          providerRegistry.getProviders,
+        ]).pipe(
+          Effect.map(([settings, providers]) => ({
+            modelSelection:
+              ServerSettings.resolveSourceControlWriterModelSelectionWithProjectPreference(
+                settings,
+                providers,
+                options?.projectModelSelection ?? null,
+              ),
+            style: settings.sourceControlWritingStyle,
+          })),
           Effect.mapError(
             (cause) =>
               new GitManagerError({

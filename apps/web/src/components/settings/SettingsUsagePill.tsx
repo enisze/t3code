@@ -17,10 +17,11 @@ function summaryColor(usedPercent: number): string {
 }
 
 /**
- * Bottom-pinned, collapsible "Usage limits" widget for the settings sidebar
+ * Bottom-pinned, collapsible "Usage limits" widget for the main sidebar
  * footer. Surfaces the current 5-hour / weekly / monthly limits for every
- * authenticated provider account that reported usage, so the state is visible
- * without opening each provider card. Self-hides when no account reports usage.
+ * authenticated provider account that reported usage (Claude, Codex, …), so
+ * the state is visible alongside the chats list without opening each provider
+ * card. Self-hides when no account reports usage.
  */
 export function SettingsUsagePill() {
   const providers = useAtomValue(primaryServerProvidersAtom);
