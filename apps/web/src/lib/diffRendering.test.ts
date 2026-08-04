@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
-import { buildPatchCacheKey, getDiffLineStat, getRenderablePatch } from "./diffRendering";
+import {
+  buildFileDiffContentSignature,
+  buildFileDiffRenderKey,
+  buildPatchCacheKey,
+  getDiffLineStat,
+  getRenderablePatch,
+} from "./diffRendering";
 
 describe("buildPatchCacheKey", () => {
   it("returns a stable cache key for identical content", () => {
@@ -80,6 +86,54 @@ describe("getRenderablePatch", () => {
     expect(parsed?.kind).toBe("files");
     if (parsed?.kind !== "files") return;
     expect(parsed.files[0]?.hunks[0]?.unifiedLineStart).toBe(47);
+  });
+});
+
+describe("buildFileDiffContentSignature", () => {
+  const patchWith = (aBody: string[], bBody: string[]) =>
+    [
+      "diff --git a/a.ts b/a.ts",
+      "--- a/a.ts",
+      "+++ b/a.ts",
+      `@@ -1,${aBody.length} +1,${aBody.length} @@`,
+      ...aBody,
+      "diff --git a/b.ts b/b.ts",
+      "--- a/b.ts",
+      "+++ b/b.ts",
+      `@@ -1,${bBody.length} +1,${bBody.length} @@`,
+      ...bBody,
+    ].join("\n");
+
+  const filesFrom = (patch: string) => {
+    const parsed = getRenderablePatch(patch);
+    if (parsed?.kind !== "files") throw new Error("expected files");
+    return parsed.files;
+  };
+
+  it("stays stable for a file when a different file in the patch changes", () => {
+    const before = filesFrom(patchWith(["-alpha", "+beta"], ["-one", "+two"]));
+    const after = filesFrom(patchWith(["-alpha", "+beta"], ["-one", "+three"]));
+
+    // a.ts is unchanged between the two patches; its signature must not move,
+    // even though the whole-patch render key does.
+    expect(buildFileDiffContentSignature(after[0]!)).toBe(
+      buildFileDiffContentSignature(before[0]!),
+    );
+    expect(buildFileDiffRenderKey(after[0]!)).not.toBe(buildFileDiffRenderKey(before[0]!));
+
+    // b.ts changed, so its signature must move.
+    expect(buildFileDiffContentSignature(after[1]!)).not.toBe(
+      buildFileDiffContentSignature(before[1]!),
+    );
+  });
+
+  it("changes when the file's own content changes", () => {
+    const before = filesFrom(patchWith(["-alpha", "+beta"], ["-one", "+two"]));
+    const after = filesFrom(patchWith(["-alpha", "+gamma"], ["-one", "+two"]));
+
+    expect(buildFileDiffContentSignature(after[0]!)).not.toBe(
+      buildFileDiffContentSignature(before[0]!),
+    );
   });
 });
 

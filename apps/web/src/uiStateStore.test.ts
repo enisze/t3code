@@ -20,6 +20,8 @@ import {
 function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     projectExpandedById: {},
+    projectHiddenById: {},
+    showHiddenProjects: false,
     projectOrder: [],
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
@@ -172,6 +174,8 @@ describe("parsePersistedState", () => {
       projectExpandedById: {
         logical: false,
       },
+      projectHiddenById: {},
+      showHiddenProjects: false,
       projectOrder: ["physical-b", "physical-a"],
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
@@ -291,6 +295,7 @@ describe("uiStateStore persistence", () => {
       projectExpandedById: {
         logical: false,
       },
+      projectHiddenById: {},
       projectOrder: ["physical-b", "physical-a"],
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",

@@ -805,6 +805,35 @@ export function resolveWorktreeActiveThread<
   return best;
 }
 
+/**
+ * Resolve the thread that owns a worktree's shared workspace state — the open
+ * files, diff view, terminals, and preview that every chat in the worktree sees
+ * in common. Chats sharing one on-disk worktree collapse to a single
+ * representative row (see collapseWorktreeSiblings); their workspace panels key
+ * off that same representative so switching between siblings keeps the same
+ * files open, the same diff, and the same live terminals. The representative is
+ * the earliest-created live chat in the worktree, matching the collapse rule so
+ * the workspace anchors to the row the sidebar shows. Threads with no worktree
+ * (worktreePath === null) own their workspace alone and resolve to null, so the
+ * caller falls back to the thread's own ref.
+ */
+export function resolveWorktreeWorkspaceRepresentative<
+  T extends WorktreeCollapsibleThread & { readonly archivedAt: string | null },
+>(input: { threads: readonly T[]; target: Pick<T, "environmentId" | "worktreePath"> }): T | null {
+  const { target, threads } = input;
+  if (target.worktreePath === null) return null;
+  let representative: T | null = null;
+  for (const thread of threads) {
+    if (thread.archivedAt !== null) continue;
+    if (thread.environmentId !== target.environmentId) continue;
+    if (thread.worktreePath !== target.worktreePath) continue;
+    if (representative === null || isEarlierCreatedThread(thread, representative)) {
+      representative = thread;
+    }
+  }
+  return representative;
+}
+
 export function mergeWorktreeSiblingRunningStatus<T extends Pick<SidebarThreadSummary, "session">>(
   representative: T,
   members: readonly T[],

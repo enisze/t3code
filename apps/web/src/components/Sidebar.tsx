@@ -79,6 +79,7 @@ import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstra
 import { isElectron } from "../env";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { isTerminalFocused } from "../lib/terminalFocus";
+import { useWorkspaceThreadRef } from "../lib/workspaceThreadRef";
 import { isMacPlatform } from "../lib/utils";
 import {
   readThreadShell,
@@ -3166,9 +3167,11 @@ export default function Sidebar() {
     [routeDraftThread, routeTarget],
   );
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
+  const routeWorkspaceThreadRef = useWorkspaceThreadRef(routeThreadRef);
   const routeTerminalOpen = useTerminalUiStateStore((state) =>
-    routeThreadRef
-      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
+    routeWorkspaceThreadRef
+      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeWorkspaceThreadRef)
+          .terminalOpen
       : false,
   );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
