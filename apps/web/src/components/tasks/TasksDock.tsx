@@ -61,6 +61,7 @@ const DEFAULT_TASK_ROWS = 30;
 
 const COLLAPSED_STORAGE_KEY = "t3code:tasks-dock-collapsed";
 const HEIGHT_STORAGE_KEY = "t3code:tasks-dock-height";
+const ACTIVE_TAB_STORAGE_KEY = "t3code:tasks-dock-active-tab";
 const MIN_BODY_HEIGHT = 140;
 const DEFAULT_BODY_HEIGHT = 280;
 
@@ -84,6 +85,13 @@ function readStoredHeight(): number {
 function readStoredCollapsed(): boolean {
   if (typeof window === "undefined") return false;
   return window.localStorage.getItem(COLLAPSED_STORAGE_KEY) === "true";
+}
+
+// Restore the last-opened tab so the dock resumes where it was left, rather
+// than snapping back to Setup on every mount. Defaults to the Run tab.
+function readStoredActiveTab(): string {
+  if (typeof window === "undefined") return TAB_RUN;
+  return window.localStorage.getItem(ACTIVE_TAB_STORAGE_KEY) ?? TAB_RUN;
 }
 
 const runShortcutLabel = () =>
@@ -137,13 +145,18 @@ export default function TasksDock({
   onDeleteScript,
   onAddTerminalContext,
 }: TasksDockProps) {
-  const [activeTabId, setActiveTabId] = useState<string>(TAB_SETUP);
+  const [activeTabId, setActiveTabId] = useState<string>(readStoredActiveTab);
   // Terminal ids started this mount — lets the viewport render optimistically the
   // moment we launch, before the metadata subscription reflects the session.
   const [startedTerminalIds, setStartedTerminalIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
   const [runError, setRunError] = useState<string | null>(null);
+  // When Run is pressed but setup hasn't finished, we run setup first and defer
+  // the run script until setup exits. `sawSetupRunningRef` guards against firing
+  // the run before we've actually observed setup start.
+  const [pendingRunAfterSetup, setPendingRunAfterSetup] = useState(false);
+  const sawSetupRunningRef = useRef(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingScript, setEditingScript] = useState<ProjectScript | null>(null);
   const [dialogDraft, setDialogDraft] = useState<ProjectScriptDraft | null>(null);
@@ -187,6 +200,22 @@ export default function TasksDock({
       scripts.filter((script) => script.id !== setupScript?.id && script.id !== runScriptEntry?.id),
     [scripts, setupScript, runScriptEntry],
   );
+
+  // Setup can run from two places: the dock's own task terminal, or the server's
+  // create-time runner (`setup-<id>`). Treat either as the setup terminal so a
+  // worktree that already installed on creation doesn't re-run setup on Run.
+  const setupTerminalId = setupScript ? taskTerminalId(setupScript.id) : null;
+  const serverSetupTerminalId = setupScript ? `setup-${setupScript.id}` : null;
+  const setupRunning =
+    (setupTerminalId !== null && runningSet.has(setupTerminalId)) ||
+    (serverSetupTerminalId !== null && runningSet.has(serverSetupTerminalId));
+  const setupEverStarted =
+    (setupTerminalId !== null &&
+      (knownTerminalIds.has(setupTerminalId) || startedTerminalIds.has(setupTerminalId))) ||
+    (serverSetupTerminalId !== null && knownTerminalIds.has(serverSetupTerminalId));
+  // Setup is "settled" (no need to run it) when there's no setup script, or it
+  // has run before and isn't currently running.
+  const setupSettled = setupScript === null || (setupEverStarted && !setupRunning);
 
   const tabs = useMemo<DockTab[]>(() => {
     const taskTabs: DockTab[] = [
@@ -246,6 +275,12 @@ export default function TasksDock({
       window.localStorage.setItem(COLLAPSED_STORAGE_KEY, collapsed ? "true" : "false");
     }
   }, [collapsed]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, activeTabId);
+    }
+  }, [activeTabId]);
 
   // Keep a custom tab valid as scripts change; fixed tabs are always valid.
   useEffect(() => {
@@ -368,19 +403,6 @@ export default function TasksDock({
     void openShell(TASK_SHELL_TERMINAL_ID);
   }, [activeTabId, collapsed, knownTerminalIds, openShell, startedTerminalIds]);
 
-  // ⌘R / Ctrl+R runs the active task while the dock is mounted and expanded.
-  useEffect(() => {
-    if (!activeScript || collapsed) return;
-    const handler = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.shiftKey || event.altKey) return;
-      if (event.key.toLowerCase() !== "r") return;
-      event.preventDefault();
-      void runTask(activeScript);
-    };
-    window.addEventListener("keydown", handler, { capture: true });
-    return () => window.removeEventListener("keydown", handler, { capture: true });
-  }, [activeScript, collapsed, runTask]);
-
   const onResizePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (collapsed) return;
     event.preventDefault();
@@ -440,11 +462,118 @@ export default function TasksDock({
     setDialogOpen(true);
   };
 
-  const primaryAction = () => {
+  // Ctrl-C the script's terminal to stop a running command (e.g. a dev server).
+  const stopTask = useCallback(
+    async (script: ProjectScript) => {
+      const written = await writeTerminal({
+        environmentId,
+        input: { threadId, terminalId: taskTerminalId(script.id), data: "\x03" },
+      });
+      surfaceFailure(written, `Failed to stop "${script.name}".`);
+    },
+    [environmentId, surfaceFailure, threadId, writeTerminal],
+  );
+
+  // Run the run script, first running setup if it hasn't run yet. Setup output
+  // shows in the Setup tab; once it exits, the run script fires automatically.
+  const runRunTab = useCallback(async () => {
+    if (!runScriptEntry) return;
+    if (setupSettled) {
+      await runTask(runScriptEntry);
+      return;
+    }
+    setActiveTabId(TAB_SETUP);
+    setCollapsed(false);
+    sawSetupRunningRef.current = false;
+    setPendingRunAfterSetup(true);
+    if (setupScript && !setupRunning) {
+      await runTask(setupScript);
+    }
+  }, [runScriptEntry, runTask, setupRunning, setupScript, setupSettled]);
+
+  // Start the active tab's script — the Run tab routes through setup-then-run.
+  const startActive = useCallback(() => {
+    if (!activeScript) return;
+    if (activeTab.kind === "run") void runRunTab();
+    else void runTask(activeScript);
+  }, [activeScript, activeTab, runRunTab, runTask]);
+
+  const activeRunning =
+    activeScript !== null && activeTerminalId !== null && runningSet.has(activeTerminalId);
+
+  const handlePrimary = useCallback(() => {
     if (activeIsShell) return;
-    if (activeScript) void runTask(activeScript);
-    else openConfigureDialog(activeTab);
-  };
+    if (!activeScript) {
+      openConfigureDialog(activeTab);
+      return;
+    }
+    if (activeTerminalId !== null && runningSet.has(activeTerminalId)) {
+      // Stopping setup cancels the deferred run that would otherwise auto-start.
+      if (setupScript && activeScript.id === setupScript.id) {
+        setPendingRunAfterSetup(false);
+        sawSetupRunningRef.current = false;
+      }
+      void stopTask(activeScript);
+      return;
+    }
+    startActive();
+  }, [
+    activeIsShell,
+    activeScript,
+    activeTab,
+    activeTerminalId,
+    openConfigureDialog,
+    runningSet,
+    setupScript,
+    startActive,
+    stopTask,
+  ]);
+
+  // Sequencing: once the deferred setup run finishes, launch the run script.
+  useEffect(() => {
+    if (!pendingRunAfterSetup) return;
+    if (!runScriptEntry) {
+      setPendingRunAfterSetup(false);
+      return;
+    }
+    if (setupRunning) {
+      sawSetupRunningRef.current = true;
+      return;
+    }
+    // Setup isn't running now — only proceed once we've seen it actually start,
+    // so we don't fire before the setup process has spawned.
+    if (!sawSetupRunningRef.current) return;
+    setPendingRunAfterSetup(false);
+    sawSetupRunningRef.current = false;
+    setActiveTabId(TAB_RUN);
+    void runTask(runScriptEntry);
+  }, [pendingRunAfterSetup, runScriptEntry, runTask, setupRunning]);
+
+  // Fallback for setups that finish before we observe them running (e.g. a
+  // trivial command): proceed to the run script after a short grace period.
+  useEffect(() => {
+    if (!pendingRunAfterSetup) return;
+    const timer = setTimeout(() => {
+      if (sawSetupRunningRef.current || !runScriptEntry) return;
+      setPendingRunAfterSetup(false);
+      setActiveTabId(TAB_RUN);
+      void runTask(runScriptEntry);
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [pendingRunAfterSetup, runScriptEntry, runTask]);
+
+  // ⌘R / Ctrl+R runs the active task while the dock is mounted and expanded.
+  useEffect(() => {
+    if (!activeScript || collapsed) return;
+    const handler = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.shiftKey || event.altKey) return;
+      if (event.key.toLowerCase() !== "r") return;
+      event.preventDefault();
+      startActive();
+    };
+    window.addEventListener("keydown", handler, { capture: true });
+    return () => window.removeEventListener("keydown", handler, { capture: true });
+  }, [activeScript, collapsed, startActive]);
 
   const shortcut = runShortcutLabel();
   const activeTerminalStarted =
@@ -546,19 +675,30 @@ export default function TasksDock({
               size="xs"
               variant="outline"
               className={activeScript ? "rounded-e-none" : undefined}
-              onClick={primaryAction}
-              aria-label={activeScript ? `Run ${activeVerb}` : `Configure ${activeVerb}`}
+              onClick={handlePrimary}
+              aria-label={
+                !activeScript
+                  ? `Configure ${activeVerb}`
+                  : activeRunning
+                    ? `Stop ${activeVerb}`
+                    : `Run ${activeVerb}`
+              }
             >
-              {activeScript ? (
+              {!activeScript ? (
+                <>
+                  <Plus className="size-3.5" />
+                  <span>Configure</span>
+                </>
+              ) : activeRunning ? (
+                <>
+                  <Square className="size-3.5" />
+                  <span>Stop</span>
+                </>
+              ) : (
                 <>
                   <Play className="size-3.5" />
                   <span>Run</span>
                   <kbd className="ml-1 text-[10px] text-muted-foreground">{shortcut}</kbd>
-                </>
-              ) : (
-                <>
-                  <Plus className="size-3.5" />
-                  <span>Configure</span>
                 </>
               )}
             </Button>
@@ -656,7 +796,7 @@ export default function TasksDock({
               actionLabel={`Run ${activeVerb}`}
               actionIcon={<Play className="size-4" />}
               shortcut={shortcut}
-              onAction={() => void runTask(activeScript)}
+              onAction={startActive}
             />
           ) : (
             <TaskEmptyState
