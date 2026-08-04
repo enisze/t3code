@@ -29,6 +29,8 @@ import {
   CircleDashedIcon,
   ClockIcon,
   CopyIcon,
+  EyeIcon,
+  EyeOffIcon,
   FilePenIcon,
   FolderIcon,
   FolderPlusIcon,
@@ -38,6 +40,7 @@ import {
   PlusIcon,
   SearchIcon,
   ServerIcon,
+  SettingsIcon,
   SquarePenIcon,
   Trash2Icon,
   Undo2Icon,
@@ -71,6 +74,7 @@ import {
 } from "../keybindings";
 import { useShortcutModifierState } from "../shortcutModifierState";
 import { isTerminalFocused } from "../lib/terminalFocus";
+import { useWorkspaceThreadRef } from "../lib/workspaceThreadRef";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { isMacPlatform } from "~/lib/utils";
@@ -89,6 +93,7 @@ import {
 import {
   legacyProjectCwdPreferenceKey,
   resolveProjectExpanded,
+  resolveProjectHidden,
   useUiStateStore,
 } from "../uiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
@@ -1835,6 +1840,46 @@ export default function SidebarV2() {
     },
     [preferenceKeysByProjectKey, projectExpandedById, setProjectExpanded],
   );
+  const projectHiddenById = useUiStateStore((state) => state.projectHiddenById);
+  const setProjectHidden = useUiStateStore((state) => state.setProjectHidden);
+  const showHiddenProjects = useUiStateStore((state) => state.showHiddenProjects);
+  const setShowHiddenProjects = useUiStateStore((state) => state.setShowHiddenProjects);
+  const isProjectHidden = useCallback(
+    (projectKey: string) => {
+      const keys = preferenceKeysByProjectKey.get(projectKey);
+      return keys ? resolveProjectHidden(projectHiddenById, keys) : false;
+    },
+    [preferenceKeysByProjectKey, projectHiddenById],
+  );
+  const setProjectHiddenByKey = useCallback(
+    (projectKey: string, hidden: boolean) => {
+      const keys = preferenceKeysByProjectKey.get(projectKey);
+      if (!keys) return;
+      setProjectHidden(keys, hidden);
+    },
+    [preferenceKeysByProjectKey, setProjectHidden],
+  );
+  // Groups the user has hidden. Grouping-only feature: without per-project
+  // sections there are no headers to hide from or reveal into.
+  const hiddenProjectGroups = useMemo(
+    () =>
+      groupByProject && scopedProjectGroup === null
+        ? projectGroups.filter((group) => isProjectHidden(group.projectKey))
+        : [],
+    [groupByProject, isProjectHidden, projectGroups, scopedProjectGroup],
+  );
+  const hiddenProjectKeySet = useMemo(
+    () => new Set(hiddenProjectGroups.map((group) => group.projectKey)),
+    [hiddenProjectGroups],
+  );
+  // Reveal state only means anything while something is hidden; drop it back to
+  // false the moment the last project is un-hidden so the toggle can't strand
+  // itself "on" with nothing to show.
+  useEffect(() => {
+    if (hiddenProjectGroups.length === 0 && showHiddenProjects) {
+      setShowHiddenProjects(false);
+    }
+  }, [hiddenProjectGroups.length, setShowHiddenProjects, showHiddenProjects]);
   const activeThreadCountByProjectKey = useMemo(
     () =>
       new Map(activeThreadSections.map((section) => [section.projectKey, section.threads.length])),
@@ -1843,9 +1888,17 @@ export default function SidebarV2() {
   // Collapsed project groups drop their rows from render and keyboard nav, but a
   // collapsed group holding the open thread keeps that one row visible (the same
   // exception the snoozed shelf makes) so the active chat never hides.
-  const visibleActiveThreadSections = useMemo(
-    () =>
-      activeThreadSections.map((section) => {
+  const visibleActiveThreadSections = useMemo(() => {
+    const sections = activeThreadSections
+      // Hidden groups drop out entirely (header + rows) unless the reveal
+      // toggle is on; the null section (ungrouped) is never hidden.
+      .filter(
+        (section) =>
+          section.projectKey === null ||
+          !hiddenProjectKeySet.has(section.projectKey) ||
+          showHiddenProjects,
+      )
+      .map((section) => {
         if (section.projectKey === null || isProjectExpanded(section.projectKey)) return section;
         const routeThread =
           effectiveRouteThreadKey === null
@@ -1856,9 +1909,27 @@ export default function SidebarV2() {
                   effectiveRouteThreadKey,
               );
         return { ...section, threads: routeThread ? [routeThread] : [] };
-      }),
-    [activeThreadSections, effectiveRouteThreadKey, isProjectExpanded],
-  );
+      });
+    // Revealing hidden projects must surface every hidden group, even ones with
+    // no active threads — otherwise a hidden, empty project has no header and no
+    // way to un-hide it.
+    if (showHiddenProjects) {
+      const present = new Set(sections.map((section) => section.projectKey));
+      for (const group of hiddenProjectGroups) {
+        if (!present.has(group.projectKey)) {
+          sections.push({ projectKey: group.projectKey as string | null, threads: [] });
+        }
+      }
+    }
+    return sections;
+  }, [
+    activeThreadSections,
+    effectiveRouteThreadKey,
+    hiddenProjectGroups,
+    hiddenProjectKeySet,
+    isProjectExpanded,
+    showHiddenProjects,
+  ]);
   const orderedActiveThreads = useMemo(
     () => visibleActiveThreadSections.flatMap((section) => section.threads),
     [visibleActiveThreadSections],
@@ -1899,6 +1970,16 @@ export default function SidebarV2() {
   // a ref keeps it out of attemptSettle's dependency array.
   const handleNewThreadRef = useRef(newThreadContext.handleNewThread);
   handleNewThreadRef.current = newThreadContext.handleNewThread;
+  const createThreadForProjectGroup = useCallback(
+    (group: SidebarProjectSnapshot) => {
+      if (isMobile) setOpenMobile(false);
+      // The snapshot spreads its representative member, so (environmentId, id)
+      // already points at the preferred member (local over remote) — the same
+      // default the command palette's "New thread in…" resolves to.
+      void handleNewThreadRef.current(scopeProjectRef(group.environmentId, group.id));
+    },
+    [isMobile, setOpenMobile],
+  );
   const settledThreadKeys = useMemo(
     () =>
       new Set(
@@ -2568,9 +2649,11 @@ export default function SidebarV2() {
 
   // Thread jump (cmd+1..9) and prev/next traversal reuse the same commands as
   // v1 — the keybinding layer is shared, only the ordered list differs.
+  const routeWorkspaceThreadRef = useWorkspaceThreadRef(routeThreadRef);
   const routeTerminalOpen = useTerminalUiStateStore((state) =>
-    routeThreadRef
-      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
+    routeWorkspaceThreadRef
+      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeWorkspaceThreadRef)
+          .terminalOpen
       : false,
   );
   useEffect(() => {
@@ -2919,23 +3002,27 @@ export default function SidebarV2() {
                     const group = projectGroupByKey.get(section.projectKey);
                     const projectKey = section.projectKey;
                     const expanded = isProjectExpanded(projectKey);
+                    const hidden = isProjectHidden(projectKey);
                     const count = activeThreadCountByProjectKey.get(projectKey) ?? 0;
                     items.push(
                       <li
                         key={`project-header-${projectKey}`}
                         data-thread-selection-safe
-                        className="list-none"
+                        className={cn(
+                          "group/project-header flex list-none items-center gap-1 px-2.5",
+                          "mb-1",
+                          sectionIndex === 0 ? "mt-1" : "mt-3",
+                          // Revealed-but-hidden headers stay dimmed so the reveal
+                          // list reads as "these are the ones you tucked away".
+                          hidden && "opacity-60",
+                        )}
                       >
                         <button
                           type="button"
                           onClick={() => toggleProjectExpanded(projectKey)}
                           aria-expanded={expanded}
                           data-testid="sidebar-v2-project-toggle"
-                          className={cn(
-                            "flex w-full cursor-pointer items-center gap-2 px-2.5 text-left",
-                            "mb-1",
-                            sectionIndex === 0 ? "mt-1" : "mt-3",
-                          )}
+                          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
                         >
                           {group ? (
                             <ProjectFavicon
@@ -2949,14 +3036,43 @@ export default function SidebarV2() {
                             {!expanded && count > 0 ? ` (${count})` : ""}
                           </span>
                           <span className="h-px flex-1 bg-sidebar-border/60" />
-                          <ChevronDownIcon
-                            aria-hidden
-                            className={cn(
-                              "size-3 shrink-0 text-muted-foreground transition-transform",
-                              expanded && "rotate-180",
-                            )}
-                          />
                         </button>
+                        {group ? (
+                          <div className="flex shrink-0 items-center gap-0.5">
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <button
+                                    type="button"
+                                    data-testid="sidebar-v2-project-settings"
+                                    aria-label={`Project settings for ${group.displayName}`}
+                                    onClick={(event) => handleProjectActions(event, group)}
+                                    className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/55 outline-none transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:bg-sidebar-row-hover focus-visible:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                                  />
+                                }
+                              >
+                                <SettingsIcon className="size-3.5" />
+                              </TooltipTrigger>
+                              <TooltipPopup side="top">Project settings</TooltipPopup>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <button
+                                    type="button"
+                                    data-testid="sidebar-v2-project-new-thread"
+                                    aria-label={`New chat in ${group.displayName}`}
+                                    onClick={() => createThreadForProjectGroup(group)}
+                                    className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/55 outline-none transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:bg-sidebar-row-hover focus-visible:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                                  />
+                                }
+                              >
+                                <PlusIcon className="size-4" />
+                              </TooltipTrigger>
+                              <TooltipPopup side="top">New chat</TooltipPopup>
+                            </Tooltip>
+                          </div>
+                        ) : null}
                       </li>,
                     );
                   }
@@ -3244,29 +3360,63 @@ export default function SidebarV2() {
               </div>
             ) : null}
           </DialogPanel>
-          <DialogFooter
-            variant="bare"
-            className={cn(
-              projectActionsTarget?.memberProjects.length === 1 && "sm:justify-between",
-            )}
-          >
-            {projectActionsTarget?.memberProjects.length === 1 ? (
-              <Button
-                variant="destructive-outline"
-                onClick={() => {
-                  const projectGroup = projectActionsTarget;
-                  setProjectActionsTarget(null);
-                  void handleRemoveProjectMembers(projectGroup, projectGroup.memberProjects);
-                }}
-              >
-                <Trash2Icon />
-                Remove project
-              </Button>
-            ) : null}
+          <DialogFooter variant="bare" className="sm:justify-between">
+            <div className="flex flex-wrap items-center gap-2">
+              {projectActionsTarget?.memberProjects.length === 1 ? (
+                <Button
+                  variant="destructive-outline"
+                  onClick={() => {
+                    const projectGroup = projectActionsTarget;
+                    setProjectActionsTarget(null);
+                    void handleRemoveProjectMembers(projectGroup, projectGroup.memberProjects);
+                  }}
+                >
+                  <Trash2Icon />
+                  Remove project
+                </Button>
+              ) : null}
+              {projectActionsTarget
+                ? (() => {
+                    const targetKey = projectActionsTarget.projectKey;
+                    const targetHidden = isProjectHidden(targetKey);
+                    return (
+                      <Button
+                        variant="ghost"
+                        onClick={() => setProjectHiddenByKey(targetKey, !targetHidden)}
+                      >
+                        {targetHidden ? <EyeIcon /> : <EyeOffIcon />}
+                        {targetHidden ? "Show in sidebar" : "Hide from sidebar"}
+                      </Button>
+                    );
+                  })()
+                : null}
+            </div>
             <Button onClick={() => setProjectActionsTarget(null)}>Close</Button>
           </DialogFooter>
         </DialogPopup>
       </Dialog>
+      {hiddenProjectGroups.length > 0 ? (
+        <div className="px-2 pb-1 pt-0.5">
+          <button
+            type="button"
+            data-testid="sidebar-v2-show-hidden-projects"
+            aria-pressed={showHiddenProjects}
+            onClick={() => setShowHiddenProjects(!showHiddenProjects)}
+            className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs font-medium text-sidebar-muted-foreground outline-none transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:bg-sidebar-row-hover focus-visible:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {showHiddenProjects ? (
+              <EyeOffIcon className="size-3.5 shrink-0" />
+            ) : (
+              <EyeIcon className="size-3.5 shrink-0" />
+            )}
+            <span className="min-w-0 flex-1 truncate">
+              {showHiddenProjects
+                ? "Hide hidden projects"
+                : `Show hidden projects (${hiddenProjectGroups.length})`}
+            </span>
+          </button>
+        </div>
+      ) : null}
       <SidebarChromeFooter />
     </>
   );

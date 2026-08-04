@@ -5,6 +5,7 @@ import {
   collapseWorktreeSiblings,
   collectWorktreeSiblingThreads,
   resolveWorktreeActiveThread,
+  resolveWorktreeWorkspaceRepresentative,
   createThreadJumpHintVisibilityController,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
@@ -1119,6 +1120,99 @@ describe("collapseWorktreeSiblings", () => {
     const { threads: collapsed } = collapseWorktreeSiblings(threads, keyOf);
 
     expect(collapsed.map((thread) => thread.id)).toEqual(["alpha"]);
+  });
+});
+
+describe("resolveWorktreeWorkspaceRepresentative", () => {
+  type WorkspaceThread = {
+    id: string;
+    environmentId: string;
+    worktreePath: string | null;
+    createdAt: string;
+    archivedAt: string | null;
+  };
+  const make = (
+    id: string,
+    worktreePath: string | null,
+    createdAt: string,
+    overrides: { environmentId?: string; archivedAt?: string | null } = {},
+  ): WorkspaceThread => ({
+    id,
+    environmentId: overrides.environmentId ?? "env-1",
+    worktreePath,
+    createdAt,
+    archivedAt: overrides.archivedAt ?? null,
+  });
+
+  it("returns the earliest-created live sibling sharing the worktree", () => {
+    const threads = [
+      make("newer", "/wt/a", "2026-03-09T12:00:00.000Z"),
+      make("older", "/wt/a", "2026-03-09T10:00:00.000Z"),
+      make("other-wt", "/wt/b", "2026-03-09T08:00:00.000Z"),
+    ];
+
+    const representative = resolveWorktreeWorkspaceRepresentative({
+      threads,
+      target: { environmentId: "env-1", worktreePath: "/wt/a" },
+    });
+
+    expect(representative?.id).toBe("older");
+  });
+
+  it("returns null for threads with no worktree so the caller keeps its own ref", () => {
+    const threads = [make("solo", null, "2026-03-09T10:00:00.000Z")];
+
+    expect(
+      resolveWorktreeWorkspaceRepresentative({
+        threads,
+        target: { environmentId: "env-1", worktreePath: null },
+      }),
+    ).toBeNull();
+  });
+
+  it("skips archived siblings when choosing the representative", () => {
+    const threads = [
+      make("archived-oldest", "/wt/a", "2026-03-09T09:00:00.000Z", {
+        archivedAt: "2026-03-09T13:00:00.000Z",
+      }),
+      make("live-older", "/wt/a", "2026-03-09T10:00:00.000Z"),
+      make("live-newer", "/wt/a", "2026-03-09T12:00:00.000Z"),
+    ];
+
+    const representative = resolveWorktreeWorkspaceRepresentative({
+      threads,
+      target: { environmentId: "env-1", worktreePath: "/wt/a" },
+    });
+
+    expect(representative?.id).toBe("live-older");
+  });
+
+  it("does not cross environments for the same worktree path", () => {
+    const threads = [
+      make("other-env", "/wt/shared", "2026-03-09T08:00:00.000Z", { environmentId: "env-2" }),
+      make("mine", "/wt/shared", "2026-03-09T10:00:00.000Z", { environmentId: "env-1" }),
+    ];
+
+    const representative = resolveWorktreeWorkspaceRepresentative({
+      threads,
+      target: { environmentId: "env-1", worktreePath: "/wt/shared" },
+    });
+
+    expect(representative?.id).toBe("mine");
+  });
+
+  it("breaks createdAt ties by id", () => {
+    const threads = [
+      make("beta", "/wt/a", "2026-03-09T10:00:00.000Z"),
+      make("alpha", "/wt/a", "2026-03-09T10:00:00.000Z"),
+    ];
+
+    const representative = resolveWorktreeWorkspaceRepresentative({
+      threads,
+      target: { environmentId: "env-1", worktreePath: "/wt/a" },
+    });
+
+    expect(representative?.id).toBe("alpha");
   });
 
   it("projects a running sibling's status onto the representative row", () => {

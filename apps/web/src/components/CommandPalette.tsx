@@ -78,6 +78,7 @@ import {
 } from "../lib/projectPaths";
 import { onOpenCommandPalette } from "../commandPaletteBus";
 import { isTerminalFocused } from "../lib/terminalFocus";
+import { useWorkspaceThreadRef } from "../lib/workspaceThreadRef";
 import { getLatestThreadForProject, sortThreads } from "../lib/threadSort";
 import { cn, isMacPlatform, isWindowsPlatform, newProjectId } from "../lib/utils";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -394,9 +395,11 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     select: (params) => resolveThreadRouteTarget(params),
   });
   const routeThreadRef = routeTarget?.kind === "server" ? routeTarget.threadRef : null;
+  const workspaceThreadRef = useWorkspaceThreadRef(routeThreadRef);
   const terminalOpen = useTerminalUiStateStore((state) =>
-    routeThreadRef
-      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
+    workspaceThreadRef
+      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, workspaceThreadRef)
+          .terminalOpen
       : false,
   );
 

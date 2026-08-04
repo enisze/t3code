@@ -24,9 +24,10 @@ import { openDiffFilePrimaryAction } from "../diffFileActions";
 import { useCheckpointDiff } from "~/lib/checkpointDiffState";
 import { cn } from "~/lib/utils";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
-import { selectViewedFileKeys, useDiffViewedStore } from "../diffViewedStore";
+import { selectViewedSignatures, useDiffViewedStore } from "../diffViewedStore";
 import { useTheme } from "../hooks/useTheme";
 import {
+  buildFileDiffContentSignature,
   buildFileDiffRenderKey,
   getDiffCollapseIconClassName,
   getDiffLineStat,
@@ -34,10 +35,10 @@ import {
   resolveFileDiffPath,
 } from "../lib/diffRendering";
 import { useDiffThemeName } from "../hooks/useDiffThemeName";
-import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "../lib/diffCollapse";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useProject, useThread } from "../state/entities";
 import { resolveThreadRouteRef } from "../threadRoutes";
+import { useWorkspaceThreadRef } from "../lib/workspaceThreadRef";
 import { useClientSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
@@ -76,12 +77,18 @@ type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
 
-interface CollapsedDiffFilesState {
+/**
+ * Tracks which files the user has explicitly expanded, keyed by file path so
+ * expansion survives edits to other files. Files default to collapsed, so an
+ * empty set (a fresh scope, or returning after navigating away) shows every
+ * file collapsed.
+ */
+interface ExpandedDiffFilesState {
   readonly scopeKey: string | null;
-  readonly fileKeys: ReadonlySet<string>;
+  readonly filePaths: ReadonlySet<string>;
 }
 
-const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
+const EMPTY_EXPANDED_DIFF_FILE_PATHS: ReadonlySet<string> = new Set();
 
 const DIFF_PANEL_UNSAFE_CSS = `
 [data-diffs-header],
@@ -202,9 +209,9 @@ export default function DiffPanel({
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
   const [diffIgnoreWhitespace, setDiffIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
   const [baseRefQuery, setBaseRefQuery] = useState("");
-  const [collapsedDiffFiles, setCollapsedDiffFiles] = useState<CollapsedDiffFilesState>(() => ({
+  const [expandedDiffFiles, setExpandedDiffFiles] = useState<ExpandedDiffFilesState>(() => ({
     scopeKey: null,
-    fileKeys: EMPTY_COLLAPSED_DIFF_FILE_KEYS,
+    filePaths: EMPTY_EXPANDED_DIFF_FILE_PATHS,
   }));
   const codeViewRef = useRef<AnnotatableCodeViewHandle>(null);
 
@@ -213,6 +220,11 @@ export default function DiffPanel({
     select: (params) => resolveThreadRouteRef(params),
   });
   const activeThreadId = routeThreadRef?.threadId ?? null;
+  // The diff view is part of the shared per-worktree workspace: chats in one
+  // worktree key their diff selection and reviewed-file state off the worktree's
+  // representative thread. Turn summaries still come from the route thread
+  // (turns are per-chat); only the diff store keying is worktree-scoped.
+  const workspaceThreadRef = useWorkspaceThreadRef(routeThreadRef);
   const activeThread = useThread(routeThreadRef);
   const activeProjectId = activeThread?.projectId ?? null;
   const activeProject = useProject(
@@ -242,7 +254,7 @@ export default function DiffPanel({
   const diffSelection = useDiffPanelStore((state) =>
     selectThreadDiffPanelSelection(
       state.byThreadKey,
-      routeThreadRef,
+      workspaceThreadRef,
       initialGitScope === "unstaged",
     ),
   );
@@ -265,12 +277,12 @@ export default function DiffPanel({
   );
 
   useEffect(() => {
-    if (!routeThreadRef || diffSelection.kind !== "turn") return;
+    if (!workspaceThreadRef || diffSelection.kind !== "turn") return;
     useDiffPanelStore.getState().reconcileTurnSelection(
-      routeThreadRef,
+      workspaceThreadRef,
       orderedTurnDiffSummaries.map((summary) => summary.turnId),
     );
-  }, [diffSelection, orderedTurnDiffSummaries, routeThreadRef]);
+  }, [diffSelection, orderedTurnDiffSummaries, workspaceThreadRef]);
 
   const selectedTurnId = diffSelection.kind === "turn" ? diffSelection.turnId : null;
   const selectedGitScope = diffSelection.kind === "unstaged" ? "unstaged" : "branch";
@@ -296,17 +308,16 @@ export default function DiffPanel({
         ? "Latest turn"
         : `Turn ${selectedCheckpointTurnCount ?? "?"}`;
   const reviewSectionId = selectedTurn ? `turn:${selectedTurn.turnId}` : selectedGitScope;
-  const collapseScopeKey = routeThreadRef
-    ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}:${reviewSectionId}`
+  const collapseScopeKey = workspaceThreadRef
+    ? `${workspaceThreadRef.environmentId}:${workspaceThreadRef.threadId}:${reviewSectionId}`
     : null;
-  const collapsedDiffFileKeys =
-    collapsedDiffFiles.scopeKey === collapseScopeKey
-      ? collapsedDiffFiles.fileKeys
-      : EMPTY_COLLAPSED_DIFF_FILE_KEYS;
-  const viewedFileKeys = useDiffViewedStore((state) =>
-    selectViewedFileKeys(state.viewedByScope, collapseScopeKey),
+  const expandedDiffFilePaths =
+    expandedDiffFiles.scopeKey === collapseScopeKey
+      ? expandedDiffFiles.filePaths
+      : EMPTY_EXPANDED_DIFF_FILE_PATHS;
+  const viewedSignatures = useDiffViewedStore((state) =>
+    selectViewedSignatures(state.viewedByScope, collapseScopeKey),
   );
-  const viewedFileKeySet = useMemo(() => new Set(viewedFileKeys), [viewedFileKeys]);
   const reviewSectionTitle = selectedTurn
     ? `Turn ${selectedCheckpointTurnCount ?? "?"}`
     : selectedGitScope === "unstaged"
@@ -448,17 +459,33 @@ export default function DiffPanel({
     () =>
       renderableFiles.map((fileDiff) => {
         const fileKey = buildFileDiffRenderKey(fileDiff);
+        const filePath = resolveFileDiffPath(fileDiff);
+        const signature = buildFileDiffContentSignature(fileDiff);
         return {
           fileDiff,
-          filePath: resolveFileDiffPath(fileDiff),
+          filePath,
           fileKey,
-          collapsed: collapsedDiffFileKeys.has(fileKey),
+          signature,
+          // Viewed only counts while the file's content is unchanged since it
+          // was marked; an edit clears the mark ("the check is gone").
+          viewed: viewedSignatures[filePath] === signature,
+          // Files default to collapsed; only explicit expansion opens them.
+          collapsed: !expandedDiffFilePaths.has(filePath),
         };
       }),
-    [collapsedDiffFileKeys, renderableFiles],
+    [expandedDiffFilePaths, renderableFiles, viewedSignatures],
   );
-  const diffFileKeys = useMemo(() => codeViewFiles.map((file) => file.fileKey), [codeViewFiles]);
-  const allDiffFilesCollapsed = areAllDiffFilesCollapsed(diffFileKeys, collapsedDiffFileKeys);
+  const diffFilePaths = useMemo(() => codeViewFiles.map((file) => file.filePath), [codeViewFiles]);
+  const viewedFileKeySet = useMemo(
+    () => new Set(codeViewFiles.filter((file) => file.viewed).map((file) => file.fileKey)),
+    [codeViewFiles],
+  );
+  const signatureByFilePath = useMemo(
+    () => new Map(codeViewFiles.map((file) => [file.filePath, file.signature])),
+    [codeViewFiles],
+  );
+  const allDiffFilesCollapsed =
+    codeViewFiles.length > 0 && codeViewFiles.every((file) => file.collapsed);
   const diffLineStat = useMemo(() => getDiffLineStat(renderableFiles), [renderableFiles]);
 
   useEffect(() => {
@@ -471,7 +498,7 @@ export default function DiffPanel({
   const openDiffFile = useCallback(
     (filePath: string) => {
       openDiffFilePrimaryAction({
-        threadRef: routeThreadRef,
+        threadRef: workspaceThreadRef,
         filePath,
         activeCwd,
         openInEditor: (targetPath) => {
@@ -493,65 +520,69 @@ export default function DiffPanel({
         },
       });
     },
-    [activeCwd, openInPreferredEditor, routeThreadRef],
+    [activeCwd, openInPreferredEditor, routeThreadRef, workspaceThreadRef],
   );
-  const toggleDiffFileCollapsed = useCallback(
-    (fileKey: string) => {
-      setCollapsedDiffFiles((current) => {
-        const next = new Set(current.scopeKey === collapseScopeKey ? current.fileKeys : []);
-        if (next.has(fileKey)) {
-          next.delete(fileKey);
+  const setDiffFileExpanded = useCallback(
+    (filePath: string, expanded: boolean) => {
+      setExpandedDiffFiles((current) => {
+        const next = new Set(current.scopeKey === collapseScopeKey ? current.filePaths : []);
+        if (expanded) {
+          next.add(filePath);
         } else {
-          next.add(fileKey);
+          next.delete(filePath);
         }
-        return { scopeKey: collapseScopeKey, fileKeys: next };
+        return { scopeKey: collapseScopeKey, filePaths: next };
+      });
+    },
+    [collapseScopeKey],
+  );
+
+  const toggleDiffFileCollapsed = useCallback(
+    (filePath: string) => {
+      setExpandedDiffFiles((current) => {
+        const next = new Set(current.scopeKey === collapseScopeKey ? current.filePaths : []);
+        if (next.has(filePath)) {
+          next.delete(filePath);
+        } else {
+          next.add(filePath);
+        }
+        return { scopeKey: collapseScopeKey, filePaths: next };
       });
     },
     [collapseScopeKey],
   );
 
   const toggleFileViewed = useCallback(
-    (fileKey: string) => {
+    (filePath: string) => {
       if (!collapseScopeKey) return;
-      const nowViewed = !viewedFileKeySet.has(fileKey);
-      useDiffViewedStore.getState().toggleFileViewed(collapseScopeKey, fileKey);
+      const signature = signatureByFilePath.get(filePath);
+      if (signature === undefined) return;
+      const nowViewed = viewedSignatures[filePath] !== signature;
+      useDiffViewedStore.getState().setFileViewed(collapseScopeKey, filePath, signature, nowViewed);
       // Collapse a file when it is marked viewed, and expand it when unmarked.
-      setCollapsedDiffFiles((current) => {
-        const next = new Set(current.scopeKey === collapseScopeKey ? current.fileKeys : []);
-        if (nowViewed) {
-          next.add(fileKey);
-        } else {
-          next.delete(fileKey);
-        }
-        return { scopeKey: collapseScopeKey, fileKeys: next };
-      });
+      setDiffFileExpanded(filePath, !nowViewed);
     },
-    [collapseScopeKey, viewedFileKeySet],
+    [collapseScopeKey, setDiffFileExpanded, signatureByFilePath, viewedSignatures],
   );
 
   const toggleDiffFileCollapse = useCallback(() => {
-    setCollapsedDiffFiles((current) => {
-      const currentKeys =
-        current.scopeKey === collapseScopeKey ? current.fileKeys : EMPTY_COLLAPSED_DIFF_FILE_KEYS;
-
-      return {
-        scopeKey: collapseScopeKey,
-        fileKeys: toggleAllDiffFiles(diffFileKeys, currentKeys),
-      };
-    });
-  }, [collapseScopeKey, diffFileKeys]);
+    setExpandedDiffFiles(() => ({
+      scopeKey: collapseScopeKey,
+      filePaths: allDiffFilesCollapsed ? new Set(diffFilePaths) : new Set(),
+    }));
+  }, [allDiffFilesCollapsed, collapseScopeKey, diffFilePaths]);
 
   const selectTurn = (turnId: TurnId) => {
-    if (!routeThreadRef) return;
-    useDiffPanelStore.getState().selectTurn(routeThreadRef, turnId);
+    if (!workspaceThreadRef) return;
+    useDiffPanelStore.getState().selectTurn(workspaceThreadRef, turnId);
   };
   const selectGitScope = (scope: "branch" | "unstaged") => {
-    if (!routeThreadRef) return;
-    useDiffPanelStore.getState().selectGitScope(routeThreadRef, scope);
+    if (!workspaceThreadRef) return;
+    useDiffPanelStore.getState().selectGitScope(workspaceThreadRef, scope);
   };
   const selectBranchBaseRef = (baseRef: string | null) => {
-    if (!routeThreadRef) return;
-    useDiffPanelStore.getState().selectBranchBaseRef(routeThreadRef, baseRef);
+    if (!workspaceThreadRef) return;
+    useDiffPanelStore.getState().selectBranchBaseRef(workspaceThreadRef, baseRef);
   };
 
   const headerRow = (
@@ -917,7 +948,7 @@ export default function DiffPanel({
                                 aria-expanded={!collapsed}
                                 onClick={(event) => {
                                   event.stopPropagation();
-                                  toggleDiffFileCollapsed(fileKey);
+                                  toggleDiffFileCollapsed(filePath);
                                 }}
                               />
                             }
@@ -944,7 +975,7 @@ export default function DiffPanel({
                                     : `Mark ${filePath} as viewed`
                                 }
                                 onClick={(event) => event.stopPropagation()}
-                                onCheckedChange={() => toggleFileViewed(fileKey)}
+                                onCheckedChange={() => toggleFileViewed(filePath)}
                               />
                             }
                           />

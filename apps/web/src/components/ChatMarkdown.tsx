@@ -76,6 +76,7 @@ import {
 import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
 import { useRightPanelStore } from "../rightPanelStore";
+import { useWorkspaceThreadRef } from "../lib/workspaceThreadRef";
 import { useActiveEnvironmentId } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { assetEnvironment } from "../state/assets";
@@ -1107,13 +1108,16 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
     })();
   }, [onOpen, targetPath]);
 
+  // Opening a file from a chat link lands in the shared per-worktree workspace
+  // panel, so resolve the thread to its worktree representative first.
+  const workspaceThreadRef = useWorkspaceThreadRef(threadRef);
   const handleOpenInFilePreview = useCallback(() => {
-    if (!threadRef || !workspaceRelativePath) {
+    if (!workspaceThreadRef || !workspaceRelativePath) {
       handleOpenInEditor();
       return;
     }
-    useRightPanelStore.getState().openFile(threadRef, workspaceRelativePath, line);
-  }, [handleOpenInEditor, line, threadRef, workspaceRelativePath]);
+    useRightPanelStore.getState().openFile(workspaceThreadRef, workspaceRelativePath, line);
+  }, [handleOpenInEditor, line, workspaceThreadRef, workspaceRelativePath]);
 
   const handleOpenInBrowser = useCallback(() => {
     if (!onOpenInBrowser) {
@@ -1312,6 +1316,9 @@ function ChatMarkdown({
     reportFailure: false,
   });
   const preparedConnection = usePreparedConnection(threadRef?.environmentId ?? null);
+  // Preview surfaces opened from chat content belong to the shared per-worktree
+  // workspace, so target the worktree representative rather than this chat.
+  const workspaceThreadRef = useWorkspaceThreadRef(threadRef);
   const environmentId = useActiveEnvironmentId();
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const openInPreferredEditor = useOpenInPreferredEditor(
@@ -1368,7 +1375,7 @@ function ChatMarkdown({
   }, []);
   const openExternalLinkInPreview = useCallback(
     (url: string) => {
-      if (!threadRef) {
+      if (!workspaceThreadRef) {
         return Promise.resolve(
           AsyncResult.failure<void, BrowserPreviewUnavailableError>(
             Cause.fail(
@@ -1379,13 +1386,13 @@ function ChatMarkdown({
           ),
         );
       }
-      return openUrlInPreview({ threadRef, url, openPreview });
+      return openUrlInPreview({ threadRef: workspaceThreadRef, url, openPreview });
     },
-    [openPreview, threadRef],
+    [openPreview, workspaceThreadRef],
   );
   const openMarkdownFileInPreview = useCallback(
     (path: string) => {
-      if (!threadRef || preparedConnection._tag === "None") {
+      if (!workspaceThreadRef || preparedConnection._tag === "None") {
         return Promise.resolve(
           AsyncResult.failure<void, BrowserPreviewUnavailableError>(
             Cause.fail(
@@ -1397,14 +1404,14 @@ function ChatMarkdown({
         );
       }
       return openFileInPreview({
-        threadRef,
+        threadRef: workspaceThreadRef,
         filePath: path,
         httpBaseUrl: preparedConnection.value.httpBaseUrl,
         createAssetUrl,
         openPreview,
       });
     },
-    [createAssetUrl, openPreview, preparedConnection, threadRef],
+    [createAssetUrl, openPreview, preparedConnection, workspaceThreadRef],
   );
   const markdownComponents = useMemo<Components>(() => {
     const fileLinkChip = (
