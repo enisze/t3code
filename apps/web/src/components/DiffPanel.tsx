@@ -192,6 +192,12 @@ interface DiffPanelProps {
   mode?: DiffPanelMode;
   composerDraftTarget: ScopedThreadRef | DraftId;
   initialGitScope: "branch" | "unstaged";
+  /**
+   * The chat this panel belongs to. Passed explicitly because a brand-new chat
+   * is a draft with no thread route params yet; when omitted the panel falls
+   * back to the route params (server chats).
+   */
+  threadRef?: ScopedThreadRef | null;
 }
 
 export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
@@ -200,6 +206,7 @@ export default function DiffPanel({
   mode = "inline",
   composerDraftTarget,
   initialGitScope: initialGitScopeProp,
+  threadRef: threadRefProp,
 }: DiffPanelProps) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = useDiffThemeName();
@@ -219,34 +226,45 @@ export default function DiffPanel({
     strict: false,
     select: (params) => resolveThreadRouteRef(params),
   });
-  const activeThreadId = routeThreadRef?.threadId ?? null;
+  // A brand-new chat is a client-side draft with no thread route params, so the
+  // host passes its pre-allocated ref explicitly; server chats fall back to the
+  // route params.
+  const currentThreadRef = threadRefProp ?? routeThreadRef;
+  const activeThreadId = currentThreadRef?.threadId ?? null;
   // The diff view is part of the shared per-worktree workspace: chats in one
   // worktree key their diff selection and reviewed-file state off the worktree's
-  // representative thread. Turn summaries still come from the route thread
-  // (turns are per-chat); only the diff store keying is worktree-scoped.
-  const workspaceThreadRef = useWorkspaceThreadRef(routeThreadRef);
-  const activeThread = useThread(routeThreadRef);
-  const activeProjectId = activeThread?.projectId ?? null;
+  // representative thread. Turn summaries still come from the current chat
+  // (turns are per-chat), but the worktree's working-tree/branch diff, its git
+  // status, and the diff store keying resolve through the representative — so a
+  // not-yet-sent draft shows the shared diff immediately instead of only after
+  // its first message promotes it to a server thread.
+  const workspaceThreadRef = useWorkspaceThreadRef(currentThreadRef);
+  const activeThread = useThread(currentThreadRef);
+  // The worktree's data source. For a draft the current chat has no server
+  // thread yet, so this resolves to the representative sibling that owns the
+  // worktree; for an ordinary chat it's the same worktree either way.
+  const workspaceThread = useThread(workspaceThreadRef) ?? activeThread;
+  const activeProjectId = workspaceThread?.projectId ?? null;
   const activeProject = useProject(
-    activeThread && activeProjectId
+    workspaceThread && activeProjectId
       ? {
-          environmentId: activeThread.environmentId,
+          environmentId: workspaceThread.environmentId,
           projectId: activeProjectId,
         }
       : null,
   );
-  const activeCwd = activeThread?.worktreePath ?? activeProject?.workspaceRoot;
+  const activeCwd = workspaceThread?.worktreePath ?? activeProject?.workspaceRoot;
   const serverConfig = useAtomValue(
-    serverEnvironment.configValueAtom(activeThread?.environmentId ?? null),
+    serverEnvironment.configValueAtom(workspaceThread?.environmentId ?? null),
   );
   const openInPreferredEditor = useOpenInPreferredEditor(
-    activeThread?.environmentId ?? null,
+    workspaceThread?.environmentId ?? null,
     serverConfig?.availableEditors ?? [],
   );
   const gitStatusQuery = useEnvironmentQuery(
-    activeThread !== null && activeThread !== undefined && activeCwd != null
+    workspaceThread != null && activeCwd != null
       ? vcsEnvironment.status({
-          environmentId: activeThread.environmentId,
+          environmentId: workspaceThread.environmentId,
           input: { cwd: activeCwd },
         })
       : null,
@@ -345,9 +363,9 @@ export default function DiffPanel({
     { enabled: isGitRepo && selectedTurn !== undefined },
   );
   const primaryBranchDiffPreview = useEnvironmentQuery(
-    selectedTurnId === null && activeThread && activeCwd
+    selectedTurnId === null && workspaceThread && activeCwd
       ? reviewEnvironment.diffPreview({
-          environmentId: activeThread.environmentId,
+          environmentId: workspaceThread.environmentId,
           input: {
             cwd: activeCwd,
             ...(selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
@@ -362,9 +380,9 @@ export default function DiffPanel({
     serverConfig?.cwd !== undefined &&
     serverConfig.cwd !== activeCwd;
   const fallbackBranchDiffPreview = useEnvironmentQuery(
-    shouldRetryBranchDiffAtEnvironmentCwd && activeThread && serverConfig
+    shouldRetryBranchDiffAtEnvironmentCwd && workspaceThread && serverConfig
       ? reviewEnvironment.diffPreview({
-          environmentId: activeThread.environmentId,
+          environmentId: workspaceThread.environmentId,
           input: {
             cwd: serverConfig.cwd,
             ...(selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
@@ -382,10 +400,10 @@ export default function DiffPanel({
   const localBranchRefs = useEnvironmentQuery(
     selectedTurnId === null &&
       selectedGitScope === "branch" &&
-      activeThread &&
+      workspaceThread &&
       branchDiffPreview.data?.cwd
       ? vcsEnvironment.listRefs({
-          environmentId: activeThread.environmentId,
+          environmentId: workspaceThread.environmentId,
           input: {
             cwd: branchDiffPreview.data.cwd,
             includeMatchingRemoteRefs: true,
@@ -399,10 +417,10 @@ export default function DiffPanel({
   const remoteBranchRefs = useEnvironmentQuery(
     selectedTurnId === null &&
       selectedGitScope === "branch" &&
-      activeThread &&
+      workspaceThread &&
       branchDiffPreview.data?.cwd
       ? vcsEnvironment.listRefs({
-          environmentId: activeThread.environmentId,
+          environmentId: workspaceThread.environmentId,
           input: {
             cwd: branchDiffPreview.data.cwd,
             includeMatchingRemoteRefs: true,
@@ -507,10 +525,10 @@ export default function DiffPanel({
             if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
               console.warn("Failed to open diff file in editor.", {
                 operation: "open-diff-file",
-                ...(routeThreadRef
+                ...(currentThreadRef
                   ? {
-                      environmentId: routeThreadRef.environmentId,
-                      threadId: routeThreadRef.threadId,
+                      environmentId: currentThreadRef.environmentId,
+                      threadId: currentThreadRef.threadId,
                     }
                   : {}),
                 ...safeErrorLogAttributes(squashAtomCommandFailure(result)),
@@ -520,7 +538,7 @@ export default function DiffPanel({
         },
       });
     },
-    [activeCwd, openInPreferredEditor, routeThreadRef, workspaceThreadRef],
+    [activeCwd, openInPreferredEditor, currentThreadRef, workspaceThreadRef],
   );
   const setDiffFileExpanded = useCallback(
     (filePath: string, expanded: boolean) => {
@@ -838,7 +856,7 @@ export default function DiffPanel({
 
   return (
     <DiffPanelShell mode={mode} header={headerRow}>
-      {!activeThread ? (
+      {!workspaceThread ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Select a thread to inspect turn diffs.
         </div>
