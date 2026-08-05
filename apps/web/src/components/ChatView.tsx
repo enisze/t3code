@@ -5806,6 +5806,7 @@ function ChatViewContent(props: ChatViewProps) {
           cwd: gitCwd ?? activeWorkspaceRoot,
           worktreePath: activeThread?.worktreePath ?? null,
         }}
+        worktreeReady={isServerThread || activeThread?.worktreePath != null}
         keybindings={keybindings}
         focusRequestId={terminalFocusRequestId}
         onAddScript={saveProjectScript}

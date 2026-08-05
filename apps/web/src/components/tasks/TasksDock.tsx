@@ -21,6 +21,7 @@ import {
   RotateCcw,
   Square,
   TerminalSquare,
+  X,
 } from "lucide-react";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -51,10 +52,9 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "~/component
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
-/** Fixed tab ids — Setup/Run/Terminal are always present regardless of scripts. */
+/** Fixed tab ids — Setup/Run are always present regardless of scripts. */
 const TAB_SETUP = "__setup__";
 const TAB_RUN = "__run__";
-const TAB_SHELL = "__shell__";
 
 const DEFAULT_TASK_COLS = 120;
 const DEFAULT_TASK_ROWS = 30;
@@ -120,6 +120,12 @@ interface TasksDockProps {
   workspaceRoot: string;
   /** Where task terminals launch — thread worktree if present, else the project root. */
   launchContext: { readonly cwd: string; readonly worktreePath?: string | null } | null;
+  /**
+   * Whether the thread's worktree is known. Terminals hold off opening until it
+   * is, so a new chat's shell isn't stranded in the main repo root (the server
+   * never re-roots a running session).
+   */
+  worktreeReady: boolean;
   keybindings: ResolvedKeybindingsConfig;
   focusRequestId: number;
   onAddScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
@@ -139,6 +145,7 @@ export default function TasksDock({
   keybindings,
   workspaceRoot,
   launchContext,
+  worktreeReady,
   focusRequestId,
   onAddScript,
   onUpdateScript,
@@ -151,6 +158,9 @@ export default function TasksDock({
   const [startedTerminalIds, setStartedTerminalIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
+  // Plain-shell terminal tabs. The first is always the base shell; the "+" adds
+  // more, and each can be closed.
+  const [shellIds, setShellIds] = useState<string[]>(() => [TASK_SHELL_TERMINAL_ID]);
   const [runError, setRunError] = useState<string | null>(null);
   // When Run is pressed but setup hasn't finished, we run setup first and defer
   // the run script until setup exits. `sawSetupRunningRef` guards against firing
@@ -185,6 +195,7 @@ export default function TasksDock({
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "tasks terminal write");
   const restartTerminal = useAtomCommand(terminalEnvironment.restart, "tasks terminal restart");
   const clearTerminal = useAtomCommand(terminalEnvironment.clear, "tasks terminal clear");
+  const closeTerminalCmd = useAtomCommand(terminalEnvironment.close, "tasks terminal close");
 
   // Map scripts onto the fixed Setup/Run slots plus any extra custom scripts.
   const setupScript = useMemo(
@@ -243,17 +254,17 @@ export default function TasksDock({
         script,
         terminalId: taskTerminalId(script.id),
       })),
-      {
-        id: TAB_SHELL,
-        label: "Terminal",
+      ...shellIds.map<DockTab>((terminalId, index) => ({
+        id: terminalId,
+        label: index === 0 ? "Terminal" : `Terminal ${index + 1}`,
         kind: "shell",
         icon: "play",
         script: null,
-        terminalId: TASK_SHELL_TERMINAL_ID,
-      },
+        terminalId,
+      })),
     ];
     return taskTabs;
-  }, [setupScript, runScriptEntry, customScripts]);
+  }, [setupScript, runScriptEntry, customScripts, shellIds]);
 
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId) ?? tabs[0]!,
@@ -262,7 +273,7 @@ export default function TasksDock({
   const activeScript = activeTab.script;
   const activeIsShell = activeTab.kind === "shell";
   const activeTerminalId = activeIsShell
-    ? TASK_SHELL_TERMINAL_ID
+    ? activeTab.terminalId
     : activeScript
       ? taskTerminalId(activeScript.id)
       : null;
@@ -282,12 +293,12 @@ export default function TasksDock({
     }
   }, [activeTabId]);
 
-  // Keep a custom tab valid as scripts change; fixed tabs are always valid.
+  // Keep the active tab valid as scripts/terminals change (e.g. a closed
+  // terminal tab); fall back to the Run tab when it disappears.
   useEffect(() => {
-    if (activeTabId === TAB_SETUP || activeTabId === TAB_RUN || activeTabId === TAB_SHELL) return;
-    if (customScripts.some((script) => script.id === activeTabId)) return;
+    if (tabs.some((tab) => tab.id === activeTabId)) return;
     setActiveTabId(TAB_RUN);
-  }, [activeTabId, customScripts]);
+  }, [activeTabId, tabs]);
 
   // Refit the terminal whenever the dock body resizes.
   useEffect(() => {
@@ -394,14 +405,57 @@ export default function TasksDock({
     ],
   );
 
-  // The plain shell auto-opens when its tab is active and the dock is expanded.
+  // A plain shell auto-opens when its tab is active and the dock is expanded —
+  // but only once the worktree is known, so it isn't stranded in the main repo.
   useEffect(() => {
-    if (collapsed) return;
-    if (activeTabId !== TAB_SHELL) return;
-    if (knownTerminalIds.has(TASK_SHELL_TERMINAL_ID)) return;
-    if (startedTerminalIds.has(TASK_SHELL_TERMINAL_ID)) return;
-    void openShell(TASK_SHELL_TERMINAL_ID);
-  }, [activeTabId, collapsed, knownTerminalIds, openShell, startedTerminalIds]);
+    if (collapsed || !activeIsShell || !worktreeReady) return;
+    const terminalId = activeTab.terminalId;
+    if (knownTerminalIds.has(terminalId) || startedTerminalIds.has(terminalId)) return;
+    void openShell(terminalId);
+  }, [
+    activeIsShell,
+    activeTab,
+    collapsed,
+    knownTerminalIds,
+    openShell,
+    startedTerminalIds,
+    worktreeReady,
+  ]);
+
+  // Open a new plain-shell terminal in its own tab.
+  const addTerminalTab = useCallback(() => {
+    const used = new Set(shellIds);
+    let suffix = 2;
+    while (used.has(`${TASK_SHELL_TERMINAL_ID}-${suffix}`)) suffix += 1;
+    const terminalId = `${TASK_SHELL_TERMINAL_ID}-${suffix}`;
+    setShellIds((current) => [...current, terminalId]);
+    setActiveTabId(terminalId);
+    setCollapsed(false);
+  }, [shellIds]);
+
+  // Close a terminal tab: drop it, move focus to a neighbour, and kill the
+  // server session (dropping its scrollback).
+  const closeTerminalTab = useCallback(
+    (terminalId: string) => {
+      setShellIds((current) => current.filter((id) => id !== terminalId));
+      setStartedTerminalIds((current) => {
+        if (!current.has(terminalId)) return current;
+        const next = new Set(current);
+        next.delete(terminalId);
+        return next;
+      });
+      setActiveTabId((current) => {
+        if (current !== terminalId) return current;
+        const remaining = shellIds.filter((id) => id !== terminalId);
+        return remaining.at(-1) ?? TAB_RUN;
+      });
+      void closeTerminalCmd({
+        environmentId,
+        input: { threadId, terminalId, deleteHistory: true },
+      });
+    },
+    [closeTerminalCmd, environmentId, shellIds, threadId],
+  );
 
   const onResizePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (collapsed) return;
@@ -455,12 +509,6 @@ export default function TasksDock({
     }
     setDialogOpen(true);
   }, []);
-
-  const openAddDialog = () => {
-    setEditingScript(null);
-    setDialogDraft(null);
-    setDialogOpen(true);
-  };
 
   // Ctrl-C the script's terminal to stop a running command (e.g. a dev server).
   const stopTask = useCallback(
@@ -619,6 +667,7 @@ export default function TasksDock({
           {tabs.map((tab) => {
             const active = !collapsed && tab.id === activeTab.id;
             const running = runningSet.has(tab.terminalId);
+            const closable = tab.kind === "shell";
             const icon =
               tab.kind === "shell" ? (
                 <TerminalSquare className="size-3.5 shrink-0" />
@@ -626,30 +675,48 @@ export default function TasksDock({
                 <ScriptIcon icon={tab.icon} className="size-3.5 shrink-0" />
               );
             return (
-              <button
+              <div
                 key={tab.id}
-                type="button"
                 data-active-tab={active}
-                onClick={() => {
-                  setActiveTabId(tab.id);
-                  setCollapsed(false);
-                }}
                 className={cn(
-                  "group flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm",
+                  "group flex h-7 shrink-0 items-center gap-1.5 rounded-md pl-2 text-sm",
+                  closable ? "pr-1" : "pr-2",
                   active
                     ? "bg-accent text-foreground"
                     : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                 )}
               >
-                {icon}
-                <span className="max-w-32 truncate">{tab.label}</span>
-                {running && (
-                  <span
-                    className="size-1.5 shrink-0 rounded-full bg-emerald-500"
-                    aria-label="Running"
-                  />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTabId(tab.id);
+                    setCollapsed(false);
+                  }}
+                  className="flex min-w-0 items-center gap-1.5"
+                >
+                  {icon}
+                  <span className="max-w-32 truncate">{tab.label}</span>
+                  {running && (
+                    <span
+                      className="size-1.5 shrink-0 rounded-full bg-emerald-500"
+                      aria-label="Running"
+                    />
+                  )}
+                </button>
+                {closable && (
+                  <button
+                    type="button"
+                    aria-label={`Close ${tab.label}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      closeTerminalTab(tab.terminalId);
+                    }}
+                    className="flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 hover:bg-muted hover:text-foreground group-hover:opacity-100"
+                  >
+                    <X className="size-3" />
+                  </button>
                 )}
-              </button>
+              </div>
             );
           })}
           <Tooltip>
@@ -657,15 +724,15 @@ export default function TasksDock({
               render={
                 <button
                   type="button"
-                  onClick={openAddDialog}
-                  aria-label="Add task"
+                  onClick={addTerminalTab}
+                  aria-label="New terminal"
                   className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
                 />
               }
             >
               <Plus className="size-4" />
             </TooltipTrigger>
-            <TooltipPopup side="top">Add task</TooltipPopup>
+            <TooltipPopup side="top">New terminal</TooltipPopup>
           </Tooltip>
         </div>
 
@@ -777,7 +844,7 @@ export default function TasksDock({
               threadRef={threadRef}
               threadId={threadId}
               terminalId={activeTerminalId}
-              terminalLabel={activeScript?.name ?? "Terminal"}
+              terminalLabel={activeScript?.name ?? activeTab.label}
               cwd={cwd}
               worktreePath={worktreePath}
               runtimeEnv={runtimeEnv}
