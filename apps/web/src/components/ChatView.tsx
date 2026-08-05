@@ -125,6 +125,11 @@ import {
   useRightPanelStore,
 } from "../rightPanelStore";
 import {
+  selectWorktreeContentTabs,
+  useWorkspaceContentTabsStore,
+  type WorkspaceContentTabView,
+} from "../workspaceContentTabsStore";
+import {
   isPreviewSupportedInRuntime,
   setActivePreviewTab,
   useThreadPreviewState,
@@ -228,6 +233,7 @@ import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
+import { FileViewModeToggle } from "./FileViewModeToggle";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
 import { WorktreeThreadTabs } from "./chat/WorktreeThreadTabs";
@@ -1643,6 +1649,17 @@ function ChatViewContent(props: ChatViewProps) {
   // "New thread on {branch}" affordance.
   const newChatWorktreePath = activeThread?.worktreePath ?? null;
   const newChatWorktreeBranch = activeThread?.branch ?? null;
+  // File-diff "content tabs" live in the chat-column tab strip and are scoped to
+  // the worktree, so they stay visible while switching between its chats.
+  const contentTabsWorktreeKey =
+    activeThread && newChatWorktreePath
+      ? `${activeThread.environmentId}:${newChatWorktreePath}`
+      : null;
+  const contentTabsState = useWorkspaceContentTabsStore((state) =>
+    selectWorktreeContentTabs(state.byWorktree, contentTabsWorktreeKey),
+  );
+  const activeContentTab =
+    contentTabsState.tabs.find((tab) => tab.id === contentTabsState.activeTabId) ?? null;
   const handleNewChatInWorktree = useCallback(() => {
     if (!activeProjectRef || !newChatWorktreePath) return;
     void handleNewThread(activeProjectRef, {
@@ -2471,24 +2488,37 @@ function ChatViewContent(props: ChatViewProps) {
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
   // Default true while loading to avoid toolbar flicker.
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
-  // Open the right panel (diff + the Run dock below it) by default the first time
-  // a project thread is shown. Users can still toggle it closed; a closed panel
-  // that keeps surfaces stays closed on return, so this only defaults fresh threads.
+  // Keep the fixed Diff + Files tabs present. A brand-new thread opens the panel
+  // with both (Diff active); focusing any thread with a diff snaps back to the
+  // Diff tab, unless the user last explicitly picked Files (then Files stays).
+  // A closed panel stays closed on return — the fresh-open only defaults new
+  // threads.
   const autoOpenedRightPanelKeysRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!workspaceThreadRef || !activeProject || !activeThreadKey || shouldUsePlanSidebarSheet)
       return;
-    if (autoOpenedRightPanelKeysRef.current.has(activeThreadKey)) return;
-    autoOpenedRightPanelKeysRef.current.add(activeThreadKey);
-    const state = selectThreadRightPanelState(
-      useRightPanelStore.getState().byThreadKey,
-      workspaceThreadRef,
-    );
-    if (state.isOpen || state.surfaces.length > 0) return;
-    if (isServerThread && isGitRepo) {
-      useRightPanelStore.getState().open(workspaceThreadRef, "diff");
-    } else {
-      useRightPanelStore.getState().show(workspaceThreadRef);
+    const store = useRightPanelStore.getState();
+    const state = selectThreadRightPanelState(store.byThreadKey, workspaceThreadRef);
+    const diffAvailable = isServerThread && isGitRepo;
+    const firstVisit = !autoOpenedRightPanelKeysRef.current.has(activeThreadKey);
+    if (firstVisit) autoOpenedRightPanelKeysRef.current.add(activeThreadKey);
+    if (firstVisit && !state.isOpen && state.surfaces.length === 0) {
+      store.ensureFixedSurfaces(
+        workspaceThreadRef,
+        { diff: diffAvailable, files: true },
+        { open: true, activateDefault: true },
+      );
+      return;
+    }
+    // Backfill the fixed tabs on any thread whose panel is already present, and
+    // snap focus to the Diff tab whenever a diff is available — unless the user
+    // last explicitly selected the Files tab, which we preserve.
+    if (state.isOpen || state.surfaces.length > 0) {
+      store.ensureFixedSurfaces(
+        workspaceThreadRef,
+        { diff: diffAvailable, files: true },
+        { focusDiffUnlessFiles: true },
+      );
     }
   }, [
     workspaceThreadRef,
@@ -2499,11 +2529,11 @@ function ChatViewContent(props: ChatViewProps) {
     shouldUsePlanSidebarSheet,
   ]);
   const showComposerContextStrip = isGitRepo && activeProject !== null;
-  // The diff surface always defaults to the working tree; the in-panel scope
-  // dropdown is how you switch to branch changes or a specific turn. Because the
-  // default no longer depends on git status, the panel needn't remount once
-  // status resolves.
-  const initialDiffPanelGitScope = "unstaged" as const;
+  // The diff surface defaults to branch changes (everything done on this branch
+  // vs. its base) rather than the working tree — the agent commits its work, so
+  // the working tree is usually empty and would show nothing. The in-panel scope
+  // dropdown still switches to the working tree or a specific turn.
+  const initialDiffPanelGitScope = "branch" as const;
   const terminalShortcutLabelOptions = useMemo(
     () => ({
       context: {
@@ -3094,26 +3124,6 @@ function ChatViewContent(props: ChatViewProps) {
     if (!workspaceThreadRef) return;
     void addBrowserSurface({ threadRef: workspaceThreadRef, openPreview });
   }, [workspaceThreadRef, openPreview]);
-  const addDiffSurface = useCallback(() => {
-    if (!workspaceThreadRef || !isServerThread || !isGitRepo) return;
-    if (planSidebarOpen) {
-      dismissPlanSidebarForCurrentTurn();
-    }
-    useRightPanelStore.getState().open(workspaceThreadRef, "diff");
-    onDiffPanelOpen?.();
-  }, [
-    workspaceThreadRef,
-    dismissPlanSidebarForCurrentTurn,
-    isGitRepo,
-    isServerThread,
-    onDiffPanelOpen,
-    planSidebarOpen,
-  ]);
-  const openWorkingTreeChanges = useCallback(() => {
-    if (!workspaceThreadRef || !activeThreadRef || !isServerThread || !isGitRepo) return;
-    useDiffPanelStore.getState().selectGitScope(workspaceThreadRef, activeThreadRef, "unstaged");
-    addDiffSurface();
-  }, [workspaceThreadRef, activeThreadRef, addDiffSurface, isGitRepo, isServerThread]);
   const startReviewInNewChat = useCallback(() => {
     if (!activeProjectRef || !activeProject || !newChatWorktreePath) return;
     const reviewModelSelection =
@@ -3135,16 +3145,50 @@ function ChatViewContent(props: ChatViewProps) {
     newChatWorktreePath,
     primaryServerSettings.reviewPrompt,
   ]);
-  const addFilesSurface = useCallback(() => {
-    if (!workspaceThreadRef || !activeProject) return;
-    useRightPanelStore.getState().open(workspaceThreadRef, "files");
-  }, [activeProject, workspaceThreadRef]);
+  // Opens a file's contents as its own tab in the chat-column strip
+  // (worktree-scoped), chosen from the Files explorer — the file-view sibling
+  // of the diff tabs opened from the Diff navigator.
   const openFileSurface = useCallback(
     (relativePath: string) => {
-      if (!workspaceThreadRef || !activeProject) return;
-      useRightPanelStore.getState().openFile(workspaceThreadRef, relativePath);
+      if (!contentTabsWorktreeKey) return;
+      useWorkspaceContentTabsStore.getState().openFile(contentTabsWorktreeKey, relativePath);
     },
-    [activeProject, workspaceThreadRef],
+    [contentTabsWorktreeKey],
+  );
+  // Opens a file's diff as its own tab in the chat-column strip (worktree-scoped),
+  // chosen from the Diff navigator tree.
+  const openFileDiffSurface = useCallback(
+    (filePath: string) => {
+      if (!contentTabsWorktreeKey) return;
+      useWorkspaceContentTabsStore.getState().openFileDiff(contentTabsWorktreeKey, filePath);
+    },
+    [contentTabsWorktreeKey],
+  );
+  const selectContentTab = useCallback(
+    (tabId: string) => {
+      if (!contentTabsWorktreeKey) return;
+      useWorkspaceContentTabsStore.getState().activateTab(contentTabsWorktreeKey, tabId);
+    },
+    [contentTabsWorktreeKey],
+  );
+  const closeContentTab = useCallback(
+    (tabId: string) => {
+      if (!contentTabsWorktreeKey) return;
+      useWorkspaceContentTabsStore.getState().closeTab(contentTabsWorktreeKey, tabId);
+    },
+    [contentTabsWorktreeKey],
+  );
+  const activateChatContent = useCallback(() => {
+    if (!contentTabsWorktreeKey) return;
+    useWorkspaceContentTabsStore.getState().activateChat(contentTabsWorktreeKey);
+  }, [contentTabsWorktreeKey]);
+  // Flip the single file viewer between the diff and the editable file contents.
+  const setContentTabView = useCallback(
+    (view: WorkspaceContentTabView) => {
+      if (!contentTabsWorktreeKey) return;
+      useWorkspaceContentTabsStore.getState().setTabView(contentTabsWorktreeKey, view);
+    },
+    [contentTabsWorktreeKey],
   );
   const togglePreviewPanel = useCallback(() => {
     if (!workspaceThreadRef || !isPreviewSupportedInRuntime()) return;
@@ -5645,10 +5689,16 @@ function ChatViewContent(props: ChatViewProps) {
       // A turn belongs to this conversation, so its selection is per chat; the
       // diff surface itself is shared across the worktree.
       useDiffPanelStore.getState().selectTurn(activeThreadRef, turnId, filePath);
-      useRightPanelStore.getState().open(workspaceThreadRef, "diff");
+      // Choosing a specific file opens its diff as its own tab in the chat
+      // column; the bare "open diff" action lands on the surface navigator.
+      if (filePath && contentTabsWorktreeKey) {
+        useWorkspaceContentTabsStore.getState().openFileDiff(contentTabsWorktreeKey, filePath);
+      } else {
+        useRightPanelStore.getState().open(workspaceThreadRef, "diff");
+      }
       onDiffPanelOpen?.();
     },
-    [workspaceThreadRef, activeThreadRef, isServerThread, onDiffPanelOpen],
+    [workspaceThreadRef, activeThreadRef, isServerThread, onDiffPanelOpen, contentTabsWorktreeKey],
   );
   // Both the Map and the revert handler are read from refs at call-time so
   // the callback reference is fully stable and never busts context identity.
@@ -5729,6 +5779,8 @@ function ChatViewContent(props: ChatViewProps) {
           threadRef={activeThreadRef}
           composerDraftTarget={composerDraftTarget}
           initialGitScope={initialDiffPanelGitScope}
+          variant="navigator"
+          onOpenFileDiff={openFileDiffSurface}
         />
       </Suspense>
     ) : activeRightPanelSurface?.kind === "plan" ? (
@@ -5780,6 +5832,7 @@ function ChatViewContent(props: ChatViewProps) {
           cwd: gitCwd ?? activeWorkspaceRoot,
           worktreePath: activeThread?.worktreePath ?? null,
         }}
+        worktreeReady={isServerThread || activeThread?.worktreePath != null}
         keybindings={keybindings}
         focusRequestId={terminalFocusRequestId}
         onAddScript={saveProjectScript}
@@ -5832,8 +5885,6 @@ function ChatViewContent(props: ChatViewProps) {
             availableEditors={availableEditors}
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
-            canOpenChanges={isServerThread && isGitRepo}
-            onOpenChanges={openWorkingTreeChanges}
             onReview={startReviewInNewChat}
             onNewThreadInProject={handleNewThreadInActiveProject}
             onRunProjectScript={runProjectScript}
@@ -5848,6 +5899,15 @@ function ChatViewContent(props: ChatViewProps) {
           activeThreadId={activeThread.id}
           worktreePath={newChatWorktreePath}
           {...(newChatWorktreePath ? { onNewChatInWorktree: handleNewChatInWorktree } : {})}
+          contentTabs={contentTabsState.tabs.map((tab) => ({
+            id: tab.id,
+            title: tab.filePath.slice(tab.filePath.lastIndexOf("/") + 1),
+            view: tab.view,
+          }))}
+          activeContentTabId={contentTabsState.activeTabId}
+          onSelectContentTab={selectContentTab}
+          onCloseContentTab={closeContentTab}
+          onActivateChat={activateChatContent}
         />
 
         <ThreadErrorBanner
@@ -5923,6 +5983,55 @@ function ChatViewContent(props: ChatViewProps) {
                 </div>
               )}
             </div>
+
+            {/* File content tab: fills the messages area while keeping the
+                composer docked below (still connected to the current chat).
+                A tab shows either the file's diff or its contents. */}
+            {activeContentTab && activeThreadRef ? (
+              <div
+                className="absolute inset-0 z-10 flex flex-col bg-background"
+                style={{ paddingBottom: composerOverlayHeight }}
+                data-chat-content-diff="true"
+              >
+                <Suspense fallback={null}>
+                  {activeContentTab.view === "file" && activeProject && activeWorkspaceRoot ? (
+                    <FilePreviewPanel
+                      key={`${activeThreadKey}:content:file:${activeContentTab.filePath}`}
+                      environmentId={activeProject.environmentId}
+                      cwd={activeWorkspaceRoot}
+                      projectName={activeProject.title}
+                      threadRef={activeThreadRef}
+                      composerDraftTarget={composerDraftTarget}
+                      keybindings={keybindings}
+                      availableEditors={availableEditors}
+                      relativePath={activeContentTab.filePath}
+                      revealLine={null}
+                      revealRequestId={0}
+                      onOpenFile={openFileSurface}
+                      onPendingChange={handleFilePendingChange}
+                      disableExplorer
+                      headerLeading={
+                        <FileViewModeToggle view="file" onChange={setContentTabView} />
+                      }
+                    />
+                  ) : (
+                    <DiffPanel
+                      key={`${activeThreadKey}:content:diff:${activeContentTab.filePath}`}
+                      mode="embedded"
+                      threadRef={activeThreadRef}
+                      composerDraftTarget={composerDraftTarget}
+                      initialGitScope={initialDiffPanelGitScope}
+                      variant="file"
+                      fileDiffPath={activeContentTab.filePath}
+                      onOpenFileDiff={openFileDiffSurface}
+                      fileViewToggle={
+                        <FileViewModeToggle view="diff" onChange={setContentTabView} />
+                      }
+                    />
+                  )}
+                </Suspense>
+              </div>
+            ) : null}
 
             {/* Input bar — centered hero while a draft has no messages, docked at the bottom otherwise */}
             <div
@@ -6201,13 +6310,6 @@ function ChatViewContent(props: ChatViewProps) {
           onCloseSurfacesToRight={closeRightPanelSurfacesToRight}
           onCloseAllSurfaces={closeAllRightPanelSurfaces}
           onCopyFilePath={copyRightPanelFilePath}
-          onAddBrowser={createBrowserSurface}
-          onAddTerminal={addTerminalSurface}
-          onAddDiff={addDiffSurface}
-          onAddFiles={addFilesSurface}
-          browserAvailable={isPreviewSupportedInRuntime()}
-          diffAvailable={isServerThread && isGitRepo}
-          filesAvailable={activeProject !== null}
           bottomDock={tasksDock}
         >
           {rightPanelContent}
@@ -6229,13 +6331,6 @@ function ChatViewContent(props: ChatViewProps) {
             onCloseSurfacesToRight={closeRightPanelSurfacesToRight}
             onCloseAllSurfaces={closeAllRightPanelSurfaces}
             onCopyFilePath={copyRightPanelFilePath}
-            onAddBrowser={createBrowserSurface}
-            onAddTerminal={addTerminalSurface}
-            onAddDiff={addDiffSurface}
-            onAddFiles={addFilesSurface}
-            browserAvailable={isPreviewSupportedInRuntime()}
-            diffAvailable={isServerThread && isGitRepo}
-            filesAvailable={activeProject !== null}
             bottomDock={tasksDock}
           >
             {rightPanelContent}

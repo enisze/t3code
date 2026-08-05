@@ -498,6 +498,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             reviewModelSelection: event.payload.reviewModelSelection ?? null,
             gitHubAccount: event.payload.gitHubAccount ?? null,
             worktreeBranchPrefix: event.payload.worktreeBranchPrefix ?? null,
+            defaultWorktreeBranch: event.payload.defaultWorktreeBranch ?? null,
             scripts: event.payload.scripts,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
@@ -529,6 +530,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               : {}),
             ...(event.payload.worktreeBranchPrefix !== undefined
               ? { worktreeBranchPrefix: event.payload.worktreeBranchPrefix }
+              : {}),
+            ...(event.payload.defaultWorktreeBranch !== undefined
+              ? { defaultWorktreeBranch: event.payload.defaultWorktreeBranch }
               : {}),
             ...(event.payload.scripts !== undefined ? { scripts: event.payload.scripts } : {}),
             updatedAt: event.payload.updatedAt,

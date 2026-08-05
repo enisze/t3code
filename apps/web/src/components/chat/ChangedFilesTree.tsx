@@ -18,6 +18,7 @@ import { cn } from "~/lib/utils";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   changedFileName,
@@ -150,11 +151,10 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
       {expanded ? (
         <ChangedFilesTree
           key={`changed-files-tree:${turnId}`}
-          turnId={turnId}
           files={files}
           allDirectoriesExpanded={allDirectoriesExpanded}
           resolvedTheme={resolvedTheme}
-          onOpenTurnDiff={onOpenTurnDiff}
+          onOpenFile={(filePath) => onOpenTurnDiff(turnId, filePath)}
         />
       ) : compactPreviewVisible ? (
         <div className="px-2 pb-1.5 pt-1">
@@ -202,13 +202,12 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
 });
 
 export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
-  turnId: TurnId;
   files: ReadonlyArray<TurnDiffFileChange>;
   allDirectoriesExpanded: boolean;
   resolvedTheme: "light" | "dark";
-  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onOpenFile: (filePath: string) => void;
 }) {
-  const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, turnId } = props;
+  const { files, allDirectoriesExpanded, onOpenFile, resolvedTheme } = props;
   const treeNodes = useMemo(() => buildTurnDiffTree(files), [files]);
   const directoryPathsKey = useMemo(
     () => collectDirectoryPaths(treeNodes).join("\u0000"),
@@ -293,7 +292,7 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
         type="button"
         className="group flex w-full items-center gap-1.5 rounded-xl py-1 pr-3 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
         style={{ paddingLeft: `${leftPadding}px` }}
-        onClick={() => onOpenTurnDiff(turnId, node.path)}
+        onClick={() => onOpenFile(node.path)}
       >
         {hasDirectoryNodes || depth > 0 ? (
           <span aria-hidden="true" className="size-3.5 shrink-0" />
@@ -317,6 +316,86 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
   };
 
   return <div className="space-y-0.5">{treeNodes.map((node) => renderTreeNode(node, 0))}</div>;
+});
+
+export interface DiffNavigatorFile {
+  path: string;
+  additions: number;
+  deletions: number;
+  viewed: boolean;
+}
+
+/**
+ * Flat changed-file list for the Diff navigator (no folder nesting). Each row
+ * carries a "viewed" checkbox; viewed files dim and sink to the bottom of the
+ * list so unreviewed changes stay on top.
+ */
+export const DiffNavigatorFileList = memo(function DiffNavigatorFileList(props: {
+  files: ReadonlyArray<DiffNavigatorFile>;
+  resolvedTheme: "light" | "dark";
+  onOpenFile: (filePath: string) => void;
+  onToggleViewed: (filePath: string) => void;
+}) {
+  const { files, resolvedTheme, onOpenFile, onToggleViewed } = props;
+  // Unviewed first (original order), then viewed (original order).
+  const orderedFiles = useMemo(
+    () => [...files.filter((file) => !file.viewed), ...files.filter((file) => file.viewed)],
+    [files],
+  );
+
+  return (
+    <div className="space-y-0.5">
+      {orderedFiles.map((file) => {
+        const slashIndex = file.path.lastIndexOf("/");
+        const directory = slashIndex >= 0 ? file.path.slice(0, slashIndex + 1) : "";
+        const name = slashIndex >= 0 ? file.path.slice(slashIndex + 1) : file.path;
+        return (
+          <div
+            key={`file:${file.path}`}
+            className={cn(
+              "group flex w-full items-center gap-1.5 rounded-xl py-1 pr-3 pl-2 transition-colors hover:bg-accent/60",
+              file.viewed && "opacity-50",
+            )}
+          >
+            <Checkbox
+              checked={file.viewed}
+              className="shrink-0"
+              aria-label={
+                file.viewed ? `Mark ${file.path} as not viewed` : `Mark ${file.path} as viewed`
+              }
+              onClick={(event) => event.stopPropagation()}
+              onCheckedChange={() => onToggleViewed(file.path)}
+            />
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 items-center gap-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-md"
+              onClick={() => onOpenFile(file.path)}
+            >
+              <PierreEntryIcon
+                pathValue={file.path}
+                kind="file"
+                theme={resolvedTheme}
+                className="size-3.5 shrink-0 text-muted-foreground/70"
+              />
+              <span className="flex min-w-0 flex-1 items-baseline font-mono text-[11px]">
+                {directory ? (
+                  <span className="min-w-0 truncate text-muted-foreground/50">{directory}</span>
+                ) : null}
+                <span className="shrink-0 text-muted-foreground/90 group-hover:text-foreground">
+                  {name}
+                </span>
+              </span>
+              {hasNonZeroStat({ additions: file.additions, deletions: file.deletions }) ? (
+                <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums">
+                  <DiffStatLabel additions={file.additions} deletions={file.deletions} />
+                </span>
+              ) : null}
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
 });
 
 function collectDirectoryPaths(nodes: ReadonlyArray<TurnDiffTreeNode>): string[] {

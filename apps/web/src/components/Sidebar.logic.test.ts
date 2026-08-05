@@ -1558,6 +1558,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     scripts: [],
     gitHubAccount: null,
     worktreeBranchPrefix: null,
+    defaultWorktreeBranch: null,
     ...rest,
   };
 }

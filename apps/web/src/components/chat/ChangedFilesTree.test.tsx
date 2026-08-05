@@ -2,7 +2,7 @@ import { TurnId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ChangedFilesCard, ChangedFilesTree } from "./ChangedFilesTree";
+import { ChangedFilesCard, ChangedFilesTree, DiffNavigatorFileList } from "./ChangedFilesTree";
 
 describe("ChangedFilesCard", () => {
   it("keeps its compact header sticky while preserving singular labels", () => {
@@ -142,11 +142,10 @@ describe("ChangedFilesTree", () => {
     ({ files, visibleLabels, hiddenLabels }) => {
       const markup = renderToStaticMarkup(
         <ChangedFilesTree
-          turnId={TurnId.make("turn-1")}
           files={files}
           allDirectoriesExpanded={false}
           resolvedTheme="light"
-          onOpenTurnDiff={() => {}}
+          onOpenFile={() => {}}
         />,
       );
 
@@ -218,11 +217,10 @@ describe("ChangedFilesTree", () => {
     ({ files, visibleLabels }) => {
       const markup = renderToStaticMarkup(
         <ChangedFilesTree
-          turnId={TurnId.make("turn-1")}
           files={files}
           allDirectoriesExpanded
           resolvedTheme="light"
-          onOpenTurnDiff={() => {}}
+          onOpenFile={() => {}}
         />,
       );
 
@@ -231,4 +229,50 @@ describe("ChangedFilesTree", () => {
       }
     },
   );
+});
+
+describe("DiffNavigatorFileList", () => {
+  it("renders a flat list with no directory rows", () => {
+    const markup = renderToStaticMarkup(
+      <DiffNavigatorFileList
+        files={[
+          { path: "apps/web/src/index.ts", additions: 2, deletions: 1, viewed: false },
+          { path: "apps/web/src/main.ts", additions: 3, deletions: 0, viewed: false },
+        ]}
+        resolvedTheme="light"
+        onOpenFile={() => {}}
+        onToggleViewed={() => {}}
+      />,
+    );
+
+    // Full paths are shown inline (dir + name), not as separate folder toggles.
+    expect(markup).toContain("index.ts");
+    expect(markup).toContain("main.ts");
+    expect(markup).not.toContain("Collapse all folders");
+    expect(markup).not.toContain('aria-label="Expand apps/web/src"');
+    // Each file exposes a viewed checkbox.
+    expect(markup).toContain('aria-label="Mark apps/web/src/index.ts as viewed"');
+  });
+
+  it("dims viewed files and sorts them to the bottom", () => {
+    const markup = renderToStaticMarkup(
+      <DiffNavigatorFileList
+        files={[
+          { path: "a.ts", additions: 1, deletions: 0, viewed: false },
+          { path: "b.ts", additions: 1, deletions: 0, viewed: true },
+          { path: "c.ts", additions: 1, deletions: 0, viewed: false },
+        ]}
+        resolvedTheme="light"
+        onOpenFile={() => {}}
+        onToggleViewed={() => {}}
+      />,
+    );
+
+    // Viewed "b.ts" moves below the unviewed "a.ts" and "c.ts".
+    expect(markup.indexOf("b.ts")).toBeGreaterThan(markup.indexOf("a.ts"));
+    expect(markup.indexOf("b.ts")).toBeGreaterThan(markup.indexOf("c.ts"));
+    // Viewed rows are dimmed and labelled as already-viewed.
+    expect(markup).toContain("opacity-50");
+    expect(markup).toContain('aria-label="Mark b.ts as not viewed"');
+  });
 });

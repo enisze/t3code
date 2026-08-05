@@ -267,8 +267,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
+          reviewModelSelection: null,
           gitHubAccount: null,
           worktreeBranchPrefix: null,
+          defaultWorktreeBranch: null,
           scripts: [
             {
               id: "script-1",
@@ -384,8 +386,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
+          reviewModelSelection: null,
           gitHubAccount: null,
           worktreeBranchPrefix: null,
+          defaultWorktreeBranch: null,
           scripts: [
             {
               id: "script-1",

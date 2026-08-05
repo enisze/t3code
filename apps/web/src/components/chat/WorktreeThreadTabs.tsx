@@ -6,6 +6,8 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   CircleAlertIcon,
+  FileDiffIcon,
+  FileIcon,
   MessageSquareDotIcon,
   MessageSquarePlusIcon,
   XIcon,
@@ -26,6 +28,15 @@ import { useClientSettings } from "~/hooks/useSettings";
 import { readLocalApi } from "~/localApi";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 
+export interface WorktreeContentTabDescriptor {
+  id: string;
+  title: string;
+  /** Which view the tab renders — picks the tab icon. */
+  view: "diff" | "file";
+}
+
+const EMPTY_CONTENT_TABS: ReadonlyArray<WorktreeContentTabDescriptor> = [];
+
 interface WorktreeThreadTabsProps {
   activeEnvironmentId: EnvironmentId;
   activeThreadId: ThreadId;
@@ -35,6 +46,14 @@ interface WorktreeThreadTabsProps {
   worktreePath: string | null;
   // Starts a fresh chat in the same worktree. Only provided for worktree threads.
   onNewChatInWorktree?: () => void;
+  // Ephemeral file-diff tabs opened from the Diff navigator (worktree-scoped).
+  contentTabs?: ReadonlyArray<WorktreeContentTabDescriptor>;
+  // The active content tab, or null when the chat conversation is shown.
+  activeContentTabId?: string | null;
+  onSelectContentTab?: (tabId: string) => void;
+  onCloseContentTab?: (tabId: string) => void;
+  // Return to the chat conversation (deactivate any content tab).
+  onActivateChat?: () => void;
 }
 
 export function getWorktreeTabAfterClose(
@@ -86,6 +105,11 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
   activeThreadId,
   worktreePath,
   onNewChatInWorktree,
+  contentTabs = EMPTY_CONTENT_TABS,
+  activeContentTabId = null,
+  onSelectContentTab,
+  onCloseContentTab,
+  onActivateChat,
 }: WorktreeThreadTabsProps) {
   const router = useRouter();
   const shells = useThreadShells();
@@ -149,8 +173,9 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
   }, [activeThreadId]);
 
   // Nothing worktree-scoped to show, or only the current chat with no way to
-  // spawn siblings — a lone tab adds noise without value.
-  if (!worktreePath || (tabs.length <= 1 && !onNewChatInWorktree)) return null;
+  // spawn siblings and no open diffs — a lone tab adds noise without value.
+  if (!worktreePath) return null;
+  if (tabs.length <= 1 && !onNewChatInWorktree && contentTabs.length === 0) return null;
 
   return (
     <div
@@ -160,7 +185,7 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
       <ScrollArea hideScrollbars scrollFade className="min-w-0 flex-1 rounded-none">
         <div className="flex h-full w-max min-w-full items-center gap-1">
           {tabs.map((shell) => {
-            const active = shell.id === activeThreadId;
+            const active = shell.id === activeThreadId && activeContentTabId === null;
             const status = resolveWorktreeTabStatus(shell);
             const attention =
               status === "approval" || status === "input" ? WORKTREE_TAB_ATTENTION[status] : null;
@@ -186,6 +211,10 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
                         className="min-w-0 flex-1 truncate py-1 pl-2.5 text-left"
                         onClick={() => {
                           if (active) return;
+                          // Return to the conversation view; only navigate when
+                          // it's actually a different chat.
+                          onActivateChat?.();
+                          if (shell.id === activeThreadId) return;
                           void router.navigate({
                             to: "/$environmentId/$threadId",
                             params: buildThreadRouteParams({
@@ -251,6 +280,55 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
                     <TooltipPopup side="bottom">Close chat (moves to Archive)</TooltipPopup>
                   </Tooltip>
                 )}
+              </div>
+            );
+          })}
+          {contentTabs.map((tab) => {
+            const active = tab.id === activeContentTabId;
+            const TabIcon = tab.view === "file" ? FileIcon : FileDiffIcon;
+            return (
+              <div
+                key={`content:${tab.id}`}
+                className={cn(
+                  "group/tab flex h-7 min-w-24 max-w-44 shrink-0 items-center rounded-md text-sm transition-colors",
+                  active
+                    ? "bg-accent text-foreground"
+                    : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                )}
+              >
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        aria-current={active ? "page" : undefined}
+                        className="flex min-w-0 flex-1 items-center gap-1.5 truncate py-1 pl-2.5 text-left"
+                        onClick={() => onSelectContentTab?.(tab.id)}
+                      >
+                        <TabIcon aria-hidden="true" className="size-3.5 shrink-0" />
+                        <span className="truncate">{tab.title}</span>
+                      </button>
+                    }
+                  />
+                  <TooltipPopup side="bottom">{tab.title}</TooltipPopup>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        aria-label={`Close ${tab.title}`}
+                        className="mr-1 inline-flex size-5 shrink-0 items-center justify-center rounded-sm opacity-0 transition-opacity hover:bg-background/70 focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring max-sm:opacity-100 group-hover/tab:opacity-100"
+                        onClick={() => onCloseContentTab?.(tab.id)}
+                      />
+                    }
+                  >
+                    <XIcon aria-hidden="true" className="size-3.5" />
+                  </TooltipTrigger>
+                  <TooltipPopup side="bottom">
+                    {tab.view === "file" ? "Close file" : "Close diff"}
+                  </TooltipPopup>
+                </Tooltip>
               </div>
             );
           })}

@@ -262,6 +262,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       defaultModelSelection: editingPendingTask.modelSelection ?? null,
       gitHubAccount: null,
       worktreeBranchPrefix: null,
+      defaultWorktreeBranch: null,
       scripts: [],
       createdAt: editingPendingTask.createdAt,
       updatedAt: editingPendingTask.createdAt,

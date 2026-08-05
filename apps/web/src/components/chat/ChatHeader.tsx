@@ -6,7 +6,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { FileDiffIcon, ScanSearchIcon } from "lucide-react";
+import { ScanSearchIcon } from "lucide-react";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
@@ -36,8 +36,6 @@ interface ChatHeaderProps {
   availableEditors: ReadonlyArray<EditorId>;
   rightPanelOpen: boolean;
   gitCwd: string | null;
-  canOpenChanges: boolean;
-  onOpenChanges: () => void;
   onReview: () => void;
   onNewThreadInProject: () => void;
   onRunProjectScript: (script: ProjectScript) => void;
@@ -75,8 +73,6 @@ export const ChatHeader = memo(function ChatHeader({
   availableEditors,
   rightPanelOpen,
   gitCwd,
-  canOpenChanges,
-  onOpenChanges,
   onReview,
   onNewThreadInProject,
   onRunProjectScript,
@@ -173,30 +169,6 @@ export const ChatHeader = memo(function ChatHeader({
         />
         {activeProjectName ? (
           <>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    size="xs"
-                    variant="outline"
-                    disabled={!canOpenChanges}
-                    onClick={onOpenChanges}
-                    aria-label="View working tree changes"
-                  />
-                }
-              >
-                <FileDiffIcon className="size-3.5" aria-hidden />
-                <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
-                  Changes
-                </span>
-              </TooltipTrigger>
-              <TooltipPopup side="top">
-                {canOpenChanges
-                  ? "View all current working tree changes"
-                  : "Changes are available after this thread starts"}
-              </TooltipPopup>
-            </Tooltip>
             <Tooltip>
               <TooltipTrigger
                 render={
