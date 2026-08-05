@@ -10,16 +10,41 @@ export type DiffPanelSelection =
   | { kind: "unstaged" }
   | { kind: "turn"; turnId: TurnId; filePath: string | null; revealRequestId: number };
 
+/** The working-tree / branch view — shared across a worktree's chats. */
+type GitScopeSelection = Extract<DiffPanelSelection, { kind: "branch" | "unstaged" }>;
+/** A checkpoint (turn) view — belongs to a single conversation. */
+type TurnSelection = Extract<DiffPanelSelection, { kind: "turn" }>;
+
 const DEFAULT_SELECTION: DiffPanelSelection = { kind: "branch", baseRef: null };
 const DEFAULT_WORKING_TREE_SELECTION: DiffPanelSelection = { kind: "unstaged" };
 
 interface DiffPanelStoreState {
-  byThreadKey: Record<string, DiffPanelSelection>;
+  // Working-tree / branch selection is part of the shared per-worktree
+  // workspace, so it keys off the worktree's representative thread and every
+  // sibling chat sees the same full diff.
+  gitScopeByThreadKey: Record<string, GitScopeSelection>;
   branchBaseRefByThreadKey: Record<string, string | null>;
-  selectGitScope: (ref: ScopedThreadRef, scope: "branch" | "unstaged") => void;
-  selectBranchBaseRef: (ref: ScopedThreadRef, baseRef: string | null) => void;
-  selectTurn: (ref: ScopedThreadRef, turnId: TurnId, filePath?: string) => void;
-  reconcileTurnSelection: (ref: ScopedThreadRef, availableTurnIds: ReadonlyArray<TurnId>) => void;
+  // Turn selection is per chat: a turn belongs to one conversation, so a
+  // sibling chat must neither inherit it nor clobber it. Keyed by the chat's
+  // own ref (not the worktree representative).
+  turnByThreadKey: Record<string, TurnSelection>;
+  // `sharedRef` owns the shared git-scope; `chatRef` is the current chat whose
+  // per-chat turn selection is dropped when it switches back to a git scope.
+  selectGitScope: (
+    sharedRef: ScopedThreadRef,
+    chatRef: ScopedThreadRef,
+    scope: "branch" | "unstaged",
+  ) => void;
+  selectBranchBaseRef: (
+    sharedRef: ScopedThreadRef,
+    chatRef: ScopedThreadRef,
+    baseRef: string | null,
+  ) => void;
+  selectTurn: (chatRef: ScopedThreadRef, turnId: TurnId, filePath?: string) => void;
+  reconcileTurnSelection: (
+    chatRef: ScopedThreadRef,
+    availableTurnIds: ReadonlyArray<TurnId>,
+  ) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
 
@@ -28,117 +53,153 @@ function normalizeBaseRef(baseRef: string | null): string | null {
   return normalized ? normalized : null;
 }
 
+function withoutKey<T>(record: Record<string, T>, key: string): Record<string, T> {
+  if (!(key in record)) return record;
+  const { [key]: _removed, ...rest } = record;
+  return rest;
+}
+
 export const useDiffPanelStore = create<DiffPanelStoreState>()(
   persist(
     (set) => ({
-      byThreadKey: {},
+      gitScopeByThreadKey: {},
       branchBaseRefByThreadKey: {},
-      selectGitScope: (ref, scope) =>
+      turnByThreadKey: {},
+      selectGitScope: (sharedRef, chatRef, scope) =>
         set((state) => {
-          const threadKey = scopedThreadKey(ref);
-          const previous = state.byThreadKey[threadKey];
-          const previousBaseRef =
-            previous?.kind === "branch"
-              ? previous.baseRef
-              : (state.branchBaseRefByThreadKey[threadKey] ?? null);
+          const sharedKey = scopedThreadKey(sharedRef);
+          const chatKey = scopedThreadKey(chatRef);
+          const previousBaseRef = state.branchBaseRefByThreadKey[sharedKey] ?? null;
           return {
-            byThreadKey: {
-              ...state.byThreadKey,
-              [threadKey]:
+            gitScopeByThreadKey: {
+              ...state.gitScopeByThreadKey,
+              [sharedKey]:
                 scope === "branch"
                   ? { kind: "branch", baseRef: previousBaseRef }
                   : { kind: "unstaged" },
             },
-            branchBaseRefByThreadKey:
-              previous?.kind === "branch"
-                ? { ...state.branchBaseRefByThreadKey, [threadKey]: previous.baseRef }
-                : state.branchBaseRefByThreadKey,
+            // Picking a git scope leaves the turn view for this chat.
+            turnByThreadKey: withoutKey(state.turnByThreadKey, chatKey),
           };
         }),
-      selectBranchBaseRef: (ref, baseRef) =>
+      selectBranchBaseRef: (sharedRef, chatRef, baseRef) =>
         set((state) => {
-          const threadKey = scopedThreadKey(ref);
+          const sharedKey = scopedThreadKey(sharedRef);
+          const chatKey = scopedThreadKey(chatRef);
           const normalizedBaseRef = normalizeBaseRef(baseRef);
           return {
-            byThreadKey: {
-              ...state.byThreadKey,
-              [threadKey]: { kind: "branch", baseRef: normalizedBaseRef },
+            gitScopeByThreadKey: {
+              ...state.gitScopeByThreadKey,
+              [sharedKey]: { kind: "branch", baseRef: normalizedBaseRef },
             },
             branchBaseRefByThreadKey: {
               ...state.branchBaseRefByThreadKey,
-              [threadKey]: normalizedBaseRef,
+              [sharedKey]: normalizedBaseRef,
             },
+            turnByThreadKey: withoutKey(state.turnByThreadKey, chatKey),
           };
         }),
-      selectTurn: (ref, turnId, filePath) =>
+      selectTurn: (chatRef, turnId, filePath) =>
         set((state) => {
-          const threadKey = scopedThreadKey(ref);
-          const previous = state.byThreadKey[threadKey];
+          const chatKey = scopedThreadKey(chatRef);
+          const previous = state.turnByThreadKey[chatKey];
           return {
-            byThreadKey: {
-              ...state.byThreadKey,
-              [threadKey]: {
+            turnByThreadKey: {
+              ...state.turnByThreadKey,
+              [chatKey]: {
                 kind: "turn",
                 turnId,
                 filePath: filePath?.trim() || null,
-                revealRequestId: previous?.kind === "turn" ? previous.revealRequestId + 1 : 1,
+                revealRequestId: previous ? previous.revealRequestId + 1 : 1,
               },
             },
           };
         }),
-      reconcileTurnSelection: (ref, availableTurnIds) =>
+      reconcileTurnSelection: (chatRef, availableTurnIds) =>
         set((state) => {
-          const threadKey = scopedThreadKey(ref);
-          const previous = state.byThreadKey[threadKey];
+          const chatKey = scopedThreadKey(chatRef);
+          const previous = state.turnByThreadKey[chatKey];
           const latestTurnId = availableTurnIds[0];
           if (
-            previous?.kind !== "turn" ||
+            previous === undefined ||
             latestTurnId === undefined ||
             availableTurnIds.includes(previous.turnId)
           ) {
             return state;
           }
           return {
-            byThreadKey: {
-              ...state.byThreadKey,
-              [threadKey]: { ...previous, turnId: latestTurnId },
+            turnByThreadKey: {
+              ...state.turnByThreadKey,
+              [chatKey]: { ...previous, turnId: latestTurnId },
             },
           };
         }),
       removeThread: (ref) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
-          if (!(threadKey in state.byThreadKey) && !(threadKey in state.branchBaseRefByThreadKey)) {
+          if (
+            !(threadKey in state.gitScopeByThreadKey) &&
+            !(threadKey in state.branchBaseRefByThreadKey) &&
+            !(threadKey in state.turnByThreadKey)
+          ) {
             return state;
           }
-          const { [threadKey]: _removed, ...byThreadKey } = state.byThreadKey;
-          const { [threadKey]: _removedBaseRef, ...branchBaseRefByThreadKey } =
-            state.branchBaseRefByThreadKey;
-          return { byThreadKey, branchBaseRefByThreadKey };
+          return {
+            gitScopeByThreadKey: withoutKey(state.gitScopeByThreadKey, threadKey),
+            branchBaseRefByThreadKey: withoutKey(state.branchBaseRefByThreadKey, threadKey),
+            turnByThreadKey: withoutKey(state.turnByThreadKey, threadKey),
+          };
         }),
     }),
     {
       name: "t3code:diff-panel-state:v1",
-      version: 1,
+      version: 2,
+      migrate: (persisted, version) => {
+        if (version >= 2) return persisted as Partial<DiffPanelStoreState>;
+        // v1 kept a single `byThreadKey` union keyed by the shared ref. Keep
+        // its git-scope entries (still shared) and drop turn entries: those
+        // were mis-keyed by the worktree representative and are per-chat now.
+        const legacy = (persisted ?? {}) as {
+          byThreadKey?: Record<string, DiffPanelSelection>;
+          branchBaseRefByThreadKey?: Record<string, string | null>;
+        };
+        const gitScopeByThreadKey: Record<string, GitScopeSelection> = {};
+        for (const [key, selection] of Object.entries(legacy.byThreadKey ?? {})) {
+          if (selection.kind === "branch" || selection.kind === "unstaged") {
+            gitScopeByThreadKey[key] = selection;
+          }
+        }
+        return {
+          gitScopeByThreadKey,
+          branchBaseRefByThreadKey: legacy.branchBaseRefByThreadKey ?? {},
+          turnByThreadKey: {},
+        } satisfies Partial<DiffPanelStoreState>;
+      },
       storage: createJSONStorage(() =>
         resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
       ),
       partialize: (state) => ({
-        byThreadKey: state.byThreadKey,
+        gitScopeByThreadKey: state.gitScopeByThreadKey,
         branchBaseRefByThreadKey: state.branchBaseRefByThreadKey,
+        turnByThreadKey: state.turnByThreadKey,
       }),
     },
   ),
 );
 
+/**
+ * Resolve the diff view for a chat. A per-chat turn selection wins over the
+ * shared working-tree/branch view; absent both, fall back to the working tree
+ * when it has changes, else the branch diff.
+ */
 export function selectThreadDiffPanelSelection(
-  byThreadKey: Record<string, DiffPanelSelection>,
-  ref: ScopedThreadRef | null | undefined,
+  state: Pick<DiffPanelStoreState, "gitScopeByThreadKey" | "turnByThreadKey">,
+  chatRef: ScopedThreadRef | null | undefined,
+  sharedRef: ScopedThreadRef | null | undefined,
   hasWorkingTreeChanges = false,
 ): DiffPanelSelection {
-  if (!ref) return DEFAULT_SELECTION;
-  return (
-    byThreadKey[scopedThreadKey(ref)] ??
-    (hasWorkingTreeChanges ? DEFAULT_WORKING_TREE_SELECTION : DEFAULT_SELECTION)
-  );
+  const turn = chatRef ? state.turnByThreadKey[scopedThreadKey(chatRef)] : undefined;
+  if (turn) return turn;
+  const gitScope = sharedRef ? state.gitScopeByThreadKey[scopedThreadKey(sharedRef)] : undefined;
+  return gitScope ?? (hasWorkingTreeChanges ? DEFAULT_WORKING_TREE_SELECTION : DEFAULT_SELECTION);
 }

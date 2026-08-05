@@ -10,6 +10,7 @@ import {
   ArrowRightIcon,
   CheckIcon,
   ChevronDownIcon,
+  ChevronLeftIcon,
   ChevronRightIcon,
   Columns2Icon,
   PilcrowIcon,
@@ -220,6 +221,9 @@ export default function DiffPanel({
     scopeKey: null,
     filePaths: EMPTY_EXPANDED_DIFF_FILE_PATHS,
   }));
+  // When set, the panel focuses a single file's diff instead of the full
+  // changed-file list. Clicking a file title enters this mode.
+  const [focusedFilePath, setFocusedFilePath] = useState<string | null>(null);
   const codeViewRef = useRef<AnnotatableCodeViewHandle>(null);
 
   const routeThreadRef = useParams({
@@ -271,7 +275,10 @@ export default function DiffPanel({
   );
   const diffSelection = useDiffPanelStore((state) =>
     selectThreadDiffPanelSelection(
-      state.byThreadKey,
+      state,
+      // Turn selection is per chat; the working-tree/branch view is shared
+      // across the worktree via the representative thread.
+      currentThreadRef,
       workspaceThreadRef,
       initialGitScope === "unstaged",
     ),
@@ -295,12 +302,12 @@ export default function DiffPanel({
   );
 
   useEffect(() => {
-    if (!workspaceThreadRef || diffSelection.kind !== "turn") return;
+    if (!currentThreadRef || diffSelection.kind !== "turn") return;
     useDiffPanelStore.getState().reconcileTurnSelection(
-      workspaceThreadRef,
+      currentThreadRef,
       orderedTurnDiffSummaries.map((summary) => summary.turnId),
     );
-  }, [diffSelection, orderedTurnDiffSummaries, workspaceThreadRef]);
+  }, [currentThreadRef, diffSelection, orderedTurnDiffSummaries]);
 
   const selectedTurnId = diffSelection.kind === "turn" ? diffSelection.turnId : null;
   const selectedGitScope = diffSelection.kind === "unstaged" ? "unstaged" : "branch";
@@ -505,6 +512,31 @@ export default function DiffPanel({
   const allDiffFilesCollapsed =
     codeViewFiles.length > 0 && codeViewFiles.every((file) => file.collapsed);
   const diffLineStat = useMemo(() => getDiffLineStat(renderableFiles), [renderableFiles]);
+  const focusedFile = useMemo(
+    () =>
+      focusedFilePath
+        ? (codeViewFiles.find((file) => file.filePath === focusedFilePath) ?? null)
+        : null,
+    [codeViewFiles, focusedFilePath],
+  );
+  // The focused file is always expanded; otherwise show the whole change set.
+  const displayedCodeViewFiles = useMemo(
+    () => (focusedFile ? [{ ...focusedFile, collapsed: false }] : codeViewFiles),
+    [codeViewFiles, focusedFile],
+  );
+
+  // Leaving the current scope (turn/branch/working-tree) drops the focus so a
+  // new selection opens on its full changed-file list.
+  useEffect(() => {
+    setFocusedFilePath(null);
+  }, [collapseScopeKey]);
+  // Drop the focus if the file is no longer part of the diff (e.g. it stopped
+  // changing after a refresh), so the panel falls back to the full list.
+  useEffect(() => {
+    if (focusedFilePath && !codeViewFiles.some((file) => file.filePath === focusedFilePath)) {
+      setFocusedFilePath(null);
+    }
+  }, [codeViewFiles, focusedFilePath]);
 
   useEffect(() => {
     if (!selectedFilePath) return;
@@ -591,16 +623,18 @@ export default function DiffPanel({
   }, [allDiffFilesCollapsed, collapseScopeKey, diffFilePaths]);
 
   const selectTurn = (turnId: TurnId) => {
-    if (!workspaceThreadRef) return;
-    useDiffPanelStore.getState().selectTurn(workspaceThreadRef, turnId);
+    // Turns belong to this conversation, so the selection keys off the chat's
+    // own ref rather than the shared worktree representative.
+    if (!currentThreadRef) return;
+    useDiffPanelStore.getState().selectTurn(currentThreadRef, turnId);
   };
   const selectGitScope = (scope: "branch" | "unstaged") => {
-    if (!workspaceThreadRef) return;
-    useDiffPanelStore.getState().selectGitScope(workspaceThreadRef, scope);
+    if (!workspaceThreadRef || !currentThreadRef) return;
+    useDiffPanelStore.getState().selectGitScope(workspaceThreadRef, currentThreadRef, scope);
   };
   const selectBranchBaseRef = (baseRef: string | null) => {
-    if (!workspaceThreadRef) return;
-    useDiffPanelStore.getState().selectBranchBaseRef(workspaceThreadRef, baseRef);
+    if (!workspaceThreadRef || !currentThreadRef) return;
+    useDiffPanelStore.getState().selectBranchBaseRef(workspaceThreadRef, currentThreadRef, baseRef);
   };
 
   const headerRow = (
@@ -871,7 +905,36 @@ export default function DiffPanel({
       ) : (
         <>
           <div className="diff-panel-viewport flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-            {codeViewFiles.length > 0 && (
+            {focusedFile ? (
+              <div className="flex shrink-0 items-center gap-2 border-b border-border/70 bg-card/80 px-3 py-2 text-xs">
+                <button
+                  type="button"
+                  className="inline-flex shrink-0 items-center gap-1 rounded-sm text-muted-foreground transition-colors hover:text-foreground"
+                  onClick={() => setFocusedFilePath(null)}
+                >
+                  <ChevronLeftIcon className="size-3.5" />
+                  All changes
+                </button>
+                <span aria-hidden="true" className="shrink-0 text-muted-foreground/40">
+                  /
+                </span>
+                <span
+                  className="min-w-0 flex-1 truncate font-medium text-foreground"
+                  title={focusedFile.filePath}
+                >
+                  {focusedFile.filePath}
+                </span>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost"
+                  className="h-6 shrink-0 px-1.5 text-muted-foreground hover:text-foreground"
+                  onClick={() => openDiffFile(focusedFile.filePath)}
+                >
+                  Open file
+                </Button>
+              </div>
+            ) : codeViewFiles.length > 0 ? (
               <div className="flex shrink-0 items-center gap-2 border-b border-border/70 bg-card/80 px-3 py-2 text-xs">
                 <span className="font-medium text-foreground">
                   {codeViewFiles.length} changed file{codeViewFiles.length === 1 ? "" : "s"}
@@ -892,7 +955,7 @@ export default function DiffPanel({
                   {allDiffFilesCollapsed ? "Show files" : "Hide files"}
                 </Button>
               </div>
-            )}
+            ) : null}
             {isSelectedPatchTruncated && (
               <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-[11px] text-muted-foreground">
                 This diff was truncated because it exceeded the preview limit. The changes shown are
@@ -934,14 +997,17 @@ export default function DiffPanel({
                       node instanceof HTMLElement && node.hasAttribute("data-title"),
                   );
                   const filePath = title?.textContent?.trim();
-                  if (filePath) openDiffFile(filePath);
+                  if (filePath) {
+                    setFocusedFilePath(filePath);
+                    setDiffRenderMode("split");
+                  }
                 }}
               >
                 <AnnotatableCodeView
                   viewerRef={codeViewRef}
-                  key={collapseScopeKey ?? reviewSectionId}
+                  key={`${collapseScopeKey ?? reviewSectionId}:${focusedFilePath ?? "all"}`}
                   className="diff-render-surface h-full min-h-0 overflow-auto"
-                  files={codeViewFiles}
+                  files={displayedCodeViewFiles}
                   sectionId={reviewSectionId}
                   sectionTitle={reviewSectionTitle}
                   composerDraftTarget={composerDraftTarget}
