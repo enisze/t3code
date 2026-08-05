@@ -2902,6 +2902,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         timeoutMs: 10_000,
         fallbackErrorDetail: "git branch create failed",
       });
+      // Record the branch this ref forks from so a later pull request targets
+      // it instead of the repo default. Mirrors createWorktree's handling.
+      if (input.baseRefName) {
+        const remoteNames = yield* listRemoteNames(input.cwd).pipe(Effect.orElseSucceed(() => []));
+        const parsedBaseRef = parseRemoteRefWithRemoteNames(
+          input.baseRefName,
+          remoteNames.toSorted((left, right) => right.length - left.length),
+        );
+        const baseBranch = parsedBaseRef?.branchName ?? input.baseRefName;
+        if (baseBranch !== input.refName) {
+          yield* runGit("GitVcsDriver.createRef.configureBaseRef", input.cwd, [
+            "config",
+            `branch.${input.refName}.gh-merge-base`,
+            baseBranch,
+          ]);
+        }
+      }
       if (input.switchRef) {
         yield* switchRef({ cwd: input.cwd, refName: input.refName });
       }
