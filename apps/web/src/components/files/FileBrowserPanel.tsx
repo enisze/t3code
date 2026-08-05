@@ -5,8 +5,8 @@ import type {
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch } from "@pierre/trees/react";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { RotateCw } from "lucide-react";
-import { useEffect, useMemo, useRef } from "react";
+import { ChevronsDownUp, ChevronsUpDown, RotateCw } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
@@ -66,6 +66,28 @@ function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }
   );
 }
 
+function CollapseFoldersButton(props: { collapsed: boolean; onToggle: () => void }) {
+  const label = props.collapsed ? "Expand all folders" : "Collapse all folders";
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label={label}
+            onClick={props.onToggle}
+          />
+        }
+      >
+        {props.collapsed ? <ChevronsUpDown /> : <ChevronsDownUp />}
+      </TooltipTrigger>
+      <TooltipPopup>{label}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 function FileSearchField(props: {
   ariaLabel: string;
   name: string;
@@ -104,6 +126,7 @@ export default function FileBrowserPanel({
   const composerRef = useComposerHandleContext();
   const entriesQuery = useProjectEntriesQuery(environmentId, cwd);
   const entries = entriesQuery.data?.entries ?? [];
+  const [foldersCollapsed, setFoldersCollapsed] = useState(false);
   const entryKinds = useMemo(
     () => new Map(entries.map((entry) => [entry.path, entry.kind] as const)),
     [entries],
@@ -245,7 +268,28 @@ export default function FileBrowserPanel({
     entryKindsRef.current = entryKinds;
     previousTreePathsRef.current = treePaths;
     model.resetPaths(treePaths);
+    // resetPaths re-applies the tree's `initialExpansion`, so the collapse
+    // toggle no longer reflects the tree state once entries change.
+    setFoldersCollapsed(false);
   }, [entryKinds, model, treePaths]);
+
+  // `initialExpandedPaths: []` on resetPaths falls back to `initialExpansion`
+  // rather than collapsing, so fold every directory by toggling its handle.
+  const toggleAllFolders = () => {
+    const collapse = !foldersCollapsed;
+    for (const entry of entries) {
+      if (entry.kind !== "directory") continue;
+      const item = model.getItem(`${entry.path}/`);
+      // `collapse`/`expand` only exist on the directory handle variant.
+      if (!item || !("collapse" in item)) continue;
+      if (collapse) {
+        item.collapse();
+      } else {
+        item.expand();
+      }
+    }
+    setFoldersCollapsed(collapse);
+  };
 
   // Tag tree drags with the composer mention payload. The row is read from
   // the composed event path (the tree's shadow root is open), so this does
@@ -280,6 +324,7 @@ export default function FileBrowserPanel({
     >
       <div className="surface-subheader gap-1 px-2" data-surface-subheader>
         <RefreshFilesButton isPending={entriesQuery.isPending} onRefresh={entriesQuery.refresh} />
+        <CollapseFoldersButton collapsed={foldersCollapsed} onToggle={toggleAllFolders} />
         <FileSearchField
           name="project-files-search"
           ariaLabel={`Search ${projectName} files`}

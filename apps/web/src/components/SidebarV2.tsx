@@ -1809,12 +1809,28 @@ export default function SidebarV2() {
     if (!groupByProject || scopedProjectGroup !== null) {
       return [{ projectKey: null as string | null, threads: activeThreads }];
     }
-    return groupSidebarThreadsByProject({
+    const grouped = groupSidebarThreadsByProject({
       threads: activeThreads,
       projectOrder: projectGroups.map((group) => group.projectKey),
       resolveProjectKey: (thread) =>
         projectKeyByMemberKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null,
     });
+    // Keep every project visible even when it holds no active threads, so an
+    // empty project still renders a header you can start a new chat from. The
+    // grouping helper drops empty sections, so rebuild the list from the full
+    // project order and reattach any ungrouped threads at the end.
+    const threadsByProjectKey = new Map(
+      grouped.map((section) => [section.projectKey, section.threads] as const),
+    );
+    const ungrouped = grouped.find((section) => section.projectKey === null)?.threads ?? [];
+    const sections = projectGroups.map((group) => ({
+      projectKey: group.projectKey as string | null,
+      threads: threadsByProjectKey.get(group.projectKey) ?? [],
+    }));
+    if (ungrouped.length > 0) {
+      sections.push({ projectKey: null, threads: ungrouped });
+    }
+    return sections;
   }, [activeThreads, groupByProject, projectGroups, projectKeyByMemberKey, scopedProjectGroup]);
   const projectExpandedById = useUiStateStore((state) => state.projectExpandedById);
   const setProjectExpanded = useUiStateStore((state) => state.setProjectExpanded);

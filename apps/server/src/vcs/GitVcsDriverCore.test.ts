@@ -1147,6 +1147,41 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(result.branch, current);
       }),
     );
+
+    it.effect("records the base branch a new ref forks from as gh-merge-base", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* driver.createRef({
+          cwd,
+          refName: "feature/stacked",
+          baseRefName: initialBranch,
+        });
+
+        assert.equal(
+          yield* driver.readConfigValue(cwd, "branch.feature/stacked.gh-merge-base"),
+          initialBranch,
+        );
+      }),
+    );
+
+    it.effect("does not record a self-referential base when forking from itself", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* driver.createRef({
+          cwd,
+          refName: "feature/self",
+          baseRefName: "feature/self",
+        });
+
+        assert.equal(yield* driver.readConfigValue(cwd, "branch.feature/self.gh-merge-base"), null);
+      }),
+    );
   });
 
   describe("worktree operations", () => {
@@ -1480,6 +1515,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
                 _tag: "unavailable",
                 account: { host: "github.com", login: "octo" },
               }),
+            resolveCommitIdentityForCwd: () => Effect.succeed({ _tag: "ambient" }),
           }),
         ),
       ),

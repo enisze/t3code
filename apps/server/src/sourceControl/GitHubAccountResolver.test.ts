@@ -340,3 +340,119 @@ describe("GitHubAccountResolver.resolveForCwd", () => {
     ),
   );
 });
+
+const attachedProjectSnapshot = (account: GitHubAccountRef) =>
+  shellSnapshot({
+    projects: [projectShell({ id: "app", workspaceRoot: "/repos/app", gitHubAccount: account })],
+    threads: [],
+  });
+
+describe("GitHubAccountResolver.resolveCommitIdentityForCwd", () => {
+  it.effect("resolves to ambient when the owning project has no account", () =>
+    Effect.gen(function* () {
+      const resolver = yield* GitHubAccountResolver;
+      const identity = yield* resolver.resolveCommitIdentityForCwd("/repos/app/src");
+      assert.deepEqual(identity, { _tag: "ambient" });
+      assert.equal(mockRun.mock.calls.length, 0);
+    }).pipe(
+      Effect.provide(
+        layerFor(
+          shellSnapshot({
+            projects: [
+              projectShell({ id: "app", workspaceRoot: "/repos/app", gitHubAccount: null }),
+            ],
+            threads: [],
+          }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("uses the account's numeric id and display name from gh api user", () =>
+    Effect.gen(function* () {
+      // First call mints the token, second reads the profile.
+      mockRun
+        .mockReturnValueOnce(Effect.succeed(processOutput("gho_secret\n")))
+        .mockReturnValueOnce(
+          Effect.succeed(processOutput(`{"login":"octo","id":12345,"name":"Octo Cat"}`)),
+        );
+      const resolver = yield* GitHubAccountResolver;
+      const identity = yield* resolver.resolveCommitIdentityForCwd("/repos/app/src");
+      assert.deepEqual(identity, {
+        _tag: "resolved",
+        account: { host: "github.com", login: "octo" },
+        identity: {
+          name: "Octo Cat",
+          email: "12345+octo@users.noreply.github.com",
+        },
+      });
+      const apiCall = mockRun.mock.calls[1]?.[0];
+      assert.deepEqual(apiCall?.args, ["api", "user", "--hostname", "github.com"]);
+      // The profile read must act as the account, not the machine-active one.
+      assert.equal(apiCall?.env?.GH_TOKEN, "gho_secret");
+      assert.equal(apiCall?.env?.GH_HOST, "github.com");
+    }).pipe(
+      Effect.provide(layerFor(attachedProjectSnapshot({ host: "github.com", login: "octo" }))),
+    ),
+  );
+
+  it.effect("falls back to the login no-reply email when the token can't be minted", () =>
+    Effect.gen(function* () {
+      // Empty token → cannot act as the account, so no profile call is made.
+      mockRun.mockReturnValue(Effect.succeed(processOutput("")));
+      const resolver = yield* GitHubAccountResolver;
+      const identity = yield* resolver.resolveCommitIdentityForCwd("/repos/app/src");
+      assert.deepEqual(identity, {
+        _tag: "resolved",
+        account: { host: "github.com", login: "octo" },
+        identity: {
+          name: "octo",
+          email: "octo@users.noreply.github.com",
+        },
+      });
+      // Only the token mint runs; the profile read is skipped without a token.
+      assert.equal(mockRun.mock.calls.length, 1);
+    }).pipe(
+      Effect.provide(layerFor(attachedProjectSnapshot({ host: "github.com", login: "octo" }))),
+    ),
+  );
+
+  it.effect("falls back to the login no-reply email when the profile read fails", () =>
+    Effect.gen(function* () {
+      mockRun
+        .mockReturnValueOnce(Effect.succeed(processOutput("gho_secret\n")))
+        .mockReturnValueOnce(Effect.fail(new Error("network down") as never));
+      const resolver = yield* GitHubAccountResolver;
+      const identity = yield* resolver.resolveCommitIdentityForCwd("/repos/app/src");
+      assert.deepEqual(identity, {
+        _tag: "resolved",
+        account: { host: "github.com", login: "octo" },
+        identity: {
+          name: "octo",
+          email: "octo@users.noreply.github.com",
+        },
+      });
+    }).pipe(
+      Effect.provide(layerFor(attachedProjectSnapshot({ host: "github.com", login: "octo" }))),
+    ),
+  );
+
+  it.effect("derives the enterprise no-reply host for a GHE account", () =>
+    Effect.gen(function* () {
+      mockRun
+        .mockReturnValueOnce(Effect.succeed(processOutput("ghe_secret\n")))
+        .mockReturnValueOnce(Effect.succeed(processOutput(`{"login":"octo","id":42}`)));
+      const resolver = yield* GitHubAccountResolver;
+      const identity = yield* resolver.resolveCommitIdentityForCwd("/repos/app/src");
+      assert.deepEqual(identity, {
+        _tag: "resolved",
+        account: { host: "ghe.corp", login: "octo" },
+        identity: {
+          name: "octo",
+          email: "42+octo@users.noreply.ghe.corp",
+        },
+      });
+      assert.equal(mockRun.mock.calls[1]?.[0]?.env?.GH_ENTERPRISE_TOKEN, "ghe_secret");
+    }).pipe(Effect.provide(layerFor(attachedProjectSnapshot({ host: "ghe.corp", login: "octo" })))),
+  );
+});

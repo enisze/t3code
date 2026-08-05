@@ -168,6 +168,9 @@ export const VcsCreateRefInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   refName: TrimmedNonEmptyStringSchema,
   switchRef: Schema.optional(Schema.Boolean),
+  // Branch this ref is created from. Recorded as `gh-merge-base` so a later
+  // pull request targets the branch it branched from, not the repo default.
+  baseRefName: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type VcsCreateRefInput = typeof VcsCreateRefInput.Type;
 

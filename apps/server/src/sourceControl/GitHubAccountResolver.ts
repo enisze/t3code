@@ -30,11 +30,47 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 
 const TOKEN_TTL_MS = 5 * 60_000;
 const GH_AUTH_TOKEN_TIMEOUT_MS = 10_000;
+// A GitHub account's profile (numeric id / display name) effectively never
+// changes, so the commit identity can be cached far more generously than tokens.
+const IDENTITY_TTL_MS = 30 * 60_000;
+const GH_API_USER_TIMEOUT_MS = 10_000;
 
 export interface ResolvedGitHubAccount {
   readonly account: GitHubAccountRef;
   readonly token: string;
 }
+
+/**
+ * The git author/committer identity a commit made "as" a GitHub account should
+ * record. `email` is the account's no-reply email so GitHub attributes the
+ * commit to that account regardless of the machine's ambient `git config`.
+ */
+export interface GitHubCommitIdentity {
+  readonly name: string;
+  readonly email: string;
+}
+
+/**
+ * Outcome of resolving the commit identity for a `cwd`.
+ *
+ * - `resolved`: an account is attached — the caller records `identity` as the
+ *   commit author/committer so the commit is attributed to it, not the ambient
+ *   `git config user.*` (which may belong to a different, active account).
+ * - `ambient`: `cwd` maps to no project, or its project has no account attached
+ *   — the caller leaves the ambient identity untouched.
+ *
+ * Unlike {@link GitHubAccountResolution} there is no `unavailable` case: a local
+ * commit never touches the network, and the login-based no-reply email still
+ * attributes the commit to the right account even when its token can't be
+ * minted. A later push is where a logged-out account fails loudly.
+ */
+export type GitHubCommitIdentityResolution =
+  | {
+      readonly _tag: "resolved";
+      readonly account: GitHubAccountRef;
+      readonly identity: GitHubCommitIdentity;
+    }
+  | { readonly _tag: "ambient" };
 
 /**
  * Outcome of mapping a `cwd` to the GitHub account its commands should act as.
@@ -66,6 +102,16 @@ export class GitHubAccountResolver extends Context.Service<
      * (the caller must fail loudly rather than act as the wrong account).
      */
     readonly resolveForCwd: (cwd: string) => Effect.Effect<GitHubAccountResolution>;
+    /**
+     * Resolve the git author/committer identity a commit running in `cwd`
+     * should record, so the commit is attributed to the project's selected
+     * GitHub account rather than the machine's ambient `git config user.*`.
+     * Never fails: falls back to the login-based no-reply email when the
+     * account's profile can't be read (e.g. it isn't logged in, or offline).
+     */
+    readonly resolveCommitIdentityForCwd: (
+      cwd: string,
+    ) => Effect.Effect<GitHubCommitIdentityResolution>;
   }
 >()("t3/sourceControl/GitHubAccountResolver") {}
 
@@ -152,14 +198,77 @@ interface CachedToken {
   readonly expiresAtMs: number;
 }
 
+interface CachedIdentity {
+  readonly identity: GitHubCommitIdentity;
+  readonly expiresAtMs: number;
+}
+
 function cacheKey(account: GitHubAccountRef): string {
   return `${account.host}\n${account.login}`;
+}
+
+/**
+ * The no-reply email domain for a host. `github.com` uses
+ * `users.noreply.github.com`; a GitHub Enterprise host `ghe.corp` uses
+ * `users.noreply.ghe.corp`. GitHub attributes any commit with a
+ * `<login>@<no-reply>` or `<id>+<login>@<no-reply>` email to that account.
+ */
+function noReplyEmailHost(host: string): string {
+  return `users.noreply.${host}`;
+}
+
+/**
+ * The commit identity derivable from the account ref alone, without touching
+ * the network. `<login>@users.noreply.<host>` attributes the commit to the
+ * account; used as a fallback when the account's numeric id / display name
+ * can't be read (logged out, offline, or `gh` failed).
+ */
+function loginIdentity(account: GitHubAccountRef): GitHubCommitIdentity {
+  return { name: account.login, email: `${account.login}@${noReplyEmailHost(account.host)}` };
+}
+
+/**
+ * Build the canonical commit identity from a `gh api user` JSON response: the
+ * account's display name (falling back to its login) and the id-based no-reply
+ * email `<id>+<login>@users.noreply.<host>`. Returns `null` when the payload
+ * lacks a usable numeric id, so the caller falls back to {@link loginIdentity}.
+ */
+function parseCommitIdentity(
+  stdout: string,
+  account: GitHubAccountRef,
+): GitHubCommitIdentity | null {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  if (typeof payload !== "object" || payload === null) {
+    return null;
+  }
+  const record = payload as Record<string, unknown>;
+  const id = record.id;
+  if (typeof id !== "number" && typeof id !== "string") {
+    return null;
+  }
+  const idText = String(id).trim();
+  if (idText.length === 0) {
+    return null;
+  }
+  const login =
+    typeof record.login === "string" && record.login.trim().length > 0
+      ? record.login.trim()
+      : account.login;
+  const name =
+    typeof record.name === "string" && record.name.trim().length > 0 ? record.name.trim() : login;
+  return { name, email: `${idText}+${login}@${noReplyEmailHost(account.host)}` };
 }
 
 export const make = Effect.gen(function* () {
   const snapshotQuery = yield* ProjectionSnapshotQuery;
   const process = yield* VcsProcess.VcsProcess;
   const tokenCache = yield* Ref.make(new Map<string, CachedToken>());
+  const identityCache = yield* Ref.make(new Map<string, CachedIdentity>());
 
   /**
    * Find the account attached to the project owning `cwd`. Matches the longest
@@ -247,7 +356,78 @@ export const make = Effect.gen(function* () {
       return { _tag: "resolved", account, token } as const;
     });
 
-  return GitHubAccountResolver.of({ resolveForCwd });
+  /**
+   * Resolve the commit identity for an attached account. Prefers the canonical
+   * id-based no-reply email + display name read from `gh api user` (acting as
+   * the account via its minted token), and falls back to the login-based
+   * no-reply email whenever the profile can't be read — so a local commit is
+   * always attributed to the account and never blocked when it's logged out or
+   * offline.
+   */
+  const resolveIdentity = (
+    cwd: string,
+    account: GitHubAccountRef,
+  ): Effect.Effect<GitHubCommitIdentity> =>
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      const cache = yield* Ref.get(identityCache);
+      const cached = cache.get(cacheKey(account));
+      if (cached !== undefined && cached.expiresAtMs > now) {
+        return cached.identity;
+      }
+
+      const fallback = loginIdentity(account);
+      // Without the account's token we can't query `gh api user` as it — the
+      // ambient (possibly different) account would answer — so skip the call
+      // and attribute via the login-based no-reply email instead.
+      const token = yield* resolveToken(cwd, account);
+      if (token === null) {
+        return fallback;
+      }
+
+      const result = yield* process
+        .run({
+          operation: "GitHubAccountResolver.resolveIdentity",
+          command: "gh",
+          args: ["api", "user", "--hostname", account.host],
+          cwd,
+          env: gitHubAccountGhEnv({ account, token }),
+          timeoutMs: GH_API_USER_TIMEOUT_MS,
+        })
+        .pipe(Effect.option);
+      if (result._tag === "None") {
+        yield* Effect.logWarning(
+          "Could not read the GitHub account profile for the commit identity; attributing the commit via the login-based no-reply email",
+          { host: account.host, login: account.login, cwd },
+        );
+        return fallback;
+      }
+
+      const identity = parseCommitIdentity(result.value.stdout, account);
+      if (identity === null) {
+        return fallback;
+      }
+
+      yield* Ref.update(identityCache, (current) => {
+        const next = new Map(current);
+        next.set(cacheKey(account), { identity, expiresAtMs: now + IDENTITY_TTL_MS });
+        return next;
+      });
+      return identity;
+    });
+
+  const resolveCommitIdentityForCwd: GitHubAccountResolver["Service"]["resolveCommitIdentityForCwd"] =
+    (cwd) =>
+      Effect.gen(function* () {
+        const account = yield* findAccountForCwd(cwd);
+        if (account === null) {
+          return { _tag: "ambient" } as const;
+        }
+        const identity = yield* resolveIdentity(cwd, account);
+        return { _tag: "resolved", account, identity } as const;
+      });
+
+  return GitHubAccountResolver.of({ resolveForCwd, resolveCommitIdentityForCwd });
 });
 
 export const layer = Layer.effect(GitHubAccountResolver, make);

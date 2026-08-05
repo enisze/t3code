@@ -1945,7 +1945,12 @@ export const make = Effect.gen(function* () {
     const existingBranchNames = yield* gitCore.listLocalBranchNames(cwd);
     const resolvedBranch = resolveAutoFeatureBranchName(existingBranchNames, preferredBranch);
 
-    yield* gitCore.createRef({ cwd, refName: resolvedBranch });
+    yield* gitCore.createRef({
+      cwd,
+      refName: resolvedBranch,
+      // The branch we're forking from becomes the pull request's base.
+      ...(branch ? { baseRefName: branch } : {}),
+    });
     yield* Effect.scoped(gitCore.switchRef({ cwd, refName: resolvedBranch }));
 
     return {

@@ -1215,26 +1215,40 @@ describe("resolveWorktreeWorkspaceRepresentative", () => {
     expect(representative?.id).toBe("alpha");
   });
 
+  const runningSession = (id: string) =>
+    ({
+      threadId: ThreadId.make(id),
+      status: "running" as const,
+      providerName: "Codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      runtimeMode: DEFAULT_RUNTIME_MODE,
+      activeTurnId: "turn-1" as never,
+      lastError: null,
+      updatedAt: "2026-03-09T12:01:00.000Z",
+    }) satisfies NonNullable<Thread["session"]>;
+
+  // The collapse merge reads the shell-only pending flags, so tests build
+  // shell-shaped rows: a full Thread plus the two attention booleans.
+  const mergeThread = (
+    overrides: Partial<Thread>,
+    flags: { hasPendingApprovals?: boolean; hasPendingUserInput?: boolean } = {},
+  ) => ({
+    ...makeThread(overrides),
+    hasPendingApprovals: flags.hasPendingApprovals ?? false,
+    hasPendingUserInput: flags.hasPendingUserInput ?? false,
+  });
+
   it("projects a running sibling's status onto the representative row", () => {
-    const representative = makeThread({
+    const representative = mergeThread({
       id: ThreadId.make("older"),
       worktreePath: "/wt/a",
       createdAt: "2026-03-09T10:00:00.000Z",
     });
-    const runningSibling = makeThread({
+    const runningSibling = mergeThread({
       id: ThreadId.make("newer"),
       worktreePath: "/wt/a",
       createdAt: "2026-03-09T12:00:00.000Z",
-      session: {
-        threadId: ThreadId.make("newer"),
-        status: "running",
-        providerName: "Codex",
-        providerInstanceId: ProviderInstanceId.make("codex"),
-        runtimeMode: DEFAULT_RUNTIME_MODE,
-        activeTurnId: "turn-1" as never,
-        lastError: null,
-        updatedAt: "2026-03-09T12:01:00.000Z",
-      },
+      session: runningSession("newer"),
     });
 
     const { threads: collapsed } = collapseWorktreeSiblings(
@@ -1245,14 +1259,82 @@ describe("resolveWorktreeWorkspaceRepresentative", () => {
 
     expect(collapsed).toHaveLength(1);
     expect(collapsed[0]?.id).toBe("older");
-    const representativeStatus = {
-      ...collapsed[0]!,
-      hasPendingApprovals: false,
-      hasPendingUserInput: false,
-      hasActionableProposedPlan: false,
-    };
+    const representativeStatus = { ...collapsed[0]!, hasActionableProposedPlan: false };
     expect(resolveSidebarV2Status(representativeStatus)).toBe("working");
     expect(resolveThreadStatusPill({ thread: representativeStatus })?.label).toBe("Working");
+  });
+
+  it("surfaces a sibling awaiting input as Input over the running Working state", () => {
+    // Representative is idle; one sibling is running, another is waiting on the
+    // user. The row must read "Input" — needing the user beats "Working".
+    const representative = mergeThread({
+      id: ThreadId.make("older"),
+      worktreePath: "/wt/a",
+      createdAt: "2026-03-09T10:00:00.000Z",
+    });
+    const runningSibling = mergeThread({
+      id: ThreadId.make("running"),
+      worktreePath: "/wt/a",
+      createdAt: "2026-03-09T11:00:00.000Z",
+      session: runningSession("running"),
+    });
+    const inputSibling = mergeThread(
+      {
+        id: ThreadId.make("waiting"),
+        worktreePath: "/wt/a",
+        createdAt: "2026-03-09T12:00:00.000Z",
+        session: runningSession("waiting"),
+      },
+      { hasPendingUserInput: true },
+    );
+
+    const { threads: collapsed } = collapseWorktreeSiblings(
+      [representative, runningSibling, inputSibling],
+      (thread) => `${thread.environmentId}:${thread.id}`,
+      mergeWorktreeSiblingRunningStatus,
+    );
+
+    expect(collapsed).toHaveLength(1);
+    expect(collapsed[0]?.id).toBe("older");
+    const representativeStatus = { ...collapsed[0]!, hasActionableProposedPlan: false };
+    expect(resolveSidebarV2Status(representativeStatus)).toBe("input");
+    expect(resolveThreadStatusPill({ thread: representativeStatus })?.label).toBe("Awaiting Input");
+  });
+
+  it("surfaces a sibling pending approval as Approval over Input and Working", () => {
+    const representative = mergeThread({
+      id: ThreadId.make("older"),
+      worktreePath: "/wt/a",
+      createdAt: "2026-03-09T10:00:00.000Z",
+    });
+    const inputSibling = mergeThread(
+      {
+        id: ThreadId.make("waiting"),
+        worktreePath: "/wt/a",
+        createdAt: "2026-03-09T11:00:00.000Z",
+        session: runningSession("waiting"),
+      },
+      { hasPendingUserInput: true },
+    );
+    const approvalSibling = mergeThread(
+      {
+        id: ThreadId.make("approve"),
+        worktreePath: "/wt/a",
+        createdAt: "2026-03-09T12:00:00.000Z",
+        session: runningSession("approve"),
+      },
+      { hasPendingApprovals: true },
+    );
+
+    const { threads: collapsed } = collapseWorktreeSiblings(
+      [representative, inputSibling, approvalSibling],
+      (thread) => `${thread.environmentId}:${thread.id}`,
+      mergeWorktreeSiblingRunningStatus,
+    );
+
+    expect(collapsed).toHaveLength(1);
+    const representativeStatus = { ...collapsed[0]!, hasActionableProposedPlan: false };
+    expect(resolveSidebarV2Status(representativeStatus)).toBe("approval");
   });
 });
 

@@ -834,15 +834,38 @@ export function resolveWorktreeWorkspaceRepresentative<
   return representative;
 }
 
-export function mergeWorktreeSiblingRunningStatus<T extends Pick<SidebarThreadSummary, "session">>(
-  representative: T,
-  members: readonly T[],
-): T {
+/**
+ * Project a collapsed worktree group's attention state onto its representative
+ * row. Chats sharing one on-disk worktree collapse to a single row (see
+ * collapseWorktreeSiblings), so that row must reflect what any sibling is doing:
+ * a running sibling's session (so the row shows "Working" and its elapsed timer)
+ * and — just as importantly — a sibling that is waiting on the user. Without the
+ * latter, a non-representative sibling awaiting input or approval would still be
+ * shown as "Working" (its running session projected, its pending-input flag
+ * dropped), hiding that the user needs to act. resolveSidebarV2Status /
+ * resolveThreadStatusPill then rank approval > input > working, so surfacing the
+ * flags here is enough for the row to read "Approval"/"Input" over "Working".
+ */
+export function mergeWorktreeSiblingRunningStatus<
+  T extends Pick<SidebarThreadSummary, "session" | "hasPendingApprovals" | "hasPendingUserInput">,
+>(representative: T, members: readonly T[]): T {
   const runningSibling = members.find(
     (thread) => thread.session?.status === "running" || thread.session?.status === "starting",
   );
-  if (!runningSibling || runningSibling.session === representative.session) return representative;
-  return { ...representative, session: runningSibling.session };
+  const session =
+    runningSibling && runningSibling.session !== representative.session
+      ? runningSibling.session
+      : representative.session;
+  const hasPendingApprovals = members.some((thread) => thread.hasPendingApprovals);
+  const hasPendingUserInput = members.some((thread) => thread.hasPendingUserInput);
+  if (
+    session === representative.session &&
+    hasPendingApprovals === representative.hasPendingApprovals &&
+    hasPendingUserInput === representative.hasPendingUserInput
+  ) {
+    return representative;
+  }
+  return { ...representative, session, hasPendingApprovals, hasPendingUserInput };
 }
 
 /**
