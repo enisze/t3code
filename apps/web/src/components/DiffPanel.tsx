@@ -226,7 +226,7 @@ export default function DiffPanel({
   const diffThemeName = useDiffThemeName();
   const settings = useClientSettings();
   const [initialGitScope] = useState(initialGitScopeProp);
-  const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
+  const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("split");
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
   const [diffIgnoreWhitespace, setDiffIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
   const [baseRefQuery, setBaseRefQuery] = useState("");

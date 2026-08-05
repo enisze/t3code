@@ -2486,26 +2486,30 @@ function ChatViewContent(props: ChatViewProps) {
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
   // Default true while loading to avoid toolbar flicker.
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
-  // Open the right panel (diff + the Run dock below it) by default the first time
-  // a project thread is shown. Users can still toggle it closed; a closed panel
-  // that keeps surfaces stays closed on return, so this only defaults fresh threads.
+  // Keep the fixed Diff + Files tabs present. A brand-new thread opens the panel
+  // with both (Diff active); an existing thread keeps whatever is active but has
+  // the two leading tabs backfilled so both are always available. A closed panel
+  // stays closed on return — the fresh-open only defaults new threads.
   const autoOpenedRightPanelKeysRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!workspaceThreadRef || !activeProject || !activeThreadKey || shouldUsePlanSidebarSheet)
       return;
-    if (autoOpenedRightPanelKeysRef.current.has(activeThreadKey)) return;
-    autoOpenedRightPanelKeysRef.current.add(activeThreadKey);
-    const state = selectThreadRightPanelState(
-      useRightPanelStore.getState().byThreadKey,
-      workspaceThreadRef,
-    );
-    if (state.isOpen || state.surfaces.length > 0) return;
-    // The surface always opens with a Files (workspace explorer) tab, plus a
-    // Diff (changed-files navigator) tab that becomes the default active tab
-    // whenever this thread can show a diff.
-    useRightPanelStore.getState().open(workspaceThreadRef, "files");
-    if (isServerThread && isGitRepo) {
-      useRightPanelStore.getState().open(workspaceThreadRef, "diff");
+    const store = useRightPanelStore.getState();
+    const state = selectThreadRightPanelState(store.byThreadKey, workspaceThreadRef);
+    const diffAvailable = isServerThread && isGitRepo;
+    const firstVisit = !autoOpenedRightPanelKeysRef.current.has(activeThreadKey);
+    if (firstVisit) autoOpenedRightPanelKeysRef.current.add(activeThreadKey);
+    if (firstVisit && !state.isOpen && state.surfaces.length === 0) {
+      store.ensureFixedSurfaces(
+        workspaceThreadRef,
+        { diff: diffAvailable, files: true },
+        { open: true, activateDefault: true },
+      );
+      return;
+    }
+    // Backfill the fixed tabs on any thread whose panel is already present.
+    if (state.isOpen || state.surfaces.length > 0) {
+      store.ensureFixedSurfaces(workspaceThreadRef, { diff: diffAvailable, files: true });
     }
   }, [
     workspaceThreadRef,
@@ -3111,26 +3115,6 @@ function ChatViewContent(props: ChatViewProps) {
     if (!workspaceThreadRef) return;
     void addBrowserSurface({ threadRef: workspaceThreadRef, openPreview });
   }, [workspaceThreadRef, openPreview]);
-  const addDiffSurface = useCallback(() => {
-    if (!workspaceThreadRef || !isServerThread || !isGitRepo) return;
-    if (planSidebarOpen) {
-      dismissPlanSidebarForCurrentTurn();
-    }
-    useRightPanelStore.getState().open(workspaceThreadRef, "diff");
-    onDiffPanelOpen?.();
-  }, [
-    workspaceThreadRef,
-    dismissPlanSidebarForCurrentTurn,
-    isGitRepo,
-    isServerThread,
-    onDiffPanelOpen,
-    planSidebarOpen,
-  ]);
-  const openWorkingTreeChanges = useCallback(() => {
-    if (!workspaceThreadRef || !activeThreadRef || !isServerThread || !isGitRepo) return;
-    useDiffPanelStore.getState().selectGitScope(workspaceThreadRef, activeThreadRef, "unstaged");
-    addDiffSurface();
-  }, [workspaceThreadRef, activeThreadRef, addDiffSurface, isGitRepo, isServerThread]);
   const startReviewInNewChat = useCallback(() => {
     if (!activeProjectRef || !activeProject || !newChatWorktreePath) return;
     const reviewModelSelection =
@@ -5881,8 +5865,6 @@ function ChatViewContent(props: ChatViewProps) {
             availableEditors={availableEditors}
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
-            canOpenChanges={isServerThread && isGitRepo}
-            onOpenChanges={openWorkingTreeChanges}
             onReview={startReviewInNewChat}
             onNewThreadInProject={handleNewThreadInActiveProject}
             onRunProjectScript={runProjectScript}

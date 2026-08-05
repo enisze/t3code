@@ -51,6 +51,17 @@ export interface ThreadRightPanelState {
 interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
   open: (ref: ScopedThreadRef, kind: Exclude<RightPanelKind, "file" | "terminal">) => void;
+  /**
+   * Ensures the fixed Diff/Files tabs exist as the leading surfaces without
+   * disturbing the active surface (unless `activateDefault`/`open` is set). Used
+   * to keep the two permanent tabs present even for threads whose persisted
+   * panel predates them.
+   */
+  ensureFixedSurfaces: (
+    ref: ScopedThreadRef,
+    available: { diff: boolean; files: boolean },
+    options?: { open?: boolean; activateDefault?: boolean },
+  ) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
@@ -247,6 +258,47 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               return upsertSurface(current, existing ?? browserSurface(null));
             }
             return upsertSurface(current, singletonSurface(kind));
+          }),
+        })),
+      ensureFixedSurfaces: (ref, available, options) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+            const others = current.surfaces.filter(
+              (surface) => surface.kind !== "diff" && surface.kind !== "files",
+            );
+            const leading: RightPanelSurface[] = [];
+            if (available.diff) {
+              leading.push(
+                current.surfaces.find((surface) => surface.kind === "diff") ??
+                  singletonSurface("diff"),
+              );
+            }
+            if (available.files) {
+              leading.push(
+                current.surfaces.find((surface) => surface.kind === "files") ??
+                  singletonSurface("files"),
+              );
+            }
+            const surfaces = [...leading, ...others];
+            const sameOrder =
+              surfaces.length === current.surfaces.length &&
+              surfaces.every((surface, index) => surface.id === current.surfaces[index]?.id);
+            const isOpen = options?.open ? true : current.isOpen;
+            let activeSurfaceId = current.activeSurfaceId;
+            if (options?.activateDefault && (activeSurfaceId === null || options.open)) {
+              activeSurfaceId = leading[0]?.id ?? activeSurfaceId;
+            }
+            if (activeSurfaceId !== null && !surfaces.some((s) => s.id === activeSurfaceId)) {
+              activeSurfaceId = surfaces[0]?.id ?? null;
+            }
+            if (
+              sameOrder &&
+              isOpen === current.isOpen &&
+              activeSurfaceId === current.activeSurfaceId
+            ) {
+              return current;
+            }
+            return { isOpen, surfaces, activeSurfaceId };
           }),
         })),
       openBrowser: (ref, tabId) =>
