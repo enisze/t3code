@@ -1279,6 +1279,7 @@ it.layer(
                 account: { host: "github.com", login: "octo" },
                 token: "gho_project",
               }),
+            resolveCommitIdentityForCwd: () => Effect.succeed({ _tag: "ambient" }),
           }),
         ),
       );

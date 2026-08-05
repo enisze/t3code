@@ -957,6 +957,37 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
 
   /**
+   * Env that makes a local `git commit` record the project's selected GitHub
+   * account as the author and committer, instead of the machine's ambient
+   * `git config user.*` (which may belong to a different, currently-active
+   * account). Returns `{}` when no account is attached or the resolver isn't
+   * provided (tests/minimal layers), leaving the ambient identity untouched.
+   *
+   * Unlike remote auth this never fails: a local commit doesn't touch the
+   * network, and the login-based no-reply email still attributes the commit to
+   * the right account even when its token can't be minted. A later push is
+   * where a logged-out account surfaces loudly.
+   */
+  const resolveCommitIdentityEnv = (cwd: string): Effect.Effect<NodeJS.ProcessEnv> =>
+    Effect.gen(function* () {
+      const resolverOption = yield* Effect.serviceOption(GitHubAccountResolver);
+      if (Option.isNone(resolverOption)) {
+        return {};
+      }
+      const resolution = yield* resolverOption.value.resolveCommitIdentityForCwd(cwd);
+      if (resolution._tag === "ambient") {
+        return {};
+      }
+      const { name, email } = resolution.identity;
+      return {
+        GIT_AUTHOR_NAME: name,
+        GIT_AUTHOR_EMAIL: email,
+        GIT_COMMITTER_NAME: name,
+        GIT_COMMITTER_EMAIL: email,
+      };
+    });
+
+  /**
    * Env for a git command that talks to a remote (fetch/pull/push). Combines
    * the non-interactive base — so the server never blocks on a credential
    * prompt — with the project's selected-account auth env (token + gh
@@ -1910,9 +1941,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             onStderrLine: (line: string) =>
               options.progress?.onOutputLine?.({ stream: "stderr", text: line }) ?? Effect.void,
           };
+    // Author/commit as the project's selected GitHub account (if any) rather
+    // than the machine's ambient git identity, so commits are attributed to the
+    // account in the project's settings — not whichever account happens to be
+    // active on the machine.
+    const identityEnv = yield* resolveCommitIdentityEnv(cwd);
     yield* executeGit("GitVcsDriver.commit.commit", cwd, args, {
       ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(progress ? { progress } : {}),
+      env: identityEnv,
     }).pipe(Effect.asVoid);
     const commitSha = yield* runGitStdout("GitVcsDriver.commit.revParseHead", cwd, [
       "rev-parse",

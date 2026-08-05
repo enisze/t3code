@@ -671,6 +671,7 @@ describe("GitHubCli account scoping", () => {
           account: { host: "github.com", login: "octo" },
           token: "gho_project",
         }),
+      resolveCommitIdentityForCwd: () => Effect.succeed({ _tag: "ambient" }),
     }),
   );
 
@@ -723,6 +724,7 @@ describe("GitHubCli account scoping", () => {
                     _tag: "unavailable",
                     account: { host: "github.com", login: "octo" },
                   }),
+                resolveCommitIdentityForCwd: () => Effect.succeed({ _tag: "ambient" }),
               }),
             ),
           ),

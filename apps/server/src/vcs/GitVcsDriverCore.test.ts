@@ -1515,6 +1515,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
                 _tag: "unavailable",
                 account: { host: "github.com", login: "octo" },
               }),
+            resolveCommitIdentityForCwd: () => Effect.succeed({ _tag: "ambient" }),
           }),
         ),
       ),
