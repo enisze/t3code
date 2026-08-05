@@ -2520,11 +2520,11 @@ function ChatViewContent(props: ChatViewProps) {
     shouldUsePlanSidebarSheet,
   ]);
   const showComposerContextStrip = isGitRepo && activeProject !== null;
-  // The diff surface always defaults to the working tree; the in-panel scope
-  // dropdown is how you switch to branch changes or a specific turn. Because the
-  // default no longer depends on git status, the panel needn't remount once
-  // status resolves.
-  const initialDiffPanelGitScope = "unstaged" as const;
+  // The diff surface defaults to branch changes (everything done on this branch
+  // vs. its base) rather than the working tree — the agent commits its work, so
+  // the working tree is usually empty and would show nothing. The in-panel scope
+  // dropdown still switches to the working tree or a specific turn.
+  const initialDiffPanelGitScope = "branch" as const;
   const terminalShortcutLabelOptions = useMemo(
     () => ({
       context: {
