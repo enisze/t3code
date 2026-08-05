@@ -7,6 +7,7 @@ import {
 import {
   CircleAlertIcon,
   FileDiffIcon,
+  FileIcon,
   MessageSquareDotIcon,
   MessageSquarePlusIcon,
   XIcon,
@@ -30,6 +31,8 @@ import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 export interface WorktreeContentTabDescriptor {
   id: string;
   title: string;
+  /** Which view the tab renders — picks the tab icon. */
+  view: "diff" | "file";
 }
 
 const EMPTY_CONTENT_TABS: ReadonlyArray<WorktreeContentTabDescriptor> = [];
@@ -282,6 +285,7 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
           })}
           {contentTabs.map((tab) => {
             const active = tab.id === activeContentTabId;
+            const TabIcon = tab.view === "file" ? FileIcon : FileDiffIcon;
             return (
               <div
                 key={`content:${tab.id}`}
@@ -301,7 +305,7 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
                         className="flex min-w-0 flex-1 items-center gap-1.5 truncate py-1 pl-2.5 text-left"
                         onClick={() => onSelectContentTab?.(tab.id)}
                       >
-                        <FileDiffIcon aria-hidden="true" className="size-3.5 shrink-0" />
+                        <TabIcon aria-hidden="true" className="size-3.5 shrink-0" />
                         <span className="truncate">{tab.title}</span>
                       </button>
                     }
@@ -321,7 +325,9 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
                   >
                     <XIcon aria-hidden="true" className="size-3.5" />
                   </TooltipTrigger>
-                  <TooltipPopup side="bottom">Close diff</TooltipPopup>
+                  <TooltipPopup side="bottom">
+                    {tab.view === "file" ? "Close file" : "Close diff"}
+                  </TooltipPopup>
                 </Tooltip>
               </div>
             );

@@ -17,7 +17,7 @@ import {
   SearchIcon,
   TextWrapIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { type DraftId } from "../composerDraftStore";
 import { openDiffFilePrimaryAction } from "../diffFileActions";
@@ -42,8 +42,7 @@ import { useWorkspaceThreadRef } from "../lib/workspaceThreadRef";
 import { useClientSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
-import { ChangedFilesTree } from "./chat/ChangedFilesTree";
-import type { TurnDiffFileChange } from "../types";
+import { DiffNavigatorFileList, type DiffNavigatorFile } from "./chat/ChangedFilesTree";
 import { AnnotatableCodeView, type AnnotatableCodeViewHandle } from "./diffs/AnnotatableCodeView";
 import { Button } from "./ui/button";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
@@ -209,6 +208,11 @@ interface DiffPanelProps {
   fileDiffPath?: string;
   /** Invoked when a file is chosen in the navigator tree. */
   onOpenFileDiff?: (filePath: string) => void;
+  /**
+   * Optional control rendered at the leading edge of the `file` variant
+   * toolbar — used to host the shared edit/view toggle for the file viewer.
+   */
+  fileViewToggle?: ReactNode;
 }
 
 export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
@@ -221,6 +225,7 @@ export default function DiffPanel({
   variant = "navigator",
   fileDiffPath,
   onOpenFileDiff,
+  fileViewToggle,
 }: DiffPanelProps) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = useDiffThemeName();
@@ -239,7 +244,6 @@ export default function DiffPanel({
   const focusedFilePath = variant === "file" ? (fileDiffPath ?? null) : null;
   // Whether the navigator tree shows folders expanded (defaults to open so the
   // full folder structure is visible, matching the changed-files list).
-  const [navigatorDirsExpanded, setNavigatorDirsExpanded] = useState(true);
   const codeViewRef = useRef<AnnotatableCodeViewHandle>(null);
 
   const routeThreadRef = useParams({
@@ -536,17 +540,18 @@ export default function DiffPanel({
     () => (focusedFile ? [{ ...focusedFile, collapsed: false }] : codeViewFiles),
     [codeViewFiles, focusedFile],
   );
-  // The navigator renders a folder tree of the changed files. Per-file stats
-  // come from each file's own hunks so the tree matches the diff exactly.
-  const navigatorFiles = useMemo<TurnDiffFileChange[]>(
+  // The navigator renders a flat list of the changed files (no folder nesting).
+  // Per-file stats come from each file's own hunks so the list matches the diff
+  // exactly; `viewed` drives the dim + move-to-bottom treatment.
+  const navigatorFiles = useMemo<DiffNavigatorFile[]>(
     () =>
-      codeViewFiles.map(({ fileDiff, filePath }) => {
+      codeViewFiles.map(({ fileDiff, filePath, viewed }) => {
         const stat = getDiffLineStat([fileDiff]);
         return {
           path: filePath,
-          kind: fileDiff.type,
           additions: stat.additions,
           deletions: stat.deletions,
+          viewed,
         };
       }),
     [codeViewFiles],
@@ -625,8 +630,34 @@ export default function DiffPanel({
       useDiffViewedStore.getState().setFileViewed(collapseScopeKey, filePath, signature, nowViewed);
       // Collapse a file when it is marked viewed, and expand it when unmarked.
       setDiffFileExpanded(filePath, !nowViewed);
+      // After marking a file viewed, jump to the next still-unviewed file so a
+      // review flows file-to-file without hunting the list. Wraps around, and
+      // stops (stays put) once everything is viewed.
+      if (nowViewed && onOpenFileDiff) {
+        const order = codeViewFiles.map((file) => file.filePath);
+        const currentIndex = order.indexOf(filePath);
+        if (currentIndex >= 0) {
+          const isViewed = (candidate: string) => {
+            if (candidate === filePath) return true;
+            const candidateSignature = signatureByFilePath.get(candidate);
+            return (
+              candidateSignature !== undefined && viewedSignatures[candidate] === candidateSignature
+            );
+          };
+          const rotated = [...order.slice(currentIndex + 1), ...order.slice(0, currentIndex)];
+          const nextFilePath = rotated.find((candidate) => !isViewed(candidate));
+          if (nextFilePath) onOpenFileDiff(nextFilePath);
+        }
+      }
     },
-    [collapseScopeKey, setDiffFileExpanded, signatureByFilePath, viewedSignatures],
+    [
+      codeViewFiles,
+      collapseScopeKey,
+      onOpenFileDiff,
+      setDiffFileExpanded,
+      signatureByFilePath,
+      viewedSignatures,
+    ],
   );
 
   const selectTurn = (turnId: TurnId) => {
@@ -831,6 +862,29 @@ export default function DiffPanel({
       </div>
       {variant === "file" ? (
         <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
+          {fileViewToggle ?? null}
+          {focusedFile ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <label className="mr-1 flex shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-md px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground">
+                    <Checkbox
+                      checked={focusedFile.viewed}
+                      className="size-3.5"
+                      aria-label={focusedFile.viewed ? "Mark as not viewed" : "Mark as viewed"}
+                      onCheckedChange={() => toggleFileViewed(focusedFile.filePath)}
+                    />
+                    Viewed
+                  </label>
+                }
+              />
+              <TooltipPopup side="top">
+                {focusedFile.viewed
+                  ? "Marked viewed — unchecks automatically if the file changes"
+                  : "Mark as viewed"}
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
           <ToggleGroup
             className="shrink-0"
             variant="outline"
@@ -893,17 +947,6 @@ export default function DiffPanel({
             </TooltipPopup>
           </Tooltip>
         </div>
-      ) : navigatorFiles.length > 0 ? (
-        <Button
-          type="button"
-          size="xs"
-          variant="ghost"
-          className="h-6 shrink-0 px-1.5 text-muted-foreground hover:text-foreground [-webkit-app-region:no-drag]"
-          aria-label={navigatorDirsExpanded ? "Collapse all folders" : "Expand all folders"}
-          onClick={() => setNavigatorDirsExpanded((value) => !value)}
-        >
-          {navigatorDirsExpanded ? "Collapse all" : "Expand all"}
-        </Button>
       ) : null}
     </>
   );
@@ -958,11 +1001,11 @@ export default function DiffPanel({
           ) : variant === "navigator" ? (
             navigatorFiles.length > 0 ? (
               <div className="min-h-0 flex-1 overflow-auto p-2">
-                <ChangedFilesTree
+                <DiffNavigatorFileList
                   files={navigatorFiles}
-                  allDirectoriesExpanded={navigatorDirsExpanded}
                   resolvedTheme={resolvedTheme}
                   onOpenFile={(filePath) => onOpenFileDiff?.(filePath)}
+                  onToggleViewed={toggleFileViewed}
                 />
               </div>
             ) : (

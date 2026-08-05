@@ -56,11 +56,15 @@ interface RightPanelStoreState {
    * disturbing the active surface (unless `activateDefault`/`open` is set). Used
    * to keep the two permanent tabs present even for threads whose persisted
    * panel predates them.
+   *
+   * `focusDiffUnlessFiles` snaps the active surface to Diff whenever a Diff tab
+   * is available, unless the user's last explicit selection was the Files tab —
+   * used to default a focused thread to its diff while honoring a Files pick.
    */
   ensureFixedSurfaces: (
     ref: ScopedThreadRef,
     available: { diff: boolean; files: boolean },
-    options?: { open?: boolean; activateDefault?: boolean },
+    options?: { open?: boolean; activateDefault?: boolean; focusDiffUnlessFiles?: boolean },
   ) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
@@ -92,6 +96,15 @@ const EMPTY_THREAD_STATE: ThreadRightPanelState = {
   activeSurfaceId: null,
   surfaces: [],
 };
+
+/**
+ * Diff and Files are the fixed surfaces — always present and never closeable.
+ * Every close path (single, close-others, close-to-right, close-all) must
+ * preserve them so the two permanent tabs can never be removed.
+ */
+export function isPermanentRightPanelSurface(surface: RightPanelSurface): boolean {
+  return surface.kind === "diff" || surface.kind === "files";
+}
 
 const singletonSurface = (
   kind: Exclude<RightPanelKind, "file" | "preview" | "terminal">,
@@ -288,6 +301,14 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             if (options?.activateDefault && (activeSurfaceId === null || options.open)) {
               activeSurfaceId = leading[0]?.id ?? activeSurfaceId;
             }
+            if (options?.focusDiffUnlessFiles && available.diff) {
+              const activeKind = surfaces.find((surface) => surface.id === activeSurfaceId)?.kind;
+              // Snap to Diff unless the user last explicitly picked Files.
+              if (activeKind !== "files") {
+                activeSurfaceId =
+                  surfaces.find((surface) => surface.kind === "diff")?.id ?? activeSurfaceId;
+              }
+            }
             if (activeSurfaceId !== null && !surfaces.some((s) => s.id === activeSurfaceId)) {
               activeSurfaceId = surfaces[0]?.id ?? null;
             }
@@ -314,11 +335,8 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       openFile: (ref, relativePath, line) =>
         set((state) => ({
           byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
-            const withoutStandaloneExplorer = current.surfaces.filter(
-              (surface) => surface.kind !== "files",
-            );
             const surfaceId = `file:${relativePath}` as const;
-            const existing = withoutStandaloneExplorer.find(
+            const existing = current.surfaces.find(
               (surface): surface is Extract<RightPanelSurface, { kind: "file" }> =>
                 surface.id === surfaceId && surface.kind === "file",
             );
@@ -327,14 +345,14 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               normalizeRevealLine(line),
               (existing?.revealRequestId ?? 0) + 1,
             );
+            // Keep every existing surface — the permanent Diff/Files tabs must
+            // survive opening a file surface alongside them.
             return {
               isOpen: true,
               activeSurfaceId: surface.id,
               surfaces: existing
-                ? withoutStandaloneExplorer.map((entry) =>
-                    entry.id === surface.id ? surface : entry,
-                  )
-                : [...withoutStandaloneExplorer, surface],
+                ? current.surfaces.map((entry) => (entry.id === surface.id ? surface : entry))
+                : [...current.surfaces, surface],
             };
           }),
         })),
@@ -430,6 +448,8 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
             const index = current.surfaces.findIndex((surface) => surface.id === surfaceId);
             if (index < 0) return current;
+            // The fixed Diff/Files tabs can never be closed.
+            if (isPermanentRightPanelSurface(current.surfaces[index]!)) return current;
             const surfaces = current.surfaces.filter((surface) => surface.id !== surfaceId);
             if (current.activeSurfaceId !== surfaceId) {
               return { ...current, isOpen: surfaces.length > 0 && current.isOpen, surfaces };
@@ -447,11 +467,16 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         set((state) => ({
           byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
             const surface = current.surfaces.find((entry) => entry.id === surfaceId);
-            if (!surface || current.surfaces.length === 1) return current;
+            if (!surface) return current;
+            // Keep the target plus the permanent Diff/Files tabs, in order.
+            const surfaces = current.surfaces.filter(
+              (entry) => entry.id === surfaceId || isPermanentRightPanelSurface(entry),
+            );
+            if (surfaces.length === current.surfaces.length) return current;
             return {
               ...current,
               isOpen: true,
-              surfaces: [surface],
+              surfaces,
               activeSurfaceId: surface.id,
             };
           }),
@@ -460,8 +485,12 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         set((state) => ({
           byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
             const index = current.surfaces.findIndex((surface) => surface.id === surfaceId);
-            if (index < 0 || index === current.surfaces.length - 1) return current;
-            const surfaces = current.surfaces.slice(0, index + 1);
+            if (index < 0) return current;
+            // Keep everything up to the anchor, plus any permanent tabs beyond it.
+            const surfaces = current.surfaces.filter(
+              (surface, i) => i <= index || isPermanentRightPanelSurface(surface),
+            );
+            if (surfaces.length === current.surfaces.length) return current;
             const activeStillExists = surfaces.some(
               (surface) => surface.id === current.activeSurfaceId,
             );
@@ -474,11 +503,26 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         })),
       closeAllSurfaces: (ref) =>
         set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
-            current.surfaces.length === 0
-              ? current
-              : { ...current, isOpen: false, surfaces: [], activeSurfaceId: null },
-          ),
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+            if (current.surfaces.length === 0) return current;
+            // The permanent Diff/Files tabs can never be closed — "close all"
+            // clears every closeable tab and leaves the fixed ones in place.
+            const permanents = current.surfaces.filter(isPermanentRightPanelSurface);
+            if (permanents.length === current.surfaces.length) return current;
+            if (permanents.length === 0) {
+              return { ...current, isOpen: false, surfaces: [], activeSurfaceId: null };
+            }
+            const activeStillExists = permanents.some(
+              (surface) => surface.id === current.activeSurfaceId,
+            );
+            return {
+              ...current,
+              surfaces: permanents,
+              activeSurfaceId: activeStillExists
+                ? current.activeSurfaceId
+                : (permanents[0]?.id ?? null),
+            };
+          }),
         })),
       reconcileBrowserSurfaces: (ref, tabIds) =>
         set((state) => ({

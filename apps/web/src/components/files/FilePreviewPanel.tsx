@@ -14,7 +14,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { ChevronRight, Code2, Eye, FolderTree, Globe2, LoaderCircle } from "lucide-react";
 import * as Schema from "effect/Schema";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import { useAssetUrlState } from "~/assets/assetUrls";
@@ -76,6 +76,17 @@ interface FilePreviewPanelProps {
   revealRequestId: number;
   onOpenFile: (relativePath: string) => void;
   onPendingChange: (relativePath: string, pending: boolean) => void;
+  /**
+   * Content-only mode: hide the file explorer (and its toggle) and render just
+   * the breadcrumbs + file contents. Used when the panel is a chat-column file
+   * tab, where the explorer already lives in the right-panel Files tab.
+   */
+  disableExplorer?: boolean;
+  /**
+   * Optional control rendered at the leading edge of the header row — used to
+   * host the shared edit/view toggle for the file viewer.
+   */
+  headerLeading?: ReactNode;
 }
 
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
@@ -659,6 +670,8 @@ export default function FilePreviewPanel({
   revealRequestId,
   onOpenFile,
   onPendingChange,
+  disableExplorer = false,
+  headerLeading,
 }: FilePreviewPanelProps) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = useDiffThemeName();
@@ -740,6 +753,7 @@ export default function FilePreviewPanel({
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {relativePath ? (
         <div className="surface-subheader gap-2 px-3" data-surface-subheader>
+          {headerLeading ? <div className="shrink-0">{headerLeading}</div> : null}
           <ScrollArea
             ref={breadcrumbRef}
             hideScrollbars
@@ -827,25 +841,27 @@ export default function FilePreviewPanel({
               <TooltipPopup>Open file in preview browser</TooltipPopup>
             </Tooltip>
           ) : null}
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Toggle
-                  className="shrink-0"
-                  pressed={explorerOpen}
-                  onPressedChange={toggleExplorer}
-                  aria-label={explorerOpen ? "Hide file explorer" : "Show file explorer"}
-                  variant="ghost"
-                  size="sm"
-                >
-                  <FolderTree className="size-3.5" />
-                </Toggle>
-              }
-            />
-            <TooltipPopup>
-              {explorerOpen ? "Hide file explorer" : "Show file explorer"}
-            </TooltipPopup>
-          </Tooltip>
+          {disableExplorer ? null : (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Toggle
+                    className="shrink-0"
+                    pressed={explorerOpen}
+                    onPressedChange={toggleExplorer}
+                    aria-label={explorerOpen ? "Hide file explorer" : "Show file explorer"}
+                    variant="ghost"
+                    size="sm"
+                  >
+                    <FolderTree className="size-3.5" />
+                  </Toggle>
+                }
+              />
+              <TooltipPopup>
+                {explorerOpen ? "Hide file explorer" : "Show file explorer"}
+              </TooltipPopup>
+            </Tooltip>
+          )}
         </div>
       ) : null}
       {relativePath && file.data?.truncated ? (
@@ -929,7 +945,7 @@ export default function FilePreviewPanel({
             )
           ) : null}
         </div>
-        {explorerOpen || relativePath === null ? (
+        {!disableExplorer && (explorerOpen || relativePath === null) ? (
           <aside
             className={cn(
               "flex min-h-0 shrink-0 bg-background",

@@ -11,7 +11,7 @@ import {
 } from "react";
 
 import { isElectron } from "~/env";
-import type { RightPanelSurface } from "~/rightPanelStore";
+import { type RightPanelSurface, isPermanentRightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -45,10 +45,7 @@ interface RightPanelTabsProps {
 
 type TabContextMenuAction = "copy-path" | "close" | "close-others" | "close-to-right" | "close-all";
 
-/** Diff and Files are the fixed surfaces — always present and not closeable. */
-function isPermanentSurface(surface: RightPanelSurface): boolean {
-  return surface.kind === "diff" || surface.kind === "files";
-}
+const isPermanentSurface = isPermanentRightPanelSurface;
 
 function surfaceTitle(
   surface: RightPanelSurface,
@@ -149,6 +146,16 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       const surfaceIndex = props.surfaces.findIndex((entry) => entry.id === surface.id);
       if (surfaceIndex < 0) return;
 
+      // Permanent Diff/Files tabs are never removed, so a bulk action is only
+      // enabled when at least one *closeable* tab would actually be affected.
+      const hasCloseableOthers = props.surfaces.some(
+        (entry) => entry.id !== surface.id && !isPermanentSurface(entry),
+      );
+      const hasCloseableToRight = props.surfaces
+        .slice(surfaceIndex + 1)
+        .some((entry) => !isPermanentSurface(entry));
+      const hasCloseableAny = props.surfaces.some((entry) => !isPermanentSurface(entry));
+
       const items: ContextMenuItem<TabContextMenuAction>[] = [];
       if (surface.kind === "file") {
         items.push({ id: "copy-path", label: "Copy path" });
@@ -158,17 +165,17 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         {
           id: "close-others",
           label: "Close others",
-          disabled: props.surfaces.length <= 1,
+          disabled: !hasCloseableOthers,
         },
         {
           id: "close-to-right",
           label: "Close to the right",
-          disabled: surfaceIndex >= props.surfaces.length - 1,
+          disabled: !hasCloseableToRight,
         },
         {
           id: "close-all",
           label: "Close all",
-          disabled: props.surfaces.length === 0,
+          disabled: !hasCloseableAny,
         },
       );
 

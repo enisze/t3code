@@ -142,7 +142,49 @@ describe("rightPanelStore", () => {
     });
   });
 
-  it("replaces the standalone explorer with peer file surfaces", () => {
+  it("ensureFixedSurfaces opens a fresh thread on the Diff tab", () => {
+    useRightPanelStore
+      .getState()
+      .ensureFixedSurfaces(
+        refA,
+        { diff: true, files: true },
+        { open: true, activateDefault: true },
+      );
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
+  });
+
+  it("focusDiffUnlessFiles snaps a non-Files surface back to Diff", () => {
+    useRightPanelStore.getState().open(refA, "preview");
+    useRightPanelStore
+      .getState()
+      .ensureFixedSurfaces(refA, { diff: true, files: true }, { focusDiffUnlessFiles: true });
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
+  });
+
+  it("focusDiffUnlessFiles preserves an explicit Files selection", () => {
+    useRightPanelStore
+      .getState()
+      .ensureFixedSurfaces(
+        refA,
+        { diff: true, files: true },
+        { open: true, activateDefault: true },
+      );
+    useRightPanelStore.getState().activateSurface(refA, "files");
+    useRightPanelStore
+      .getState()
+      .ensureFixedSurfaces(refA, { diff: true, files: true }, { focusDiffUnlessFiles: true });
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("files");
+  });
+
+  it("focusDiffUnlessFiles is a no-op when no Diff tab is available", () => {
+    useRightPanelStore.getState().open(refA, "files");
+    useRightPanelStore
+      .getState()
+      .ensureFixedSurfaces(refA, { diff: false, files: true }, { focusDiffUnlessFiles: true });
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("files");
+  });
+
+  it("opens file surfaces beside the permanent Files tab without removing it", () => {
     useRightPanelStore.getState().open(refA, "files");
     useRightPanelStore.getState().openFile(refA, "src/index.ts");
     useRightPanelStore.getState().openFile(refA, "src/index.ts");
@@ -152,6 +194,7 @@ describe("rightPanelStore", () => {
       isOpen: true,
       activeSurfaceId: "file:README.md",
       surfaces: [
+        { id: "files", kind: "files" },
         {
           id: "file:src/index.ts",
           kind: "file",
@@ -432,6 +475,70 @@ describe("rightPanelStore", () => {
       activeSurfaceId: null,
       surfaces: [],
     });
+  });
+
+  it("close others keeps the permanent Diff and Files tabs", () => {
+    useRightPanelStore
+      .getState()
+      .ensureFixedSurfaces(refA, { diff: true, files: true }, { open: true });
+    useRightPanelStore.getState().openFile(refA, "src/index.ts");
+    useRightPanelStore.getState().openTerminal(refA, "term-1");
+
+    useRightPanelStore.getState().closeOtherSurfaces(refA, "file:src/index.ts");
+
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual([
+      "diff",
+      "files",
+      "file:src/index.ts",
+    ]);
+    expect(state.activeSurfaceId).toBe("file:src/index.ts");
+  });
+
+  it("close to the right keeps permanent tabs positioned after the anchor", () => {
+    useRightPanelStore
+      .getState()
+      .ensureFixedSurfaces(refA, { diff: true, files: true }, { open: true });
+    useRightPanelStore.getState().openFile(refA, "src/index.ts");
+    useRightPanelStore.getState().openTerminal(refA, "term-1");
+
+    // Anchor on Diff (index 0): Files sits to its right but must survive.
+    useRightPanelStore.getState().closeSurfacesToRight(refA, "diff");
+
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.map(
+        (surface) => surface.id,
+      ),
+    ).toEqual(["diff", "files"]);
+  });
+
+  it("close all keeps the permanent tabs and leaves the panel open", () => {
+    useRightPanelStore
+      .getState()
+      .ensureFixedSurfaces(refA, { diff: true, files: true }, { open: true });
+    useRightPanelStore.getState().openFile(refA, "src/index.ts");
+    useRightPanelStore.getState().openTerminal(refA, "term-1");
+
+    useRightPanelStore.getState().closeAllSurfaces(refA);
+
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.isOpen).toBe(true);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual(["diff", "files"]);
+    expect(state.activeSurfaceId).toBe("diff");
+  });
+
+  it("single close never removes a permanent tab", () => {
+    useRightPanelStore
+      .getState()
+      .ensureFixedSurfaces(refA, { diff: true, files: true }, { open: true });
+
+    useRightPanelStore.getState().closeSurface(refA, "files");
+
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.map(
+        (surface) => surface.id,
+      ),
+    ).toContain("files");
   });
 
   it("reconciles browser surfaces without deleting other surface kinds", () => {

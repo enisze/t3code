@@ -39,6 +39,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         },
         gitHubAccount: null,
         worktreeBranchPrefix: null,
+        defaultWorktreeBranch: null,
         scripts: [],
         createdAt: "2026-03-24T00:00:00.000Z",
         updatedAt: "2026-03-24T00:00:00.000Z",

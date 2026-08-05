@@ -214,6 +214,7 @@ export function projectEvent(
             reviewModelSelection: payload.reviewModelSelection ?? null,
             gitHubAccount: payload.gitHubAccount ?? null,
             worktreeBranchPrefix: payload.worktreeBranchPrefix ?? null,
+            defaultWorktreeBranch: payload.defaultWorktreeBranch ?? null,
             scripts: payload.scripts,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -254,6 +255,9 @@ export function projectEvent(
                     : {}),
                   ...(payload.worktreeBranchPrefix !== undefined
                     ? { worktreeBranchPrefix: payload.worktreeBranchPrefix }
+                    : {}),
+                  ...(payload.defaultWorktreeBranch !== undefined
+                    ? { defaultWorktreeBranch: payload.defaultWorktreeBranch }
                     : {}),
                   ...(payload.scripts !== undefined ? { scripts: payload.scripts } : {}),
                   updatedAt: payload.updatedAt,

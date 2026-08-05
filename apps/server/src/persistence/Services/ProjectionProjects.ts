@@ -28,6 +28,7 @@ export const ProjectionProject = Schema.Struct({
   reviewModelSelection: Schema.NullOr(ModelSelection),
   gitHubAccount: Schema.NullOr(GitHubAccountRef),
   worktreeBranchPrefix: Schema.NullOr(Schema.String),
+  defaultWorktreeBranch: Schema.NullOr(Schema.String),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

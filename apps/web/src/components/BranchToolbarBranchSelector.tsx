@@ -475,15 +475,18 @@ export function BranchToolbarBranchSelector({
     });
   };
 
-  // Default the worktree base to the repo default branch (origin/HEAD), only
-  // falling back to the checked-out branch when no default is known.
+  // Default the worktree base to the project's configured default branch when
+  // set; otherwise the repo default branch (origin/HEAD), falling back to the
+  // checked-out branch when no default is known. A configured project default
+  // applies immediately without waiting for the ref list to load.
   const defaultBranchName = useMemo(
     () => refs.find((refName) => refName.isDefault)?.name ?? null,
     [refs],
   );
-  const worktreeBaseBranchCandidate = isInitialBranchesLoadPending
-    ? null
-    : (defaultBranchName ?? currentGitBranch);
+  const projectDefaultWorktreeBranch = activeProject?.defaultWorktreeBranch ?? null;
+  const worktreeBaseBranchCandidate =
+    projectDefaultWorktreeBranch ??
+    (isInitialBranchesLoadPending ? null : (defaultBranchName ?? currentGitBranch));
 
   useEffect(() => {
     if (

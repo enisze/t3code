@@ -253,6 +253,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           reviewModelSelection: command.reviewModelSelection ?? null,
           gitHubAccount: command.gitHubAccount ?? null,
           worktreeBranchPrefix: command.worktreeBranchPrefix ?? null,
+          defaultWorktreeBranch: command.defaultWorktreeBranch ?? null,
           scripts: [],
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
@@ -296,6 +297,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.gitHubAccount !== undefined ? { gitHubAccount: command.gitHubAccount } : {}),
           ...(command.worktreeBranchPrefix !== undefined
             ? { worktreeBranchPrefix: command.worktreeBranchPrefix }
+            : {}),
+          ...(command.defaultWorktreeBranch !== undefined
+            ? { defaultWorktreeBranch: command.defaultWorktreeBranch }
             : {}),
           ...(command.scripts !== undefined ? { scripts: command.scripts } : {}),
           updatedAt: occurredAt,

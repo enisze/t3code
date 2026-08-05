@@ -231,6 +231,13 @@ export const OrchestrationProject = Schema.Struct({
   worktreeBranchPrefix: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /**
+   * Branch new worktrees are created from (e.g. `main`). Null falls back to the
+   * repository default branch (`origin/HEAD`), then the current checkout.
+   */
+  defaultWorktreeBranch: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -415,6 +422,9 @@ export const OrchestrationProjectShell = Schema.Struct({
   worktreeBranchPrefix: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  defaultWorktreeBranch: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -547,6 +557,7 @@ export const ProjectCreateCommand = Schema.Struct({
   reviewModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   gitHubAccount: Schema.optional(Schema.NullOr(GitHubAccountRef)),
   worktreeBranchPrefix: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  defaultWorktreeBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   createdAt: IsoDateTime,
 });
 
@@ -560,6 +571,7 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   reviewModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   gitHubAccount: Schema.optional(Schema.NullOr(GitHubAccountRef)),
   worktreeBranchPrefix: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  defaultWorktreeBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
 });
 
@@ -949,6 +961,7 @@ export const ProjectCreatedPayload = Schema.Struct({
   reviewModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   gitHubAccount: Schema.optional(Schema.NullOr(GitHubAccountRef)),
   worktreeBranchPrefix: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  defaultWorktreeBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -963,6 +976,7 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   reviewModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   gitHubAccount: Schema.optional(Schema.NullOr(GitHubAccountRef)),
   worktreeBranchPrefix: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  defaultWorktreeBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
   updatedAt: IsoDateTime,
 });

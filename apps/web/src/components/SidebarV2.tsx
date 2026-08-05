@@ -159,6 +159,7 @@ import {
 } from "./Sidebar.snooze";
 import { GitHubIcon } from "./Icons";
 import { ProjectDefaultAgentField } from "./ProjectDefaultAgentField";
+import { ProjectDefaultWorktreeBranchField } from "./ProjectDefaultWorktreeBranchField";
 import { ProjectScriptsField } from "./ProjectScriptsField";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
@@ -467,16 +468,15 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   const lastVisitedDate = lastVisitedAt === undefined ? null : parseTimestampDate(lastVisitedAt);
   const wokeAtDate = props.wokeAt === null ? null : parseTimestampDate(props.wokeAt);
   const isWoke = wokeAtDate !== null && (lastVisitedDate === null || lastVisitedDate < wokeAtDate);
-  // In-flight rows (working, or waiting on approval/input) fade as a whole:
-  // there is nothing for the user to do yet, so prominence is reserved for
-  // rows that need a human — done (unread), read-but-unsettled, failed, and
-  // freshly woken. The status label keeps its hue, so waiting rows stay
-  // findable. In-flight rows recede the same as read-ready ones (inbox-zero:
-  // working threads aren't your problem yet) — only the colored status label
-  // stands out.
-  const isInFlight = status === "working" || status === "approval" || status === "input";
+  // Rows waiting on a human (approval/input) fade as a whole: there is nothing
+  // to do yet, so prominence is reserved for rows that need action — done
+  // (unread), read-but-unsettled, failed, and freshly woken. Their colored
+  // status label keeps its hue so they stay findable. Working rows do NOT
+  // recede: an actively-running thread should read as live (full prominence +
+  // its animated status circle), not dimmed like a settled row.
+  const isWaiting = status === "approval" || status === "input";
   const shouldRecede =
-    (status === "ready" || isInFlight) && !isUnread && !isWoke && !props.isActive && !isSelected;
+    (status === "ready" || isWaiting) && !isUnread && !isWoke && !props.isActive && !isSelected;
   // Status hues follow the system-wide convention set by sidebar v1 and the
   // mobile Live Activity/widgets (amber approval, indigo input, sky working)
   // so a thread reads the same color everywhere it surfaces.
@@ -697,7 +697,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
         : shouldRecede
           ? "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
           : "bg-transparent text-sidebar-foreground hover:bg-sidebar-row-hover",
-    isInFlight &&
+    isWaiting &&
       !props.isActive &&
       !isSelected &&
       "opacity-70 transition-opacity hover:opacity-100",
@@ -939,7 +939,10 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                       )}
                     >
                       {topStatus.icon === "working" ? (
-                        <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
+                        <CircleDashedIcon
+                          aria-hidden
+                          className="size-4 shrink-0 animate-spin [animation-duration:2s] motion-reduce:animate-none"
+                        />
                       ) : topStatus.icon === "done" ? (
                         <CircleCheckIcon aria-hidden className="size-4 shrink-0" />
                       ) : topStatus.icon === "woke" ? (
@@ -1644,6 +1647,27 @@ export default function SidebarV2() {
           stackedThreadToast({
             type: "error",
             title: "Failed to update branch prefix",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [updateProject],
+  );
+
+  const updateProjectDefaultWorktreeBranch = useCallback(
+    async (member: SidebarProjectGroupMember, nextBranch: string | null) => {
+      if ((member.defaultWorktreeBranch ?? null) === nextBranch) return;
+      const result = await updateProject({
+        environmentId: member.environmentId,
+        input: { projectId: member.id, defaultWorktreeBranch: nextBranch },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to update default worktree branch",
             description: error instanceof Error ? error.message : "An error occurred.",
           }),
         );
@@ -3307,6 +3331,14 @@ export default function SidebarV2() {
                         {member.worktreeBranchPrefix === null ? " (global default)" : null}
                       </span>
                     </label>
+                    <ProjectDefaultWorktreeBranchField
+                      idPrefix={`project-worktree-branch-${member.physicalProjectKey}`}
+                      environmentId={member.environmentId}
+                      projectId={member.id}
+                      onChange={(branch) => {
+                        void updateProjectDefaultWorktreeBranch(member, branch);
+                      }}
+                    />
                   </div>
                   <ProjectDefaultAgentField
                     idPrefix={`project-agent-${member.physicalProjectKey}`}

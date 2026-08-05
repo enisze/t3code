@@ -127,6 +127,7 @@ import {
 import {
   selectWorktreeContentTabs,
   useWorkspaceContentTabsStore,
+  type WorkspaceContentTabView,
 } from "../workspaceContentTabsStore";
 import {
   isPreviewSupportedInRuntime,
@@ -232,6 +233,7 @@ import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
+import { FileViewModeToggle } from "./FileViewModeToggle";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
 import { WorktreeThreadTabs } from "./chat/WorktreeThreadTabs";
@@ -2487,9 +2489,10 @@ function ChatViewContent(props: ChatViewProps) {
   // Default true while loading to avoid toolbar flicker.
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
   // Keep the fixed Diff + Files tabs present. A brand-new thread opens the panel
-  // with both (Diff active); an existing thread keeps whatever is active but has
-  // the two leading tabs backfilled so both are always available. A closed panel
-  // stays closed on return — the fresh-open only defaults new threads.
+  // with both (Diff active); focusing any thread with a diff snaps back to the
+  // Diff tab, unless the user last explicitly picked Files (then Files stays).
+  // A closed panel stays closed on return — the fresh-open only defaults new
+  // threads.
   const autoOpenedRightPanelKeysRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!workspaceThreadRef || !activeProject || !activeThreadKey || shouldUsePlanSidebarSheet)
@@ -2507,9 +2510,15 @@ function ChatViewContent(props: ChatViewProps) {
       );
       return;
     }
-    // Backfill the fixed tabs on any thread whose panel is already present.
+    // Backfill the fixed tabs on any thread whose panel is already present, and
+    // snap focus to the Diff tab whenever a diff is available — unless the user
+    // last explicitly selected the Files tab, which we preserve.
     if (state.isOpen || state.surfaces.length > 0) {
-      store.ensureFixedSurfaces(workspaceThreadRef, { diff: diffAvailable, files: true });
+      store.ensureFixedSurfaces(
+        workspaceThreadRef,
+        { diff: diffAvailable, files: true },
+        { focusDiffUnlessFiles: true },
+      );
     }
   }, [
     workspaceThreadRef,
@@ -3136,12 +3145,15 @@ function ChatViewContent(props: ChatViewProps) {
     newChatWorktreePath,
     primaryServerSettings.reviewPrompt,
   ]);
+  // Opens a file's contents as its own tab in the chat-column strip
+  // (worktree-scoped), chosen from the Files explorer — the file-view sibling
+  // of the diff tabs opened from the Diff navigator.
   const openFileSurface = useCallback(
     (relativePath: string) => {
-      if (!workspaceThreadRef || !activeProject) return;
-      useRightPanelStore.getState().openFile(workspaceThreadRef, relativePath);
+      if (!contentTabsWorktreeKey) return;
+      useWorkspaceContentTabsStore.getState().openFile(contentTabsWorktreeKey, relativePath);
     },
-    [activeProject, workspaceThreadRef],
+    [contentTabsWorktreeKey],
   );
   // Opens a file's diff as its own tab in the chat-column strip (worktree-scoped),
   // chosen from the Diff navigator tree.
@@ -3170,6 +3182,14 @@ function ChatViewContent(props: ChatViewProps) {
     if (!contentTabsWorktreeKey) return;
     useWorkspaceContentTabsStore.getState().activateChat(contentTabsWorktreeKey);
   }, [contentTabsWorktreeKey]);
+  // Flip the single file viewer between the diff and the editable file contents.
+  const setContentTabView = useCallback(
+    (view: WorkspaceContentTabView) => {
+      if (!contentTabsWorktreeKey) return;
+      useWorkspaceContentTabsStore.getState().setTabView(contentTabsWorktreeKey, view);
+    },
+    [contentTabsWorktreeKey],
+  );
   const togglePreviewPanel = useCallback(() => {
     if (!workspaceThreadRef || !isPreviewSupportedInRuntime()) return;
     if (previewPanelOpen) {
@@ -5882,6 +5902,7 @@ function ChatViewContent(props: ChatViewProps) {
           contentTabs={contentTabsState.tabs.map((tab) => ({
             id: tab.id,
             title: tab.filePath.slice(tab.filePath.lastIndexOf("/") + 1),
+            view: tab.view,
           }))}
           activeContentTabId={contentTabsState.activeTabId}
           onSelectContentTab={selectContentTab}
@@ -5963,24 +5984,51 @@ function ChatViewContent(props: ChatViewProps) {
               )}
             </div>
 
-            {/* File-diff content tab: fills the messages area while keeping the
-                composer docked below (still connected to the current chat). */}
+            {/* File content tab: fills the messages area while keeping the
+                composer docked below (still connected to the current chat).
+                A tab shows either the file's diff or its contents. */}
             {activeContentTab && activeThreadRef ? (
               <div
-                className="absolute inset-0 z-10 bg-background"
+                className="absolute inset-0 z-10 flex flex-col bg-background"
                 style={{ paddingBottom: composerOverlayHeight }}
                 data-chat-content-diff="true"
               >
                 <Suspense fallback={null}>
-                  <DiffPanel
-                    key={`${activeThreadKey}:content:${activeContentTab.filePath}`}
-                    mode="embedded"
-                    threadRef={activeThreadRef}
-                    composerDraftTarget={composerDraftTarget}
-                    initialGitScope={initialDiffPanelGitScope}
-                    variant="file"
-                    fileDiffPath={activeContentTab.filePath}
-                  />
+                  {activeContentTab.view === "file" && activeProject && activeWorkspaceRoot ? (
+                    <FilePreviewPanel
+                      key={`${activeThreadKey}:content:file:${activeContentTab.filePath}`}
+                      environmentId={activeProject.environmentId}
+                      cwd={activeWorkspaceRoot}
+                      projectName={activeProject.title}
+                      threadRef={activeThreadRef}
+                      composerDraftTarget={composerDraftTarget}
+                      keybindings={keybindings}
+                      availableEditors={availableEditors}
+                      relativePath={activeContentTab.filePath}
+                      revealLine={null}
+                      revealRequestId={0}
+                      onOpenFile={openFileSurface}
+                      onPendingChange={handleFilePendingChange}
+                      disableExplorer
+                      headerLeading={
+                        <FileViewModeToggle view="file" onChange={setContentTabView} />
+                      }
+                    />
+                  ) : (
+                    <DiffPanel
+                      key={`${activeThreadKey}:content:diff:${activeContentTab.filePath}`}
+                      mode="embedded"
+                      threadRef={activeThreadRef}
+                      composerDraftTarget={composerDraftTarget}
+                      initialGitScope={initialDiffPanelGitScope}
+                      variant="file"
+                      fileDiffPath={activeContentTab.filePath}
+                      onOpenFileDiff={openFileDiffSurface}
+                      fileViewToggle={
+                        <FileViewModeToggle view="diff" onChange={setContentTabView} />
+                      }
+                    />
+                  )}
                 </Suspense>
               </div>
             ) : null}
