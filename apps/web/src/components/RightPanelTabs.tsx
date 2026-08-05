@@ -45,6 +45,11 @@ interface RightPanelTabsProps {
 
 type TabContextMenuAction = "copy-path" | "close" | "close-others" | "close-to-right" | "close-all";
 
+/** Diff and Files are the fixed surfaces — always present and not closeable. */
+function isPermanentSurface(surface: RightPanelSurface): boolean {
+  return surface.kind === "diff" || surface.kind === "files";
+}
+
 function surfaceTitle(
   surface: RightPanelSurface,
   sessions: Readonly<Record<string, PreviewSessionSnapshot>>,
@@ -57,8 +62,6 @@ function surfaceTitle(
       return "Files";
     case "file":
       return surface.relativePath.slice(surface.relativePath.lastIndexOf("/") + 1);
-    case "file-diff":
-      return surface.filePath.slice(surface.filePath.lastIndexOf("/") + 1);
     case "terminal":
       return (
         terminalLabelsById.get(surface.activeTerminalId) ??
@@ -123,15 +126,6 @@ function SurfaceIcon({
           className="size-3.5"
         />
       );
-    case "file-diff":
-      return (
-        <PierreEntryIcon
-          pathValue={surface.filePath}
-          kind="file"
-          theme={theme}
-          className="size-3.5"
-        />
-      );
     case "terminal":
       return <TerminalSquare className="size-3.5 shrink-0" />;
     case "plan":
@@ -156,11 +150,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       if (surfaceIndex < 0) return;
 
       const items: ContextMenuItem<TabContextMenuAction>[] = [];
-      if (surface.kind === "file" || surface.kind === "file-diff") {
+      if (surface.kind === "file") {
         items.push({ id: "copy-path", label: "Copy path" });
       }
       items.push(
-        { id: "close", label: "Close" },
+        { id: "close", label: "Close", disabled: isPermanentSurface(surface) },
         {
           id: "close-others",
           label: "Close others",
@@ -182,7 +176,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       switch (action) {
         case "copy-path":
           if (surface.kind === "file") props.onCopyFilePath(surface.relativePath);
-          else if (surface.kind === "file-diff") props.onCopyFilePath(surface.filePath);
           break;
         case "close":
           props.onCloseSurface(surface);
@@ -211,6 +204,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       if (event.button !== 1) return;
       event.preventDefault();
       event.stopPropagation();
+      if (isPermanentSurface(surface)) return;
       props.onCloseSurface(surface);
     },
     [props],
@@ -247,6 +241,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             {props.surfaces.map((surface) => {
               const active = surface.id === props.activeSurfaceId;
               const pending = props.pendingSurfaceIds.has(surface.id);
+              const permanent = isPermanentSurface(surface);
               const title = surfaceTitle(surface, props.previewSessions, props.terminalLabelsById);
               return (
                 <div
@@ -281,27 +276,29 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     />
                     <TooltipPopup>{title}</TooltipPopup>
                   </Tooltip>
-                  <button
-                    type="button"
-                    className={cn(
-                      "relative flex size-4 shrink-0 items-center justify-center rounded hover:bg-muted focus:opacity-100",
-                      pending ? "opacity-100" : "opacity-0 group-hover:opacity-100",
-                    )}
-                    aria-label={`Close ${title}`}
-                    onClick={() => props.onCloseSurface(surface)}
-                  >
-                    {pending ? (
-                      <>
-                        <span
-                          className="size-2 rounded-full bg-current group-hover:hidden"
-                          aria-hidden
-                        />
-                        <X className="hidden size-3 group-hover:block" />
-                      </>
-                    ) : (
-                      <X className="size-3" />
-                    )}
-                  </button>
+                  {permanent ? null : (
+                    <button
+                      type="button"
+                      className={cn(
+                        "relative flex size-4 shrink-0 items-center justify-center rounded hover:bg-muted focus:opacity-100",
+                        pending ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+                      )}
+                      aria-label={`Close ${title}`}
+                      onClick={() => props.onCloseSurface(surface)}
+                    >
+                      {pending ? (
+                        <>
+                          <span
+                            className="size-2 rounded-full bg-current group-hover:hidden"
+                            aria-hidden
+                          />
+                          <X className="hidden size-3 group-hover:block" />
+                        </>
+                      ) : (
+                        <X className="size-3" />
+                      )}
+                    </button>
+                  )}
                 </div>
               );
             })}
