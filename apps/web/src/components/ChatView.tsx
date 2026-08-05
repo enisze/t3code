@@ -737,6 +737,10 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   }, [reconcileTerminalIds, serverOrderedTerminalIds, terminalUiState.terminalIds, threadRef]);
   const [localFocusRequestId, setLocalFocusRequestId] = useState(0);
   const worktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
+  // See PersistentThreadTerminalPanel: hold off rooting a terminal until the
+  // thread's worktree is known so a new chat's terminal isn't stranded in the
+  // main repo root (the server never re-roots a running session).
+  const worktreeSettled = serverThread !== null || draftThread?.worktreePath != null;
   const effectiveWorktreePath = useMemo(() => {
     if (launchContext !== null) {
       return launchContext.worktreePath;
@@ -746,13 +750,13 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   const cwd = useMemo(
     () =>
       launchContext?.cwd ??
-      (project
+      (project && worktreeSettled
         ? projectScriptCwd({
             project: { cwd: project.workspaceRoot },
             worktreePath: effectiveWorktreePath,
           })
         : null),
-    [effectiveWorktreePath, launchContext?.cwd, project],
+    [effectiveWorktreePath, launchContext?.cwd, project, worktreeSettled],
   );
   const runtimeEnv = useMemo(
     () =>
@@ -1005,6 +1009,15 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
     threadId: threadRef.threadId,
   });
   const threadWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
+  // A terminal must be rooted at the thread's worktree so `open .` (and scripts)
+  // act on the right folder. For a brand-new chat the worktree is still being
+  // created, so its path isn't known on the first render — root the terminal at
+  // the main repo root then and it stays stranded outside the worktree, because
+  // the server never re-roots a running session. Treat the worktree as "settled"
+  // only once the server thread has loaded (its worktree path is then
+  // authoritative) or a draft already carries one, and hold off opening until
+  // then instead of falling back to the repo root.
+  const worktreeSettled = serverThread !== null || draftThread?.worktreePath != null;
   const activeSummary =
     knownTerminalSessions.find((session) => session.target.terminalId === surface.activeTerminalId)
       ?.state.summary ?? null;
@@ -1014,13 +1027,13 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
     () =>
       launchContext?.cwd ??
       activeSummary?.cwd ??
-      (project
+      (project && worktreeSettled
         ? projectScriptCwd({
             project: { cwd: project.workspaceRoot },
             worktreePath,
           })
         : null),
-    [activeSummary?.cwd, launchContext?.cwd, project, worktreePath],
+    [activeSummary?.cwd, launchContext?.cwd, project, worktreeSettled, worktreePath],
   );
   const runtimeEnv = useMemo(
     () =>
@@ -1060,7 +1073,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
       const terminalCwd =
         launchContext?.cwd ??
         summary?.cwd ??
-        (project
+        (project && worktreeSettled
           ? projectScriptCwd({
               project: { cwd: project.workspaceRoot },
               worktreePath: terminalWorktreePath,
@@ -1084,6 +1097,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
     project,
     surface.terminalIds,
     threadWorktreePath,
+    worktreeSettled,
   ]);
 
   if (!project || !cwd) return null;
