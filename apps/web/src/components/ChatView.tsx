@@ -2485,10 +2485,12 @@ function ChatViewContent(props: ChatViewProps) {
       workspaceThreadRef,
     );
     if (state.isOpen || state.surfaces.length > 0) return;
+    // The surface always opens with a Files (workspace explorer) tab, plus a
+    // Diff (changed-files navigator) tab that becomes the default active tab
+    // whenever this thread can show a diff.
+    useRightPanelStore.getState().open(workspaceThreadRef, "files");
     if (isServerThread && isGitRepo) {
       useRightPanelStore.getState().open(workspaceThreadRef, "diff");
-    } else {
-      useRightPanelStore.getState().show(workspaceThreadRef);
     }
   }, [
     workspaceThreadRef,
@@ -3135,16 +3137,20 @@ function ChatViewContent(props: ChatViewProps) {
     newChatWorktreePath,
     primaryServerSettings.reviewPrompt,
   ]);
-  const addFilesSurface = useCallback(() => {
-    if (!workspaceThreadRef || !activeProject) return;
-    useRightPanelStore.getState().open(workspaceThreadRef, "files");
-  }, [activeProject, workspaceThreadRef]);
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!workspaceThreadRef || !activeProject) return;
       useRightPanelStore.getState().openFile(workspaceThreadRef, relativePath);
     },
     [activeProject, workspaceThreadRef],
+  );
+  // Opens a file's diff as its own tab, chosen from the Diff navigator tree.
+  const openFileDiffSurface = useCallback(
+    (filePath: string) => {
+      if (!workspaceThreadRef) return;
+      useRightPanelStore.getState().openFileDiff(workspaceThreadRef, filePath);
+    },
+    [workspaceThreadRef],
   );
   const togglePreviewPanel = useCallback(() => {
     if (!workspaceThreadRef || !isPreviewSupportedInRuntime()) return;
@@ -5645,7 +5651,13 @@ function ChatViewContent(props: ChatViewProps) {
       // A turn belongs to this conversation, so its selection is per chat; the
       // diff surface itself is shared across the worktree.
       useDiffPanelStore.getState().selectTurn(activeThreadRef, turnId, filePath);
-      useRightPanelStore.getState().open(workspaceThreadRef, "diff");
+      // Choosing a specific file opens its diff as its own tab; the bare
+      // "open diff" action lands on the changed-files navigator.
+      if (filePath) {
+        useRightPanelStore.getState().openFileDiff(workspaceThreadRef, filePath);
+      } else {
+        useRightPanelStore.getState().open(workspaceThreadRef, "diff");
+      }
       onDiffPanelOpen?.();
     },
     [workspaceThreadRef, activeThreadRef, isServerThread, onDiffPanelOpen],
@@ -5729,6 +5741,20 @@ function ChatViewContent(props: ChatViewProps) {
           threadRef={activeThreadRef}
           composerDraftTarget={composerDraftTarget}
           initialGitScope={initialDiffPanelGitScope}
+          variant="navigator"
+          onOpenFileDiff={openFileDiffSurface}
+        />
+      </Suspense>
+    ) : activeRightPanelSurface?.kind === "file-diff" ? (
+      <Suspense fallback={null}>
+        <DiffPanel
+          key={`${activeThreadKey}:${activeRightPanelSurface.filePath}`}
+          mode="embedded"
+          threadRef={activeThreadRef}
+          composerDraftTarget={composerDraftTarget}
+          initialGitScope={initialDiffPanelGitScope}
+          variant="file"
+          fileDiffPath={activeRightPanelSurface.filePath}
         />
       </Suspense>
     ) : activeRightPanelSurface?.kind === "plan" ? (
@@ -6201,13 +6227,6 @@ function ChatViewContent(props: ChatViewProps) {
           onCloseSurfacesToRight={closeRightPanelSurfacesToRight}
           onCloseAllSurfaces={closeAllRightPanelSurfaces}
           onCopyFilePath={copyRightPanelFilePath}
-          onAddBrowser={createBrowserSurface}
-          onAddTerminal={addTerminalSurface}
-          onAddDiff={addDiffSurface}
-          onAddFiles={addFilesSurface}
-          browserAvailable={isPreviewSupportedInRuntime()}
-          diffAvailable={isServerThread && isGitRepo}
-          filesAvailable={activeProject !== null}
           bottomDock={tasksDock}
         >
           {rightPanelContent}
@@ -6229,13 +6248,6 @@ function ChatViewContent(props: ChatViewProps) {
             onCloseSurfacesToRight={closeRightPanelSurfacesToRight}
             onCloseAllSurfaces={closeAllRightPanelSurfaces}
             onCopyFilePath={copyRightPanelFilePath}
-            onAddBrowser={createBrowserSurface}
-            onAddTerminal={addTerminalSurface}
-            onAddDiff={addDiffSurface}
-            onAddFiles={addFilesSurface}
-            browserAvailable={isPreviewSupportedInRuntime()}
-            diffAvailable={isServerThread && isGitRepo}
-            filesAvailable={activeProject !== null}
             bottomDock={tasksDock}
           >
             {rightPanelContent}

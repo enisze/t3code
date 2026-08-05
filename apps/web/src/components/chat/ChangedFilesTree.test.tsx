@@ -142,11 +142,10 @@ describe("ChangedFilesTree", () => {
     ({ files, visibleLabels, hiddenLabels }) => {
       const markup = renderToStaticMarkup(
         <ChangedFilesTree
-          turnId={TurnId.make("turn-1")}
           files={files}
           allDirectoriesExpanded={false}
           resolvedTheme="light"
-          onOpenTurnDiff={() => {}}
+          onOpenFile={() => {}}
         />,
       );
 
@@ -218,11 +217,10 @@ describe("ChangedFilesTree", () => {
     ({ files, visibleLabels }) => {
       const markup = renderToStaticMarkup(
         <ChangedFilesTree
-          turnId={TurnId.make("turn-1")}
           files={files}
           allDirectoriesExpanded
           resolvedTheme="light"
-          onOpenTurnDiff={() => {}}
+          onOpenFile={() => {}}
         />,
       );
 
