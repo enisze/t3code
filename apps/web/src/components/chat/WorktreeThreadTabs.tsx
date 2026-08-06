@@ -43,13 +43,13 @@ const EMPTY_CONTENT_TABS: ReadonlyArray<WorktreeContentTabDescriptor> = [];
 interface WorktreeThreadTabsProps {
   activeEnvironmentId: EnvironmentId;
   activeThreadId: ThreadId;
+  activeProjectId: string;
   activeDraftId?: DraftId | null;
-  // The on-disk worktree the active thread runs in. Tabs group every chat that
-  // shares this worktree; when it's null the thread isn't in a worktree and no
-  // tab strip is shown.
+  // Worktree chats are grouped by their on-disk tree. Local chats are grouped
+  // by project, so the tab strip is available in every environment mode.
   worktreePath: string | null;
-  // Starts a fresh chat in the same worktree. Only provided for worktree threads.
-  onNewChatInWorktree?: () => void;
+  // Starts a fresh chat in the same worktree or local project context.
+  onNewChat: () => void;
   // Ephemeral file-diff tabs opened from the Diff navigator (worktree-scoped).
   contentTabs?: ReadonlyArray<WorktreeContentTabDescriptor>;
   // The active content tab, or null when the chat conversation is shown.
@@ -107,9 +107,10 @@ const WORKTREE_TAB_ATTENTION: Record<
 export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
   activeEnvironmentId,
   activeThreadId,
+  activeProjectId,
   activeDraftId = null,
   worktreePath,
-  onNewChatInWorktree,
+  onNewChat,
   contentTabs = EMPTY_CONTENT_TABS,
   activeContentTabId = null,
   onSelectContentTab,
@@ -130,6 +131,7 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
         .filter(
           ([, draft]) =>
             draft.environmentId === activeEnvironmentId &&
+            draft.projectId === activeProjectId &&
             draft.worktreePath === worktreePath &&
             !draft.promotedTo,
         )
@@ -150,20 +152,26 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
           };
         })
         .sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
-    [activeEnvironmentId, draftThreadsByThreadKey, draftsByThreadKey, worktreePath],
+    [
+      activeEnvironmentId,
+      activeProjectId,
+      draftThreadsByThreadKey,
+      draftsByThreadKey,
+      worktreePath,
+    ],
   );
 
   const tabs = useMemo(() => {
-    if (!worktreePath) return [];
     return shells
       .filter(
         (shell) =>
           shell.environmentId === activeEnvironmentId &&
+          shell.projectId === activeProjectId &&
           shell.worktreePath === worktreePath &&
           shell.archivedAt === null,
       )
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  }, [shells, activeEnvironmentId, worktreePath]);
+  }, [shells, activeEnvironmentId, activeProjectId, worktreePath]);
 
   const closeTab = useCallback(
     async (shell: EnvironmentThreadShell) => {
@@ -206,12 +214,6 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
   useEffect(() => {
     activeTabRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [activeThreadId]);
-
-  // Nothing worktree-scoped to show, or only the current chat with no way to
-  // spawn siblings and no open diffs — a lone tab adds noise without value.
-  if (!worktreePath) return null;
-  if (tabs.length + draftTabs.length <= 1 && !onNewChatInWorktree && contentTabs.length === 0)
-    return null;
 
   return (
     <div
@@ -466,23 +468,25 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
               </div>
             );
           })}
-          {onNewChatInWorktree && (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button
-                    type="button"
-                    aria-label="New chat in this worktree"
-                    className="relative inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                    onClick={onNewChatInWorktree}
-                  />
-                }
-              >
-                <MessageSquarePlusIcon aria-hidden="true" className="size-4" />
-              </TooltipTrigger>
-              <TooltipPopup side="bottom">New chat in this worktree</TooltipPopup>
-            </Tooltip>
-          )}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label={
+                    worktreePath ? "New chat in this worktree" : "New chat in this project"
+                  }
+                  className="relative inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  onClick={onNewChat}
+                />
+              }
+            >
+              <MessageSquarePlusIcon aria-hidden="true" className="size-4" />
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">
+              {worktreePath ? "New chat in this worktree" : "New chat in this project"}
+            </TooltipPopup>
+          </Tooltip>
         </div>
       </ScrollArea>
     </div>

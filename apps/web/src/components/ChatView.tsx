@@ -1661,12 +1661,12 @@ function ChatViewContent(props: ChatViewProps) {
   // The browser preview is shown as a content tab in the chat column (beside the
   // file/diff viewers), not in the right panel.
   const previewTabActive = activeContentTab?.view === "preview";
-  const handleNewChatInWorktree = useCallback(() => {
-    if (!activeProjectRef || !newChatWorktreePath) return;
+  const handleNewChatInScope = useCallback(() => {
+    if (!activeProjectRef) return;
     void handleNewThread(activeProjectRef, {
       branch: newChatWorktreeBranch,
       worktreePath: newChatWorktreePath,
-      envMode: "worktree",
+      envMode: newChatWorktreePath ? "worktree" : "local",
       forceNew: true,
       preservePreviousDraft: true,
     });
@@ -5993,9 +5993,10 @@ function ChatViewContent(props: ChatViewProps) {
         <WorktreeThreadTabs
           activeEnvironmentId={activeThread.environmentId}
           activeThreadId={activeThread.id}
+          activeProjectId={activeThread.projectId}
           worktreePath={newChatWorktreePath}
           activeDraftId={draftId}
-          {...(newChatWorktreePath ? { onNewChatInWorktree: handleNewChatInWorktree } : {})}
+          onNewChat={handleNewChatInScope}
           contentTabs={contentTabsState.tabs.map((tab) => {
             if (tab.view !== "preview") {
               return {
