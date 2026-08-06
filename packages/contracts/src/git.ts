@@ -215,6 +215,8 @@ const VcsStatusLocalShape = {
         path: TrimmedNonEmptyStringSchema,
         insertions: NonNegativeInt,
         deletions: NonNegativeInt,
+        /** Present and true when Git reports this as an unmerged path. */
+        conflicted: Schema.optionalKey(Schema.Boolean),
       }),
     ),
     insertions: NonNegativeInt,

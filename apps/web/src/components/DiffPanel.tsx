@@ -549,19 +549,25 @@ export default function DiffPanel({
   // The navigator renders a flat list of the changed files (no folder nesting).
   // Per-file stats come from each file's own hunks so the list matches the diff
   // exactly; `viewed` drives the dim + move-to-bottom treatment.
-  const navigatorFiles = useMemo<DiffNavigatorFile[]>(
-    () =>
-      codeViewFiles.map(({ fileDiff, filePath, viewed }) => {
-        const stat = getDiffLineStat([fileDiff]);
-        return {
-          path: filePath,
-          additions: stat.additions,
-          deletions: stat.deletions,
-          viewed,
-        };
-      }),
-    [codeViewFiles],
-  );
+  const navigatorFiles = useMemo<DiffNavigatorFile[]>(() => {
+    const conflictedPaths = new Set(
+      selectedTurnId === null
+        ? (gitStatusQuery.data?.workingTree.files
+            .filter((file) => file.conflicted === true)
+            .map((file) => file.path) ?? [])
+        : [],
+    );
+    return codeViewFiles.map(({ fileDiff, filePath, viewed }) => {
+      const stat = getDiffLineStat([fileDiff]);
+      return {
+        path: filePath,
+        additions: stat.additions,
+        deletions: stat.deletions,
+        viewed,
+        conflicted: conflictedPaths.has(filePath),
+      };
+    });
+  }, [codeViewFiles, gitStatusQuery.data?.workingTree.files, selectedTurnId]);
 
   useEffect(() => {
     if (!selectedFilePath) return;

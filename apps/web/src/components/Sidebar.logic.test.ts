@@ -1559,6 +1559,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     gitHubAccount: null,
     worktreeBranchPrefix: null,
     defaultWorktreeBranch: null,
+    previewPort: null,
     ...rest,
   };
 }

@@ -10,6 +10,7 @@ import {
   GitHubAccountRef,
   IsoDateTime,
   ModelSelection,
+  PortSchema,
   ProjectId,
   ProjectScript,
 } from "@t3tools/contracts";
@@ -29,6 +30,7 @@ export const ProjectionProject = Schema.Struct({
   gitHubAccount: Schema.NullOr(GitHubAccountRef),
   worktreeBranchPrefix: Schema.NullOr(Schema.String),
   defaultWorktreeBranch: Schema.NullOr(Schema.String),
+  previewPort: Schema.NullOr(PortSchema),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

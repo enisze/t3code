@@ -105,6 +105,7 @@ describe("add project shared logic", () => {
         gitHubAccount: null,
         worktreeBranchPrefix: null,
         defaultWorktreeBranch: null,
+        previewPort: null,
         scripts: [],
       },
       {
@@ -119,6 +120,7 @@ describe("add project shared logic", () => {
         gitHubAccount: null,
         worktreeBranchPrefix: null,
         defaultWorktreeBranch: null,
+        previewPort: null,
         scripts: [],
       },
     ];

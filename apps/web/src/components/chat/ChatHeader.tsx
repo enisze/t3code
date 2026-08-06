@@ -6,7 +6,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { ScanSearchIcon } from "lucide-react";
+import { GlobeIcon, ScanSearchIcon } from "lucide-react";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
@@ -36,6 +36,13 @@ interface ChatHeaderProps {
   availableEditors: ReadonlyArray<EditorId>;
   rightPanelOpen: boolean;
   gitCwd: string | null;
+  /**
+   * Configured localhost port for the in-app preview, or null when unset / the
+   * runtime can't host a preview. When set, the header shows a button that opens
+   * `http://localhost:<previewPort>` as a new preview tab.
+   */
+  previewPort: number | null;
+  onOpenPreview: () => void;
   onReview: () => void;
   onNewThreadInProject: () => void;
   onRunProjectScript: (script: ProjectScript) => void;
@@ -73,6 +80,8 @@ export const ChatHeader = memo(function ChatHeader({
   availableEditors,
   rightPanelOpen,
   gitCwd,
+  previewPort,
+  onOpenPreview,
   onReview,
   onNewThreadInProject,
   onRunProjectScript,
@@ -188,6 +197,27 @@ export const ChatHeader = memo(function ChatHeader({
                 Start a new chat with the configured review prompt
               </TooltipPopup>
             </Tooltip>
+            {previewPort !== null ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      onClick={onOpenPreview}
+                      aria-label={`Open localhost:${previewPort} in a preview tab`}
+                    />
+                  }
+                >
+                  <GlobeIcon className="size-3.5" aria-hidden />
+                  <span className="ml-0.5">Preview</span>
+                </TooltipTrigger>
+                <TooltipPopup side="top">
+                  Open http://localhost:{previewPort} in a preview tab
+                </TooltipPopup>
+              </Tooltip>
+            ) : null}
           </>
         ) : null}
         {activeProjectName && (

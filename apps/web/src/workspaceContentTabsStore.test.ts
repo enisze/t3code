@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
-  PREVIEW_CONTENT_TAB_ID,
   selectWorktreeContentTabs,
   useWorkspaceContentTabsStore,
   worktreeContentTabsKey,
@@ -64,24 +63,51 @@ describe("workspaceContentTabsStore", () => {
     expect(tabs().tabs).toHaveLength(1);
   });
 
-  it("opens the browser preview as the single viewer", () => {
-    useWorkspaceContentTabsStore.getState().openPreview(KEY);
-    expect(tabs().tabs).toEqual([{ id: PREVIEW_CONTENT_TAB_ID, filePath: "", view: "preview" }]);
-    expect(tabs().activeTabId).toBe(PREVIEW_CONTENT_TAB_ID);
+  it("opens a browser preview tab and activates it", () => {
+    useWorkspaceContentTabsStore.getState().openPreview(KEY, "tab_1");
+    expect(tabs().tabs).toEqual([
+      { id: "tab_1", filePath: "", view: "preview", previewTabId: "tab_1" },
+    ]);
+    expect(tabs().activeTabId).toBe("tab_1");
   });
 
-  it("keeps a single viewer: opening the preview replaces a file, and vice versa", () => {
+  it("accumulates multiple preview tabs and re-focuses an existing one", () => {
+    useWorkspaceContentTabsStore.getState().openPreview(KEY, "tab_1");
+    useWorkspaceContentTabsStore.getState().openPreview(KEY, "tab_2");
+    expect(tabs().tabs.map((tab) => tab.id)).toEqual(["tab_1", "tab_2"]);
+    expect(tabs().activeTabId).toBe("tab_2");
+    // Re-opening an existing preview just re-focuses it, no duplicate tab.
+    useWorkspaceContentTabsStore.getState().openPreview(KEY, "tab_1");
+    expect(tabs().tabs.map((tab) => tab.id)).toEqual(["tab_1", "tab_2"]);
+    expect(tabs().activeTabId).toBe("tab_1");
+  });
+
+  it("keeps preview tabs when the file viewer is replaced", () => {
+    useWorkspaceContentTabsStore.getState().openPreview(KEY, "tab_1");
     useWorkspaceContentTabsStore.getState().openFile(KEY, "a.ts");
-    useWorkspaceContentTabsStore.getState().openPreview(KEY);
-    expect(tabs().tabs).toEqual([{ id: PREVIEW_CONTENT_TAB_ID, filePath: "", view: "preview" }]);
+    // The file viewer sits ahead of the preview tabs, which stay open.
+    expect(tabs().tabs.map((tab) => tab.id)).toEqual(["a.ts", "tab_1"]);
     useWorkspaceContentTabsStore.getState().openFileDiff(KEY, "b.ts");
-    expect(tabs().tabs).toEqual([{ id: "b.ts", filePath: "b.ts", view: "diff" }]);
+    expect(tabs().tabs.map((tab) => tab.id)).toEqual(["b.ts", "tab_1"]);
+    expect(tabs().activeTabId).toBe("b.ts");
   });
 
-  it("setTabView cannot corrupt the preview viewer", () => {
-    useWorkspaceContentTabsStore.getState().openPreview(KEY);
+  it("setTabView flips the file viewer without touching preview tabs", () => {
+    useWorkspaceContentTabsStore.getState().openPreview(KEY, "tab_1");
+    useWorkspaceContentTabsStore.getState().openFileDiff(KEY, "a.ts");
     useWorkspaceContentTabsStore.getState().setTabView(KEY, "file");
-    expect(tabs().tabs).toEqual([{ id: PREVIEW_CONTENT_TAB_ID, filePath: "", view: "preview" }]);
+    expect(tabs().tabs).toEqual([
+      { id: "a.ts", filePath: "a.ts", view: "file" },
+      { id: "tab_1", filePath: "", view: "preview", previewTabId: "tab_1" },
+    ]);
+  });
+
+  it("setTabView cannot corrupt a preview tab", () => {
+    useWorkspaceContentTabsStore.getState().openPreview(KEY, "tab_1");
+    useWorkspaceContentTabsStore.getState().setTabView(KEY, "file");
+    expect(tabs().tabs).toEqual([
+      { id: "tab_1", filePath: "", view: "preview", previewTabId: "tab_1" },
+    ]);
   });
 });
 

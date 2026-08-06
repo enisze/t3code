@@ -822,6 +822,35 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("marks unmerged working-tree paths as conflicted", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["checkout", "-b", "feature/conflict"]);
+        yield* writeTextFile(cwd, "README.md", "# feature\n");
+        yield* git(cwd, ["add", "README.md"]);
+        yield* git(cwd, ["commit", "-m", "feature change"]);
+        yield* git(cwd, ["checkout", initialBranch]);
+        yield* writeTextFile(cwd, "README.md", "# base\n");
+        yield* git(cwd, ["add", "README.md"]);
+        yield* git(cwd, ["commit", "-m", "base change"]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.execute({
+          operation: "GitVcsDriver.test.merge-conflict",
+          cwd,
+          args: ["merge", "feature/conflict"],
+          allowNonZeroExit: true,
+        });
+
+        const status = yield* driver.statusDetails(cwd);
+
+        assert.deepInclude(
+          status.workingTree.files.find((file) => file.path === "README.md"),
+          { path: "README.md", conflicted: true },
+        );
+      }),
+    );
+
     it.effect("reports default-branch delta separately from upstream delta", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

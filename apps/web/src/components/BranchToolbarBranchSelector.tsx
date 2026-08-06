@@ -5,7 +5,15 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { ContextMenuItem, EnvironmentId, VcsRef, ThreadId } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import { ChevronDownIcon, GitBranchIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  GitBranchIcon,
+  GitBranchPlusIcon,
+  FolderGit2Icon,
+  RefreshCwIcon,
+  SearchIcon,
+} from "lucide-react";
+import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import {
   useCallback,
   useDeferredValue,
@@ -31,7 +39,7 @@ import { useEnvironmentQuery } from "../state/query";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { vcsEnvironment } from "../state/vcs";
-import { cn } from "../lib/utils";
+import { cn, randomHex } from "../lib/utils";
 import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import {
@@ -39,6 +47,7 @@ import {
   resolveBranchTriggerLabel,
   resolveBranchToolbarPrBranch,
   resolveBranchSelectionTarget,
+  resolveExactBranchWorktreeInput,
   resolveBranchToolbarValue,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
@@ -107,6 +116,9 @@ export function BranchToolbarBranchSelector({
     reportFailure: false,
   });
   const createRefMutation = useAtomCommand(vcsEnvironment.createRef, {
+    reportFailure: false,
+  });
+  const createWorktreeMutation = useAtomCommand(vcsEnvironment.createWorktree, {
     reportFailure: false,
   });
   // ---------------------------------------------------------------------------
@@ -475,6 +487,39 @@ export function BranchToolbarBranchSelector({
     });
   };
 
+  const openExactBranchInWorktree = (ref: VcsRef) => {
+    if (!activeProjectCwd || isBranchActionPending) return;
+    setIsBranchMenuOpen(false);
+    onComposerFocusRequest?.();
+
+    const target = resolveExactBranchWorktreeInput({ activeProjectCwd, ref });
+    if (target.kind === "reuse") {
+      setThreadBranch(target.branch, target.worktreePath);
+      return;
+    }
+
+    runBranchAction(async () => {
+      const result = await createWorktreeMutation({
+        environmentId,
+        input: target,
+      });
+      if (result._tag === "Success") {
+        setOptimisticBranch(result.value.worktree.refName);
+        setThreadBranch(result.value.worktree.refName, result.value.worktree.path);
+        return;
+      }
+      if (!isAtomCommandInterrupted(result)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to open branch in a worktree",
+            description: toBranchActionErrorMessage(squashAtomCommandFailure(result)),
+          }),
+        );
+      }
+    });
+  };
+
   // Default the worktree base to the project's configured default branch when
   // set; otherwise the repo default branch (origin/HEAD), falling back to the
   // checked-out branch when no default is known. A configured project default
@@ -620,6 +665,57 @@ export function BranchToolbarBranchSelector({
     : "";
   const openPrLink = useOpenPrLink();
 
+  // Once a change request is merged its worktree is spent. "Continue" spins a
+  // fresh worktree off the branch the PR merged into and re-points THIS thread
+  // onto it (keeping the whole conversation), so follow-up work starts clean.
+  const canContinueMergedThread =
+    branchPr?.state === "merged" && hasServerThread && activeProjectCwd !== null;
+  const continueBaseBranch =
+    branchPr?.baseRef ?? projectDefaultWorktreeBranch ?? defaultBranchName ?? currentGitBranch;
+  const continueInNewWorktree = () => {
+    if (
+      !canContinueMergedThread ||
+      !activeProjectCwd ||
+      !continueBaseBranch ||
+      isBranchActionPending
+    ) {
+      return;
+    }
+    const newBranch = buildTemporaryWorktreeBranchName(
+      randomHex,
+      activeProject?.worktreeBranchPrefix ?? null,
+    );
+    onComposerFocusRequest?.();
+    runBranchAction(async () => {
+      const result = await createWorktreeMutation({
+        environmentId,
+        input: {
+          cwd: activeProjectCwd,
+          refName: continueBaseBranch,
+          newRefName: newBranch,
+          baseRefName: continueBaseBranch,
+          path: null,
+        },
+      });
+      if (result._tag === "Success") {
+        // Re-point the thread; setThreadBranch stops the live session so the
+        // next turn re-roots into the new worktree.
+        setOptimisticBranch(result.value.worktree.refName);
+        setThreadBranch(result.value.worktree.refName, result.value.worktree.path);
+        return;
+      }
+      if (!isAtomCommandInterrupted(result)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to start a new worktree",
+            description: toBranchActionErrorMessage(squashAtomCommandFailure(result)),
+          }),
+        );
+      }
+    });
+  };
+
   function renderPickerItem(itemValue: string, index: number) {
     if (checkoutPullRequestItemValue && itemValue === checkoutPullRequestItemValue) {
       return (
@@ -690,9 +786,32 @@ export function BranchToolbarBranchSelector({
         onClick={() => selectBranch(refName)}
         onContextMenu={(event) => handleBranchContextMenu(event, itemValue)}
       >
-        <div className="flex w-full min-w-0 items-center justify-between gap-2">
+        <div className="group flex w-full min-w-0 items-center justify-between gap-2">
           <span className="min-w-0 flex-1 truncate">{itemValue}</span>
           {badge && <span className="shrink-0 text-[10px] text-muted-foreground/45">{badge}</span>}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label={`Open ${itemValue} in its own worktree`}
+                  className="-my-1 inline-flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground/55 opacity-0 transition-opacity hover:bg-foreground/10 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openExactBranchInWorktree(refName);
+                  }}
+                />
+              }
+            >
+              <FolderGit2Icon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="left">
+              {hasSecondaryWorktree
+                ? "Use this branch's existing worktree"
+                : "Open this exact branch in a worktree"}
+            </TooltipPopup>
+          </Tooltip>
         </div>
       </ComboboxItem>
     );
@@ -737,6 +856,31 @@ export function BranchToolbarBranchSelector({
               <span>#{branchPr.number}</span>
             </TooltipTrigger>
             <TooltipPopup side="top">{branchPrTooltip}</TooltipPopup>
+          </Tooltip>
+        ) : null}
+        {canContinueMergedThread ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  disabled={isBranchActionPending || !continueBaseBranch}
+                  onClick={continueInNewWorktree}
+                  aria-label="Continue this chat in a new worktree"
+                  className="shrink-0 text-muted-foreground/70 hover:text-foreground/80"
+                />
+              }
+            >
+              <GitBranchPlusIcon className="size-3 shrink-0" />
+              <span>Continue</span>
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {continueBaseBranch
+                ? `Start a fresh worktree off ${continueBaseBranch} and keep this chat`
+                : "Start a fresh worktree and keep this chat"}
+            </TooltipPopup>
           </Tooltip>
         ) : null}
         {/* Context menu lives on the wrapper: the disabled Button has

@@ -134,12 +134,13 @@ import {
   setActivePreviewTab,
   useThreadPreviewState,
 } from "../previewStateStore";
+import { openUrlInPreview } from "../browser/openFileInPreview";
 import { addBrowserSurface } from "./preview/addBrowserSurface";
 import { openBrowserPreviewInChat } from "./preview/openBrowserPreviewInChat";
 import { closePreviewSession } from "./preview/closePreviewSession";
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
 import { subscribePreviewAction } from "./preview/previewActionBus";
-import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
+import { getConfiguredPreviewUrls, previewTabLabel } from "./preview/previewEmptyStateLogic";
 import {
   selectThreadPreviewMiniPlayer,
   usePreviewMiniPlayerStore,
@@ -3132,6 +3133,17 @@ function ChatViewContent(props: ChatViewProps) {
     if (!workspaceThreadRef) return;
     void addBrowserSurface({ threadRef: workspaceThreadRef, openPreview });
   }, [workspaceThreadRef, openPreview]);
+  // Opens the project's configured localhost port as a new preview tab (from the
+  // chat header's "Preview" button). Each click opens its own tab.
+  const openConfiguredPreview = useCallback(() => {
+    const port = activeProject?.previewPort ?? null;
+    if (!workspaceThreadRef || port === null || !isPreviewSupportedInRuntime()) return;
+    void openUrlInPreview({
+      threadRef: workspaceThreadRef,
+      url: `http://localhost:${port}`,
+      openPreview,
+    });
+  }, [activeProject?.previewPort, workspaceThreadRef, openPreview]);
   const startReviewInNewChat = useCallback(() => {
     if (!activeProjectRef || !activeProject || !newChatWorktreePath) return;
     const reviewModelSelection =
@@ -3176,15 +3188,35 @@ function ChatViewContent(props: ChatViewProps) {
     (tabId: string) => {
       if (!contentTabsWorktreeKey) return;
       useWorkspaceContentTabsStore.getState().activateTab(contentTabsWorktreeKey, tabId);
+      // Preview content tabs are keyed by their preview session id, so focusing
+      // one must also make that session the active preview. This is a no-op for
+      // file/diff tabs, whose ids are file paths rather than session ids.
+      if (workspaceThreadRef) setActivePreviewTab(workspaceThreadRef, tabId);
     },
-    [contentTabsWorktreeKey],
+    [contentTabsWorktreeKey, workspaceThreadRef],
   );
   const closeContentTab = useCallback(
     (tabId: string) => {
       if (!contentTabsWorktreeKey) return;
+      const tab = contentTabsState.tabs.find((entry) => entry.id === tabId);
       useWorkspaceContentTabsStore.getState().closeTab(contentTabsWorktreeKey, tabId);
+      // Closing a preview tab also tears down its underlying browser session.
+      if (tab?.view === "preview" && tab.previewTabId && workspaceThreadRef) {
+        void closePreviewSession({
+          closePreview,
+          snapshot: activePreviewState.sessions[tab.previewTabId] ?? null,
+          tabId: tab.previewTabId,
+          threadRef: workspaceThreadRef,
+        });
+      }
     },
-    [contentTabsWorktreeKey],
+    [
+      contentTabsWorktreeKey,
+      contentTabsState.tabs,
+      workspaceThreadRef,
+      closePreview,
+      activePreviewState.sessions,
+    ],
   );
   const activateChatContent = useCallback(() => {
     if (!contentTabsWorktreeKey) return;
@@ -5943,6 +5975,10 @@ function ChatViewContent(props: ChatViewProps) {
             availableEditors={availableEditors}
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
+            previewPort={
+              isPreviewSupportedInRuntime() ? (activeProject?.previewPort ?? null) : null
+            }
+            onOpenPreview={openConfiguredPreview}
             onReview={startReviewInNewChat}
             onNewThreadInProject={handleNewThreadInActiveProject}
             onRunProjectScript={runProjectScript}
@@ -5957,14 +5993,20 @@ function ChatViewContent(props: ChatViewProps) {
           activeThreadId={activeThread.id}
           worktreePath={newChatWorktreePath}
           {...(newChatWorktreePath ? { onNewChatInWorktree: handleNewChatInWorktree } : {})}
-          contentTabs={contentTabsState.tabs.map((tab) => ({
-            id: tab.id,
-            title:
-              tab.view === "preview"
-                ? "Preview"
-                : tab.filePath.slice(tab.filePath.lastIndexOf("/") + 1),
-            view: tab.view,
-          }))}
+          contentTabs={contentTabsState.tabs.map((tab) => {
+            if (tab.view !== "preview") {
+              return {
+                id: tab.id,
+                title: tab.filePath.slice(tab.filePath.lastIndexOf("/") + 1),
+                view: tab.view,
+              };
+            }
+            const session = tab.previewTabId
+              ? activePreviewState.sessions[tab.previewTabId]
+              : undefined;
+            const url = session && session.navStatus._tag !== "Idle" ? session.navStatus.url : "";
+            return { id: tab.id, title: previewTabLabel(url), view: tab.view };
+          })}
           activeContentTabId={contentTabsState.activeTabId}
           onSelectContentTab={selectContentTab}
           onCloseContentTab={closeContentTab}
@@ -6057,10 +6099,10 @@ function ChatViewContent(props: ChatViewProps) {
                 <Suspense fallback={null}>
                   {activeContentTab.view === "preview" ? (
                     <PreviewPanel
-                      key={`${activeThreadKey}:content:preview`}
+                      key={`${activeThreadKey}:content:preview:${activeContentTab.previewTabId ?? ""}`}
                       mode="embedded"
                       threadRef={workspaceThreadRef ?? activeThreadRef}
-                      tabId={activePreviewState.activeTabId}
+                      tabId={activeContentTab.previewTabId ?? activePreviewState.activeTabId}
                       configuredUrls={configuredPreviewUrls}
                       visible
                     />

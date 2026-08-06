@@ -271,6 +271,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           gitHubAccount: null,
           worktreeBranchPrefix: null,
           defaultWorktreeBranch: null,
+          previewPort: null,
           scripts: [
             {
               id: "script-1",
@@ -390,6 +391,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           gitHubAccount: null,
           worktreeBranchPrefix: null,
           defaultWorktreeBranch: null,
+          previewPort: null,
           scripts: [
             {
               id: "script-1",
