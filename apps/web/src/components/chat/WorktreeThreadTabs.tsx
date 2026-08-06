@@ -264,39 +264,44 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
                         type="button"
                         aria-label={`Close ${draft.title}`}
                         className="mr-1 inline-flex size-5 shrink-0 items-center justify-center rounded-sm opacity-0 transition-opacity hover:bg-background/70 focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring max-sm:opacity-100 group-hover/tab:opacity-100"
-                        onClick={() => {
-                          useComposerDraftStore.getState().clearDraftThread(draft.draftId);
-                          if (!active) return;
+                        onClick={async () => {
+                          const draftStore = useComposerDraftStore.getState();
+                          if (!active) {
+                            draftStore.clearDraftThread(draft.draftId);
+                            return;
+                          }
                           const fallbackDraft = draftTabs.find(
                             (candidate) => candidate.draftId !== draft.draftId,
                           );
                           if (fallbackDraft) {
-                            useComposerDraftStore
-                              .getState()
-                              .setLogicalProjectDraftThreadId(
-                                fallbackDraft.logicalProjectKey,
-                                scopeProjectRef(activeEnvironmentId, fallbackDraft.projectId),
-                                fallbackDraft.draftId,
-                                {
-                                  threadId: fallbackDraft.threadId,
-                                  branch: fallbackDraft.branch,
-                                  worktreePath,
-                                  envMode: fallbackDraft.envMode,
-                                  startFromOrigin: fallbackDraft.startFromOrigin,
-                                  runtimeMode: fallbackDraft.runtimeMode,
-                                  interactionMode: fallbackDraft.interactionMode,
-                                  preservePreviousDraft: true,
-                                },
-                              );
-                            void router.navigate({
+                            // Move the project's active-draft pointer before
+                            // removing the current draft. This keeps the shared
+                            // worktree identity alive throughout the route swap.
+                            draftStore.setLogicalProjectDraftThreadId(
+                              fallbackDraft.logicalProjectKey,
+                              scopeProjectRef(activeEnvironmentId, fallbackDraft.projectId),
+                              fallbackDraft.draftId,
+                              {
+                                threadId: fallbackDraft.threadId,
+                                branch: fallbackDraft.branch,
+                                worktreePath,
+                                envMode: fallbackDraft.envMode,
+                                startFromOrigin: fallbackDraft.startFromOrigin,
+                                runtimeMode: fallbackDraft.runtimeMode,
+                                interactionMode: fallbackDraft.interactionMode,
+                                preservePreviousDraft: true,
+                              },
+                            );
+                            await router.navigate({
                               to: "/draft/$draftId",
                               params: buildDraftThreadRouteParams(fallbackDraft.draftId),
                             });
+                            draftStore.clearDraftThread(draft.draftId);
                             return;
                           }
                           const fallbackThread = tabs[0];
                           if (fallbackThread) {
-                            void router.navigate({
+                            await router.navigate({
                               to: "/$environmentId/$threadId",
                               params: buildThreadRouteParams({
                                 environmentId: fallbackThread.environmentId,
@@ -304,6 +309,7 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
                               }),
                             });
                           }
+                          draftStore.clearDraftThread(draft.draftId);
                         }}
                       />
                     }

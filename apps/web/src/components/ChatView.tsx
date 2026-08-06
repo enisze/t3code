@@ -1492,6 +1492,7 @@ function ChatViewContent(props: ChatViewProps) {
   // siblings read and write the same panel state and see the same live
   // terminals. Threads with no worktree resolve back to their own ref.
   const workspaceThreadRef = useWorkspaceThreadRef(activeThreadRef);
+  const workspaceThreadKey = workspaceThreadRef ? scopedThreadKey(workspaceThreadRef) : null;
   const workspaceThreadId = workspaceThreadRef?.threadId ?? null;
   const terminalUiState = useTerminalUiStateStore((state) =>
     selectThreadTerminalUiState(state.terminalUiStateByThreadKey, workspaceThreadRef),
@@ -5861,7 +5862,7 @@ function ChatViewContent(props: ChatViewProps) {
     ) : activeRightPanelSurface?.kind === "diff" ? (
       <Suspense fallback={null}>
         <DiffPanel
-          key={activeThreadKey}
+          key={workspaceThreadKey}
           mode="embedded"
           threadRef={activeThreadRef}
           composerDraftTarget={composerDraftTarget}

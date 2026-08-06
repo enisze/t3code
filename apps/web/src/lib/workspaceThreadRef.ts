@@ -28,9 +28,7 @@ export function useWorkspaceThreadRef(
   ref: ScopedThreadRef | null | undefined,
 ): ScopedThreadRef | null {
   const shells = useThreadShells();
-  const draftWorktreePath = useComposerDraftStore((state) =>
-    ref ? (state.getDraftSessionByRef(ref)?.worktreePath ?? null) : null,
-  );
+  const draftThreadsByThreadKey = useComposerDraftStore((state) => state.draftThreadsByThreadKey);
   return useMemo(() => {
     if (!ref) return null;
     const own = shells.find(
@@ -39,13 +37,31 @@ export function useWorkspaceThreadRef(
     // Prefer the server shell's worktree; for a not-yet-sent draft (no shell)
     // fall back to the worktree the draft will join. Either way a null worktree
     // means the chat keeps its own per-chat workspace.
-    const worktreePath = own ? own.worktreePath : draftWorktreePath;
+    const currentDraft = Object.values(draftThreadsByThreadKey).find(
+      (draft) => draft.environmentId === ref.environmentId && draft.threadId === ref.threadId,
+    );
+    const worktreePath = own ? own.worktreePath : (currentDraft?.worktreePath ?? null);
     if (worktreePath === null) return ref;
     const representative = resolveWorktreeWorkspaceRepresentative({
       threads: shells,
       target: { environmentId: ref.environmentId, worktreePath },
     });
-    if (!representative || representative.id === ref.threadId) return ref;
-    return { environmentId: ref.environmentId, threadId: ThreadId.make(representative.id) };
-  }, [ref, shells, draftWorktreePath]);
+    if (representative) {
+      if (representative.id === ref.threadId) return ref;
+      return { environmentId: ref.environmentId, threadId: ThreadId.make(representative.id) };
+    }
+    // A worktree can temporarily contain only client-side drafts. Give those
+    // drafts one stable workspace owner as well, rather than remounting every
+    // right-panel surface whenever the selected draft changes.
+    const draftRepresentative = Object.values(draftThreadsByThreadKey)
+      .filter(
+        (draft) =>
+          draft.environmentId === ref.environmentId &&
+          draft.worktreePath === worktreePath &&
+          !draft.promotedTo,
+      )
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))[0];
+    if (!draftRepresentative || draftRepresentative.threadId === ref.threadId) return ref;
+    return { environmentId: ref.environmentId, threadId: draftRepresentative.threadId };
+  }, [ref, shells, draftThreadsByThreadKey]);
 }
