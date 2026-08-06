@@ -14,6 +14,7 @@ import {
   Columns2Icon,
   PilcrowIcon,
   Rows3Icon,
+  ScanSearchIcon,
   SearchIcon,
   TextWrapIcon,
 } from "lucide-react";
@@ -72,6 +73,7 @@ import { serverEnvironment } from "../state/server";
 import { reviewEnvironment } from "../state/review";
 import { vcsEnvironment } from "../state/vcs";
 import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices";
+import GitActionsControl from "./GitActionsControl";
 
 type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
@@ -208,6 +210,9 @@ interface DiffPanelProps {
   variant?: "navigator" | "file";
   /** The file whose diff to show when `variant === "file"`. */
   fileDiffPath?: string;
+  /** Actions shown above the changed-file navigator. */
+  onReview?: () => void;
+  draftId?: DraftId;
   /**
    * The file whose diff is currently open in a dedicated tab — highlighted in
    * the `navigator` variant's file list so the active row stands out.
@@ -231,6 +236,8 @@ export default function DiffPanel({
   threadRef: threadRefProp,
   variant = "navigator",
   fileDiffPath,
+  onReview,
+  draftId,
   navigatorActiveFilePath,
   onOpenFileDiff,
   fileViewToggle,
@@ -874,6 +881,34 @@ export default function DiffPanel({
           </div>
         )}
       </div>
+      {variant === "navigator" && onReview ? (
+        <div className="flex shrink-0 items-center gap-2 [-webkit-app-region:no-drag]">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  onClick={onReview}
+                  aria-label="Start a review in a new chat"
+                />
+              }
+            >
+              <ScanSearchIcon className="size-3.5" aria-hidden />
+              <span className="ml-0.5">Review</span>
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              Start a new chat with the configured review prompt
+            </TooltipPopup>
+          </Tooltip>
+          <GitActionsControl
+            gitCwd={activeCwd ?? null}
+            activeThreadRef={currentThreadRef}
+            {...(draftId ? { draftId } : {})}
+          />
+        </div>
+      ) : null}
       {variant === "file" ? (
         <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
           {fileViewToggle ?? null}

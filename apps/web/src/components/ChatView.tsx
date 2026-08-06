@@ -5868,6 +5868,8 @@ function ChatViewContent(props: ChatViewProps) {
           composerDraftTarget={composerDraftTarget}
           initialGitScope={initialDiffPanelGitScope}
           variant="navigator"
+          onReview={startReviewInNewChat}
+          {...(routeKind === "draft" && draftId ? { draftId } : {})}
           navigatorActiveFilePath={
             activeContentTab?.view === "diff" || activeContentTab?.view === "file"
               ? activeContentTab.filePath
@@ -5964,8 +5966,6 @@ function ChatViewContent(props: ChatViewProps) {
           {!rightPanelOpen ? panelLayoutControls : null}
           <ChatHeader
             activeThreadEnvironmentId={activeThread.environmentId}
-            activeThreadId={activeThread.id}
-            {...(routeKind === "draft" && draftId ? { draftId } : {})}
             activeThreadTitle={activeThread.title}
             activeProjectName={activeProject?.title}
             activeProjectCwd={activeProject?.workspaceRoot ?? null}
@@ -5977,12 +5977,10 @@ function ChatViewContent(props: ChatViewProps) {
             keybindings={keybindings}
             availableEditors={availableEditors}
             rightPanelOpen={rightPanelOpen}
-            gitCwd={gitCwd}
             previewPort={
               isPreviewSupportedInRuntime() ? (activeProject?.previewPort ?? null) : null
             }
             onOpenPreview={openConfiguredPreview}
-            onReview={startReviewInNewChat}
             onNewThreadInProject={handleNewThreadInActiveProject}
             onRunProjectScript={runProjectScript}
             onAddProjectScript={saveProjectScript}
