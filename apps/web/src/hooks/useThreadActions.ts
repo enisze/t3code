@@ -158,12 +158,21 @@ export function useThreadActions() {
   const archiveThread = useCallback(
     async (
       target: ScopedThreadRef,
-      opts: { onArchived?: () => void; navigateToThreadRef?: ScopedThreadRef } = {},
+      opts: {
+        onArchived?: () => void;
+        navigateToThreadRef?: ScopedThreadRef;
+        // Stop + remove: halt a live session before archiving instead of
+        // blocking. Sidebar V2 archives as a park action, so a running turn
+        // must not keep working behind a now-hidden thread.
+        stopRunningSession?: boolean;
+      } = {},
     ) => {
       const resolved = resolveThreadTarget(target);
       if (!resolved) return AsyncResult.success(undefined);
       const { thread, threadRef } = resolved;
-      if (thread.session?.status === "running" && thread.session.activeTurnId != null) {
+      const hasActiveTurn =
+        thread.session?.status === "running" && thread.session.activeTurnId != null;
+      if (hasActiveTurn && !opts.stopRunningSession) {
         return AsyncResult.failure(
           Cause.fail(
             new ThreadArchiveBlockedError({
@@ -172,6 +181,14 @@ export function useThreadActions() {
             }),
           ),
         );
+      }
+      // Best-effort stop, mirroring deleteThread: the archive still proceeds if
+      // the stop errors, so a wedged session can't strand a thread in the inbox.
+      if (opts.stopRunningSession && thread.session && thread.session.status !== "stopped") {
+        await stopThreadSession({
+          environmentId: threadRef.environmentId,
+          input: { threadId: threadRef.threadId },
+        });
       }
 
       const currentRouteThreadRef = getCurrentRouteThreadRef();
@@ -208,7 +225,13 @@ export function useThreadActions() {
 
       return archiveResult;
     },
-    [archiveThreadMutation, getCurrentRouteThreadRef, resolveThreadTarget, router],
+    [
+      archiveThreadMutation,
+      getCurrentRouteThreadRef,
+      resolveThreadTarget,
+      router,
+      stopThreadSession,
+    ],
   );
 
   const unarchiveThread = useCallback(

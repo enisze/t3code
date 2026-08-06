@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
+  PREVIEW_CONTENT_TAB_ID,
   selectWorktreeContentTabs,
   useWorkspaceContentTabsStore,
+  worktreeContentTabsKey,
 } from "./workspaceContentTabsStore";
 
 const KEY = "env-1:/worktree";
@@ -60,5 +62,35 @@ describe("workspaceContentTabsStore", () => {
     useWorkspaceContentTabsStore.getState().activateChat(KEY);
     expect(tabs().activeTabId).toBeNull();
     expect(tabs().tabs).toHaveLength(1);
+  });
+
+  it("opens the browser preview as the single viewer", () => {
+    useWorkspaceContentTabsStore.getState().openPreview(KEY);
+    expect(tabs().tabs).toEqual([{ id: PREVIEW_CONTENT_TAB_ID, filePath: "", view: "preview" }]);
+    expect(tabs().activeTabId).toBe(PREVIEW_CONTENT_TAB_ID);
+  });
+
+  it("keeps a single viewer: opening the preview replaces a file, and vice versa", () => {
+    useWorkspaceContentTabsStore.getState().openFile(KEY, "a.ts");
+    useWorkspaceContentTabsStore.getState().openPreview(KEY);
+    expect(tabs().tabs).toEqual([{ id: PREVIEW_CONTENT_TAB_ID, filePath: "", view: "preview" }]);
+    useWorkspaceContentTabsStore.getState().openFileDiff(KEY, "b.ts");
+    expect(tabs().tabs).toEqual([{ id: "b.ts", filePath: "b.ts", view: "diff" }]);
+  });
+
+  it("setTabView cannot corrupt the preview viewer", () => {
+    useWorkspaceContentTabsStore.getState().openPreview(KEY);
+    useWorkspaceContentTabsStore.getState().setTabView(KEY, "file");
+    expect(tabs().tabs).toEqual([{ id: PREVIEW_CONTENT_TAB_ID, filePath: "", view: "preview" }]);
+  });
+});
+
+describe("worktreeContentTabsKey", () => {
+  it("keys by environment and worktree path", () => {
+    expect(worktreeContentTabsKey("env-1", "/worktree")).toBe("env-1:/worktree");
+  });
+
+  it("is null without a worktree (no content-tab strip)", () => {
+    expect(worktreeContentTabsKey("env-1", null)).toBeNull();
   });
 });

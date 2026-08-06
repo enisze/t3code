@@ -161,6 +161,14 @@ describe("rightPanelStore", () => {
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
   });
 
+  it("focusDiffUnlessFiles preserves an explicit Plan selection", () => {
+    useRightPanelStore.getState().open(refA, "plan");
+    useRightPanelStore
+      .getState()
+      .ensureFixedSurfaces(refA, { diff: true, files: true }, { focusDiffUnlessFiles: true });
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("plan");
+  });
+
   it("focusDiffUnlessFiles preserves an explicit Files selection", () => {
     useRightPanelStore
       .getState()

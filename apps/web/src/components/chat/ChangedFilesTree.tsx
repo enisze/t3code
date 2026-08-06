@@ -333,10 +333,12 @@ export interface DiffNavigatorFile {
 export const DiffNavigatorFileList = memo(function DiffNavigatorFileList(props: {
   files: ReadonlyArray<DiffNavigatorFile>;
   resolvedTheme: "light" | "dark";
+  /** The file whose diff is currently open — highlighted in the list. */
+  activeFilePath?: string | null | undefined;
   onOpenFile: (filePath: string) => void;
   onToggleViewed: (filePath: string) => void;
 }) {
-  const { files, resolvedTheme, onOpenFile, onToggleViewed } = props;
+  const { files, resolvedTheme, activeFilePath, onOpenFile, onToggleViewed } = props;
   // Unviewed first (original order), then viewed (original order).
   const orderedFiles = useMemo(
     () => [...files.filter((file) => !file.viewed), ...files.filter((file) => file.viewed)],
@@ -349,12 +351,15 @@ export const DiffNavigatorFileList = memo(function DiffNavigatorFileList(props: 
         const slashIndex = file.path.lastIndexOf("/");
         const directory = slashIndex >= 0 ? file.path.slice(0, slashIndex + 1) : "";
         const name = slashIndex >= 0 ? file.path.slice(slashIndex + 1) : file.path;
+        const isActive = activeFilePath === file.path;
         return (
           <div
             key={`file:${file.path}`}
+            data-active={isActive || undefined}
             className={cn(
-              "group flex w-full items-center gap-1.5 rounded-xl py-1 pr-3 pl-2 transition-colors hover:bg-accent/60",
-              file.viewed && "opacity-50",
+              "group flex w-full items-center gap-1.5 rounded-xl py-1 pr-3 pl-2 transition-colors",
+              isActive ? "bg-accent" : "hover:bg-accent/60",
+              file.viewed && !isActive && "opacity-70",
             )}
           >
             <Checkbox

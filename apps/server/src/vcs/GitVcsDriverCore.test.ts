@@ -759,6 +759,37 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         );
       }),
     );
+
+    it.effect("includes uncommitted and untracked work in the branch preview", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["checkout", "-b", "feature/uncommitted"]);
+        // A committed branch change plus work the agent left behind: an
+        // uncommitted edit to a tracked file and a brand-new untracked file.
+        yield* writeTextFile(cwd, "committed.txt", "committed\n");
+        yield* git(cwd, ["add", "committed.txt"]);
+        yield* git(cwd, ["commit", "-m", "add committed file"]);
+        yield* writeTextFile(cwd, "README.md", "# edited uncommitted\n");
+        yield* writeTextFile(cwd, "untracked.txt", "untracked\n");
+
+        const preview = yield* driver.getReviewDiffPreview({
+          cwd,
+          baseRef: initialBranch,
+          ignoreWhitespace: false,
+        });
+        const branchDiff =
+          preview.sources.find((source) => source.kind === "branch-range")?.diff ?? "";
+
+        // The branch view must reflect everything the branch introduced vs its
+        // base: the committed file, the uncommitted edit, and the untracked file.
+        assert.include(branchDiff, "committed.txt");
+        assert.include(branchDiff, "README.md");
+        assert.include(branchDiff, "edited uncommitted");
+        assert.include(branchDiff, "untracked.txt");
+      }),
+    );
   });
 
   describe("repository status", () => {

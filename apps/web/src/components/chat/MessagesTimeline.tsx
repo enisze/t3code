@@ -47,6 +47,7 @@ import {
   MessageCircleIcon,
   MousePointerClickIcon,
   PaintbrushIcon,
+  PaperclipIcon,
   MinusIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -863,6 +864,8 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
   );
 });
 
+type UserMessageAttachment = NonNullable<TimelineMessage["attachments"]>[number];
+
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const userImages = row.message.attachments ?? [];
@@ -881,8 +884,18 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     ...displayedUserMessage.elementContexts,
     ...elementContextState.contexts,
   ];
-  const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
-  const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
+  const previewImages = userImages.filter(
+    (attachment): attachment is Extract<UserMessageAttachment, { type: "image" }> =>
+      attachment.type === "image" && attachment.name.startsWith("preview-annotation-"),
+  );
+  const regularImages = userImages.filter(
+    (attachment): attachment is Extract<UserMessageAttachment, { type: "image" }> =>
+      attachment.type === "image" && !attachment.name.startsWith("preview-annotation-"),
+  );
+  const documents = userImages.filter(
+    (attachment): attachment is Extract<UserMessageAttachment, { type: "document" }> =>
+      attachment.type === "document",
+  );
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
 
   return (
@@ -890,7 +903,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       <div className="relative max-w-[80%] rounded-2xl bg-accent p-3">
         {regularImages.length > 0 && (
           <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-            {regularImages.map((image: NonNullable<TimelineMessage["attachments"]>[number]) => (
+            {regularImages.map((image) => (
               <div
                 key={image.id}
                 className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
@@ -918,6 +931,20 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                   </div>
                 )}
               </div>
+            ))}
+          </div>
+        )}
+        {documents.length > 0 && (
+          <div className="mb-2 flex max-w-[420px] flex-wrap gap-2">
+            {documents.map((document) => (
+              <span
+                key={document.id}
+                className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-border/70 bg-background/70 px-2 py-1 text-xs text-foreground/90"
+                title={document.name}
+              >
+                <PaperclipIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 truncate">{document.name}</span>
+              </span>
             ))}
           </div>
         )}
@@ -1342,7 +1369,7 @@ const UserMessageElementContextChip = memo(function UserMessageElementContextChi
 
 function UserMessagePreviewAnnotationCard(props: {
   annotation: ParsedPreviewAnnotation;
-  image: NonNullable<TimelineMessage["attachments"]>[number] | null;
+  image: Extract<UserMessageAttachment, { type: "image" }> | null;
 }) {
   const ctx = use(TimelineRowCtx);
   return (

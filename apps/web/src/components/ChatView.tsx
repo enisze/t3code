@@ -135,6 +135,7 @@ import {
   useThreadPreviewState,
 } from "../previewStateStore";
 import { addBrowserSurface } from "./preview/addBrowserSurface";
+import { openBrowserPreviewInChat } from "./preview/openBrowserPreviewInChat";
 import { closePreviewSession } from "./preview/closePreviewSession";
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
 import { subscribePreviewAction } from "./preview/previewActionBus";
@@ -320,6 +321,8 @@ import { useAssetUrls } from "../assets/assetUrls";
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
+const DOCUMENT_ONLY_BOOTSTRAP_PROMPT =
+  "[User attached one or more files without additional text. Open the attached file(s) from the paths noted below and respond using the conversation context.]";
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
@@ -1264,6 +1267,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
+  const addComposerDraftDocuments = useComposerDraftStore((store) => store.addDocuments);
   const setComposerDraftTerminalContexts = useComposerDraftStore(
     (store) => store.setTerminalContexts,
   );
@@ -1566,13 +1570,6 @@ function ChatViewContent(props: ChatViewProps) {
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
 
   useEffect(() => {
-    if (!workspaceThreadRef) return;
-    useRightPanelStore
-      .getState()
-      .reconcileBrowserSurfaces(workspaceThreadRef, Object.keys(activePreviewState.sessions));
-  }, [activePreviewState.sessions, workspaceThreadRef]);
-
-  useEffect(() => {
     if (!workspaceThreadRef || !activePreviewMiniPlayer) return;
     const miniTabStillExists = Boolean(activePreviewState.sessions[activePreviewMiniPlayer.tabId]);
     const sameTabOpenInPanel =
@@ -1660,6 +1657,9 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const activeContentTab =
     contentTabsState.tabs.find((tab) => tab.id === contentTabsState.activeTabId) ?? null;
+  // The browser preview is shown as a content tab in the chat column (beside the
+  // file/diff viewers), not in the right panel.
+  const previewTabActive = activeContentTab?.view === "preview";
   const handleNewChatInWorktree = useCallback(() => {
     if (!activeProjectRef || !newChatWorktreePath) return;
     void handleNewThread(activeProjectRef, {
@@ -2499,7 +2499,14 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     const store = useRightPanelStore.getState();
     const state = selectThreadRightPanelState(store.byThreadKey, workspaceThreadRef);
-    const diffAvailable = isServerThread && isGitRepo;
+    // A draft that joins an existing worktree resolves to that worktree's server
+    // representative, so the shared diff is already available — even before the
+    // draft's first message. Gating purely on `isServerThread` would make
+    // `ensureFixedSurfaces` drop the Diff tab from the shared workspace the
+    // moment a new chat opens in the worktree.
+    const sharesWorktreeWorkspace =
+      activeThreadRef !== null && workspaceThreadRef.threadId !== activeThreadRef.threadId;
+    const diffAvailable = isGitRepo && (isServerThread || sharesWorktreeWorkspace);
     const firstVisit = !autoOpenedRightPanelKeysRef.current.has(activeThreadKey);
     if (firstVisit) autoOpenedRightPanelKeysRef.current.add(activeThreadKey);
     if (firstVisit && !state.isOpen && state.surfaces.length === 0) {
@@ -2522,6 +2529,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
   }, [
     workspaceThreadRef,
+    activeThreadRef,
     activeProject,
     activeThreadKey,
     isServerThread,
@@ -3192,17 +3200,31 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const togglePreviewPanel = useCallback(() => {
     if (!workspaceThreadRef || !isPreviewSupportedInRuntime()) return;
+    // Preview is shown as a content tab in the chat column; toggle returns to the
+    // conversation. (The right-panel branch only fires for worktree-less threads
+    // that fall back to the panel.)
+    if (previewTabActive) {
+      activateChatContent();
+      return;
+    }
     if (previewPanelOpen) {
       useRightPanelStore.getState().close(workspaceThreadRef);
       return;
     }
     const activeTabId = activePreviewState.activeTabId;
     if (activeTabId) {
-      useRightPanelStore.getState().openBrowser(workspaceThreadRef, activeTabId);
+      openBrowserPreviewInChat(workspaceThreadRef, activeTabId);
     } else {
       createBrowserSurface();
     }
-  }, [activePreviewState.activeTabId, workspaceThreadRef, createBrowserSurface, previewPanelOpen]);
+  }, [
+    activePreviewState.activeTabId,
+    workspaceThreadRef,
+    createBrowserSurface,
+    previewPanelOpen,
+    previewTabActive,
+    activateChatContent,
+  ]);
   const closePreviewPanel = useCallback(() => {
     if (workspaceThreadRef) {
       setMaximizedRightPanelThreadKey(null);
@@ -4634,6 +4656,7 @@ function ChatViewContent(props: ChatViewProps) {
     if (!sendCtx?.providerAvailable) return;
     const {
       images: composerImages,
+      documents: composerDocuments,
       terminalContexts: composerTerminalContexts,
       elementContexts: composerElementContexts,
       previewAnnotations: composerPreviewAnnotations,
@@ -4653,6 +4676,7 @@ function ChatViewContent(props: ChatViewProps) {
     } = deriveComposerSendState({
       prompt: promptForSend,
       imageCount: composerImages.length,
+      documentCount: composerDocuments.length,
       terminalContexts: composerTerminalContexts,
       elementContextCount:
         composerElementContexts.length +
@@ -4675,6 +4699,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
     const standaloneSlashCommand =
       composerImages.length === 0 &&
+      composerDocuments.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
       composerElementContexts.length === 0 &&
       composerPreviewAnnotations.length === 0 &&
@@ -4749,6 +4774,7 @@ function ChatViewContent(props: ChatViewProps) {
     beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
 
     const composerImagesSnapshot = [...composerImages];
+    const composerDocumentsSnapshot = [...composerDocuments];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
     const composerElementContextsSnapshot = [...composerElementContexts];
     const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
@@ -4767,30 +4793,50 @@ function ChatViewContent(props: ChatViewProps) {
     );
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
+    const attachmentOnlyBootstrapPrompt =
+      composerImagesSnapshot.length > 0
+        ? IMAGE_ONLY_BOOTSTRAP_PROMPT
+        : DOCUMENT_ONLY_BOOTSTRAP_PROMPT;
     const outgoingMessageText = formatOutgoingPrompt({
       provider: ctxSelectedProvider,
       model: ctxSelectedModel,
       models: ctxSelectedProviderModels,
       effort: ctxSelectedPromptEffort,
-      text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+      text: messageTextForSend || attachmentOnlyBootstrapPrompt,
     });
-    const turnAttachmentsPromise = Promise.all(
-      composerImagesSnapshot.map(async (image) => ({
+    const turnAttachmentsPromise = Promise.all([
+      ...composerImagesSnapshot.map(async (image) => ({
         type: "image" as const,
         name: image.name,
         mimeType: image.mimeType,
         sizeBytes: image.sizeBytes,
         dataUrl: await readFileAsDataUrl(image.file),
       })),
-    );
-    const optimisticAttachments = composerImagesSnapshot.map((image) => ({
-      type: "image" as const,
-      id: image.id,
-      name: image.name,
-      mimeType: image.mimeType,
-      sizeBytes: image.sizeBytes,
-      previewUrl: image.previewUrl,
-    }));
+      ...composerDocumentsSnapshot.map(async (document) => ({
+        type: "document" as const,
+        name: document.name,
+        mimeType: document.mimeType,
+        sizeBytes: document.sizeBytes,
+        dataUrl: await readFileAsDataUrl(document.file),
+      })),
+    ]);
+    const optimisticAttachments = [
+      ...composerImagesSnapshot.map((image) => ({
+        type: "image" as const,
+        id: image.id,
+        name: image.name,
+        mimeType: image.mimeType,
+        sizeBytes: image.sizeBytes,
+        previewUrl: image.previewUrl,
+      })),
+      ...composerDocumentsSnapshot.map((document) => ({
+        type: "document" as const,
+        id: document.id,
+        name: document.name,
+        mimeType: document.mimeType,
+        sizeBytes: document.sizeBytes,
+      })),
+    ];
     // Sending always returns to the live edge. The new row becomes the
     // anchored end-space target so it lands near the top while the response
     // streams into the reserved space below it.
@@ -4847,6 +4893,8 @@ function ChatViewContent(props: ChatViewProps) {
     if (!titleSeed) {
       if (firstComposerImageName) {
         titleSeed = `Image: ${firstComposerImageName}`;
+      } else if (composerDocumentsSnapshot.length > 0 && composerDocumentsSnapshot[0]) {
+        titleSeed = `File: ${composerDocumentsSnapshot[0].name}`;
       } else if (composerTerminalContextsSnapshot.length > 0) {
         titleSeed = formatTerminalContextLabel(composerTerminalContextsSnapshot[0]!);
       } else if (composerElementContextsSnapshot.length > 0) {
@@ -4963,6 +5011,8 @@ function ChatViewContent(props: ChatViewProps) {
       if (
         promptRef.current.length === 0 &&
         composerImagesRef.current.length === 0 &&
+        (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.documents.length ??
+          0) === 0 &&
         composerTerminalContextsRef.current.length === 0 &&
         composerElementContextsRef.current.length === 0 &&
         (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.previewAnnotations
@@ -4985,6 +5035,9 @@ function ChatViewContent(props: ChatViewProps) {
         composerElementContextsRef.current = composerElementContextsSnapshot;
         setComposerDraftPrompt(composerDraftTarget, promptForSend);
         addComposerDraftImages(composerDraftTarget, retryComposerImages);
+        if (composerDocumentsSnapshot.length > 0) {
+          addComposerDraftDocuments(composerDraftTarget, composerDocumentsSnapshot);
+        }
         setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
         setComposerDraftElementContexts(composerDraftTarget, composerElementContextsSnapshot);
         setComposerDraftPreviewAnnotations(composerDraftTarget, composerPreviewAnnotationsSnapshot);
@@ -5780,6 +5833,11 @@ function ChatViewContent(props: ChatViewProps) {
           composerDraftTarget={composerDraftTarget}
           initialGitScope={initialDiffPanelGitScope}
           variant="navigator"
+          navigatorActiveFilePath={
+            activeContentTab?.view === "diff" || activeContentTab?.view === "file"
+              ? activeContentTab.filePath
+              : null
+          }
           onOpenFileDiff={openFileDiffSurface}
         />
       </Suspense>
@@ -5901,7 +5959,10 @@ function ChatViewContent(props: ChatViewProps) {
           {...(newChatWorktreePath ? { onNewChatInWorktree: handleNewChatInWorktree } : {})}
           contentTabs={contentTabsState.tabs.map((tab) => ({
             id: tab.id,
-            title: tab.filePath.slice(tab.filePath.lastIndexOf("/") + 1),
+            title:
+              tab.view === "preview"
+                ? "Preview"
+                : tab.filePath.slice(tab.filePath.lastIndexOf("/") + 1),
             view: tab.view,
           }))}
           activeContentTabId={contentTabsState.activeTabId}
@@ -5994,7 +6055,16 @@ function ChatViewContent(props: ChatViewProps) {
                 data-chat-content-diff="true"
               >
                 <Suspense fallback={null}>
-                  {activeContentTab.view === "file" && activeProject && activeWorkspaceRoot ? (
+                  {activeContentTab.view === "preview" ? (
+                    <PreviewPanel
+                      key={`${activeThreadKey}:content:preview`}
+                      mode="embedded"
+                      threadRef={workspaceThreadRef ?? activeThreadRef}
+                      tabId={activePreviewState.activeTabId}
+                      configuredUrls={configuredPreviewUrls}
+                      visible
+                    />
+                  ) : activeContentTab.view === "file" && activeProject && activeWorkspaceRoot ? (
                     <FilePreviewPanel
                       key={`${activeThreadKey}:content:file:${activeContentTab.filePath}`}
                       environmentId={activeProject.environmentId}

@@ -374,6 +374,11 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     thread,
   } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+  // The browser preview shares the worktree's workspace panel with the diff and
+  // files surfaces, so open it against the same representative thread those
+  // surfaces key on. Without this the preview would attach to the raw per-row
+  // thread and open in a different chat than the one showing the files/diff.
+  const workspaceThreadRef = useWorkspaceThreadRef(threadRef) ?? threadRef;
   const threadKey = scopedThreadKey(threadRef);
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
@@ -432,7 +437,11 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
       event.stopPropagation();
       navigateToThread(threadRef);
       void (async () => {
-        const result = await openDiscoveredPort({ threadRef, port, openPreview });
+        const result = await openDiscoveredPort({
+          threadRef: workspaceThreadRef,
+          port,
+          openPreview,
+        });
         if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
           return;
         }
@@ -447,7 +456,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         );
       })();
     },
-    [discoveredPorts, navigateToThread, openPreview, threadRef],
+    [discoveredPorts, navigateToThread, openPreview, threadRef, workspaceThreadRef],
   );
   const isThreadRunning =
     thread.session?.status === "running" && thread.session.activeTurnId != null;
