@@ -373,6 +373,8 @@ interface ComposerDraftStoreState {
       startFromOrigin?: boolean;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
+      /** Keep the previously active draft available as a sibling chat tab. */
+      preservePreviousDraft?: boolean;
     },
   ) => void;
   /** Creates or updates the draft session tracked for a concrete project ref. */
@@ -2314,6 +2316,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 ? undefined
                 : nextDraftThreadsByThreadKey[previousThreadKeyForLogicalProject];
             if (
+              !options?.preservePreviousDraft &&
               previousThreadKeyForLogicalProject &&
               previousThreadKeyForLogicalProject !== draftId &&
               !isComposerThreadKeyInUse(

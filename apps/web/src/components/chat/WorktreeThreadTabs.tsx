@@ -1,5 +1,5 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -20,6 +20,7 @@ import { useRouter } from "@tanstack/react-router";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { useThreadShells } from "~/state/entities";
 import { buildThreadRouteParams } from "~/threadRoutes";
+import { buildDraftThreadRouteParams } from "~/threadRoutes";
 import { cn } from "~/lib/utils";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Spinner } from "~/components/ui/spinner";
@@ -28,6 +29,8 @@ import { useThreadActions } from "~/hooks/useThreadActions";
 import { useClientSettings } from "~/hooks/useSettings";
 import { readLocalApi } from "~/localApi";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
+import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { useShallow } from "zustand/react/shallow";
 
 export interface WorktreeContentTabDescriptor {
   id: string;
@@ -41,6 +44,7 @@ const EMPTY_CONTENT_TABS: ReadonlyArray<WorktreeContentTabDescriptor> = [];
 interface WorktreeThreadTabsProps {
   activeEnvironmentId: EnvironmentId;
   activeThreadId: ThreadId;
+  activeDraftId?: DraftId | null;
   // The on-disk worktree the active thread runs in. Tabs group every chat that
   // shares this worktree; when it's null the thread isn't in a worktree and no
   // tab strip is shown.
@@ -104,6 +108,7 @@ const WORKTREE_TAB_ATTENTION: Record<
 export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
   activeEnvironmentId,
   activeThreadId,
+  activeDraftId = null,
   worktreePath,
   onNewChatInWorktree,
   contentTabs = EMPTY_CONTENT_TABS,
@@ -118,6 +123,34 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
   const confirmThreadArchive = useClientSettings((settings) => settings.confirmThreadArchive);
   const activeTabRef = useRef<HTMLButtonElement | null>(null);
   const [closingThreadId, setClosingThreadId] = useState<ThreadId | null>(null);
+  const draftTabs = useComposerDraftStore(
+    useShallow((state) =>
+      Object.entries(state.draftThreadsByThreadKey)
+        .filter(
+          ([, draft]) =>
+            draft.environmentId === activeEnvironmentId &&
+            draft.worktreePath === worktreePath &&
+            !draft.promotedTo,
+        )
+        .map(([draftId, draft]) => {
+          const prompt = state.draftsByThreadKey[draftId]?.prompt.trim() ?? "";
+          return {
+            draftId: DraftId.make(draftId),
+            createdAt: draft.createdAt,
+            title: prompt.split(/\r?\n/, 1)[0]?.slice(0, 48) || "New chat",
+            threadId: draft.threadId,
+            projectId: draft.projectId,
+            logicalProjectKey: draft.logicalProjectKey,
+            branch: draft.branch,
+            envMode: draft.envMode,
+            startFromOrigin: draft.startFromOrigin,
+            runtimeMode: draft.runtimeMode,
+            interactionMode: draft.interactionMode,
+          };
+        })
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
+    ),
+  );
 
   const tabs = useMemo(() => {
     if (!worktreePath) return [];
@@ -176,7 +209,8 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
   // Nothing worktree-scoped to show, or only the current chat with no way to
   // spawn siblings and no open diffs — a lone tab adds noise without value.
   if (!worktreePath) return null;
-  if (tabs.length <= 1 && !onNewChatInWorktree && contentTabs.length === 0) return null;
+  if (tabs.length + draftTabs.length <= 1 && !onNewChatInWorktree && contentTabs.length === 0)
+    return null;
 
   return (
     <div
@@ -185,6 +219,99 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
     >
       <ScrollArea hideScrollbars scrollFade className="min-w-0 flex-1 rounded-none">
         <div className="flex h-full w-max min-w-full items-center gap-1">
+          {draftTabs.map((draft) => {
+            const active = draft.draftId === activeDraftId && activeContentTabId === null;
+            return (
+              <div
+                key={`draft:${draft.draftId}`}
+                className={cn(
+                  "group/tab flex h-7 min-w-24 max-w-44 shrink-0 items-center rounded-md text-sm transition-colors",
+                  active
+                    ? "bg-accent text-foreground"
+                    : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                )}
+              >
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        ref={active ? activeTabRef : undefined}
+                        type="button"
+                        aria-current={active ? "page" : undefined}
+                        className="min-w-0 flex-1 truncate py-1 pl-2.5 text-left"
+                        onClick={() => {
+                          onActivateChat?.();
+                          if (active) return;
+                          void router.navigate({
+                            to: "/draft/$draftId",
+                            params: buildDraftThreadRouteParams(draft.draftId),
+                          });
+                        }}
+                      >
+                        {draft.title}
+                      </button>
+                    }
+                  />
+                  <TooltipPopup side="bottom">{draft.title}</TooltipPopup>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        aria-label={`Close ${draft.title}`}
+                        className="mr-1 inline-flex size-5 shrink-0 items-center justify-center rounded-sm opacity-0 transition-opacity hover:bg-background/70 focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring max-sm:opacity-100 group-hover/tab:opacity-100"
+                        onClick={() => {
+                          useComposerDraftStore.getState().clearDraftThread(draft.draftId);
+                          if (!active) return;
+                          const fallbackDraft = draftTabs.find(
+                            (candidate) => candidate.draftId !== draft.draftId,
+                          );
+                          if (fallbackDraft) {
+                            useComposerDraftStore
+                              .getState()
+                              .setLogicalProjectDraftThreadId(
+                                fallbackDraft.logicalProjectKey,
+                                scopeProjectRef(activeEnvironmentId, fallbackDraft.projectId),
+                                fallbackDraft.draftId,
+                                {
+                                  threadId: fallbackDraft.threadId,
+                                  branch: fallbackDraft.branch,
+                                  worktreePath,
+                                  envMode: fallbackDraft.envMode,
+                                  startFromOrigin: fallbackDraft.startFromOrigin,
+                                  runtimeMode: fallbackDraft.runtimeMode,
+                                  interactionMode: fallbackDraft.interactionMode,
+                                  preservePreviousDraft: true,
+                                },
+                              );
+                            void router.navigate({
+                              to: "/draft/$draftId",
+                              params: buildDraftThreadRouteParams(fallbackDraft.draftId),
+                            });
+                            return;
+                          }
+                          const fallbackThread = tabs[0];
+                          if (fallbackThread) {
+                            void router.navigate({
+                              to: "/$environmentId/$threadId",
+                              params: buildThreadRouteParams({
+                                environmentId: fallbackThread.environmentId,
+                                threadId: fallbackThread.id,
+                              }),
+                            });
+                          }
+                        }}
+                      />
+                    }
+                  >
+                    <XIcon aria-hidden="true" className="size-3.5" />
+                  </TooltipTrigger>
+                  <TooltipPopup side="bottom">Close draft</TooltipPopup>
+                </Tooltip>
+              </div>
+            );
+          })}
           {tabs.map((shell) => {
             const active = shell.id === activeThreadId && activeContentTabId === null;
             const status = resolveWorktreeTabStatus(shell);

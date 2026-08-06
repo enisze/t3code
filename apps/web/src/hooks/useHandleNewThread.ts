@@ -46,6 +46,8 @@ interface NewThreadOptions {
   modelSelection?: ModelSelection;
   /** Submit the initial prompt once the destination composer is ready. */
   autoSubmitInitialPrompt?: boolean;
+  /** Retain the previous unsent draft so both can remain open as chat tabs. */
+  preservePreviousDraft?: boolean;
 }
 
 export function useNewThreadHandler() {
@@ -283,6 +285,7 @@ export function useNewThreadHandler() {
             }),
           runtimeMode: carryRuntimeMode ?? DEFAULT_RUNTIME_MODE,
           ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
+          ...(options?.preservePreviousDraft ? { preservePreviousDraft: true } : {}),
         });
         applyStickyState(draftId);
         if (initialModelSelection) {

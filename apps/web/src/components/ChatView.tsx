@@ -1667,6 +1667,8 @@ function ChatViewContent(props: ChatViewProps) {
       branch: newChatWorktreeBranch,
       worktreePath: newChatWorktreePath,
       envMode: "worktree",
+      forceNew: true,
+      preservePreviousDraft: true,
     });
   }, [activeProjectRef, newChatWorktreeBranch, newChatWorktreePath, handleNewThread]);
   const activeEnvironmentShell = useEnvironmentQuery(
@@ -5992,6 +5994,7 @@ function ChatViewContent(props: ChatViewProps) {
           activeEnvironmentId={activeThread.environmentId}
           activeThreadId={activeThread.id}
           worktreePath={newChatWorktreePath}
+          activeDraftId={draftId}
           {...(newChatWorktreePath ? { onNewChatInWorktree: handleNewChatInWorktree } : {})}
           contentTabs={contentTabsState.tabs.map((tab) => {
             if (tab.view !== "preview") {

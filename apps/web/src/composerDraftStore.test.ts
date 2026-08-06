@@ -850,6 +850,32 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(draftByKey(draftId)).toBeUndefined();
   });
 
+  it("preserves sibling composer drafts for multiple chat tabs", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      threadId,
+      worktreePath: "/tmp/review-worktree",
+      envMode: "worktree",
+    });
+    store.setPrompt(draftId, "first pasted message");
+
+    store.setLogicalProjectDraftThreadId(scopedProjectKey(projectRef), projectRef, otherDraftId, {
+      threadId: otherThreadId,
+      worktreePath: "/tmp/review-worktree",
+      envMode: "worktree",
+      preservePreviousDraft: true,
+    });
+    store.setPrompt(otherDraftId, "second pasted message");
+
+    expect(
+      useComposerDraftStore
+        .getState()
+        .getDraftSessionByLogicalProjectKey(scopedProjectKey(projectRef))?.threadId,
+    ).toBe(otherThreadId);
+    expect(draftByKey(draftId)?.prompt).toBe("first pasted message");
+    expect(draftByKey(otherDraftId)?.prompt).toBe("second pasted message");
+  });
+
   it("keeps composer drafts when the thread is still mapped by another project", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, { threadId });
