@@ -30,7 +30,6 @@ import { useClientSettings } from "~/hooks/useSettings";
 import { readLocalApi } from "~/localApi";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import { useShallow } from "zustand/react/shallow";
 
 export interface WorktreeContentTabDescriptor {
   id: string;
@@ -123,9 +122,11 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
   const confirmThreadArchive = useClientSettings((settings) => settings.confirmThreadArchive);
   const activeTabRef = useRef<HTMLButtonElement | null>(null);
   const [closingThreadId, setClosingThreadId] = useState<ThreadId | null>(null);
-  const draftTabs = useComposerDraftStore(
-    useShallow((state) =>
-      Object.entries(state.draftThreadsByThreadKey)
+  const draftThreadsByThreadKey = useComposerDraftStore((state) => state.draftThreadsByThreadKey);
+  const draftsByThreadKey = useComposerDraftStore((state) => state.draftsByThreadKey);
+  const draftTabs = useMemo(
+    () =>
+      Object.entries(draftThreadsByThreadKey)
         .filter(
           ([, draft]) =>
             draft.environmentId === activeEnvironmentId &&
@@ -133,7 +134,7 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
             !draft.promotedTo,
         )
         .map(([draftId, draft]) => {
-          const prompt = state.draftsByThreadKey[draftId]?.prompt.trim() ?? "";
+          const prompt = draftsByThreadKey[draftId]?.prompt.trim() ?? "";
           return {
             draftId: DraftId.make(draftId),
             createdAt: draft.createdAt,
@@ -149,7 +150,7 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
           };
         })
         .sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
-    ),
+    [activeEnvironmentId, draftThreadsByThreadKey, draftsByThreadKey, worktreePath],
   );
 
   const tabs = useMemo(() => {
