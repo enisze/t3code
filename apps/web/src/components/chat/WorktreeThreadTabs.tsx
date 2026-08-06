@@ -8,6 +8,7 @@ import {
   CircleAlertIcon,
   FileDiffIcon,
   FileIcon,
+  GlobeIcon,
   MessageSquareDotIcon,
   MessageSquarePlusIcon,
   XIcon,
@@ -32,7 +33,7 @@ export interface WorktreeContentTabDescriptor {
   id: string;
   title: string;
   /** Which view the tab renders — picks the tab icon. */
-  view: "diff" | "file";
+  view: "diff" | "file" | "preview";
 }
 
 const EMPTY_CONTENT_TABS: ReadonlyArray<WorktreeContentTabDescriptor> = [];
@@ -285,7 +286,8 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
           })}
           {contentTabs.map((tab) => {
             const active = tab.id === activeContentTabId;
-            const TabIcon = tab.view === "file" ? FileIcon : FileDiffIcon;
+            const TabIcon =
+              tab.view === "preview" ? GlobeIcon : tab.view === "file" ? FileIcon : FileDiffIcon;
             return (
               <div
                 key={`content:${tab.id}`}
@@ -326,7 +328,11 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
                     <XIcon aria-hidden="true" className="size-3.5" />
                   </TooltipTrigger>
                   <TooltipPopup side="bottom">
-                    {tab.view === "file" ? "Close file" : "Close diff"}
+                    {tab.view === "preview"
+                      ? "Close preview"
+                      : tab.view === "file"
+                        ? "Close file"
+                        : "Close diff"}
                   </TooltipPopup>
                 </Tooltip>
               </div>

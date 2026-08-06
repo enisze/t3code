@@ -206,6 +206,11 @@ interface DiffPanelProps {
   variant?: "navigator" | "file";
   /** The file whose diff to show when `variant === "file"`. */
   fileDiffPath?: string;
+  /**
+   * The file whose diff is currently open in a dedicated tab — highlighted in
+   * the `navigator` variant's file list so the active row stands out.
+   */
+  navigatorActiveFilePath?: string | null;
   /** Invoked when a file is chosen in the navigator tree. */
   onOpenFileDiff?: (filePath: string) => void;
   /**
@@ -224,6 +229,7 @@ export default function DiffPanel({
   threadRef: threadRefProp,
   variant = "navigator",
   fileDiffPath,
+  navigatorActiveFilePath,
   onOpenFileDiff,
   fileViewToggle,
 }: DiffPanelProps) {
@@ -1004,6 +1010,7 @@ export default function DiffPanel({
                 <DiffNavigatorFileList
                   files={navigatorFiles}
                   resolvedTheme={resolvedTheme}
+                  activeFilePath={navigatorActiveFilePath}
                   onOpenFile={(filePath) => onOpenFileDiff?.(filePath)}
                   onToggleViewed={toggleFileViewed}
                 />

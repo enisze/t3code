@@ -5,7 +5,8 @@ import * as Schema from "effect/Schema";
 
 import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
 import { applyPreviewServerSnapshot, isPreviewSupportedInRuntime } from "~/previewStateStore";
-import { useRightPanelStore } from "~/rightPanelStore";
+
+import { openBrowserPreviewInChat } from "./openBrowserPreviewInChat";
 
 const terminalLinkErrorContext = {
   environmentId: Schema.String,
@@ -99,7 +100,7 @@ export async function openTerminalLinkInPreview<E>(
       return;
     }
     applyPreviewServerSnapshot(input.threadRef, result.value);
-    useRightPanelStore.getState().openBrowser(input.threadRef, result.value.tabId);
+    openBrowserPreviewInChat(input.threadRef, result.value.tabId);
     return;
   }
 

@@ -11,14 +11,33 @@
  */
 import { create } from "zustand";
 
-/** Which view the content viewer renders for its file. */
-export type WorkspaceContentTabView = "diff" | "file";
+/** Which view the content viewer renders. */
+export type WorkspaceContentTabView = "diff" | "file" | "preview";
+
+/** Stable id of the single browser-preview viewer tab. */
+export const PREVIEW_CONTENT_TAB_ID = "preview";
 
 export interface WorkspaceContentTab {
-  /** Stable id — the repo-relative file path (a single viewer at a time). */
+  /**
+   * Stable id — the repo-relative file path for file/diff viewers, or
+   * {@link PREVIEW_CONTENT_TAB_ID} for the browser preview (a single viewer at
+   * a time).
+   */
   id: string;
+  /** Empty for the preview viewer, which is not backed by a file. */
   filePath: string;
   view: WorkspaceContentTabView;
+}
+
+/**
+ * The content-tab strip is scoped to a worktree, so a chat with no on-disk
+ * worktree has no strip. Returns null in that case.
+ */
+export function worktreeContentTabsKey(
+  environmentId: string,
+  worktreePath: string | null,
+): string | null {
+  return worktreePath ? `${environmentId}:${worktreePath}` : null;
 }
 
 interface WorktreeContentTabsState {
@@ -33,6 +52,8 @@ interface WorkspaceContentTabsStore {
   openFileDiff: (worktreeKey: string, filePath: string) => void;
   /** Open (replacing the single viewer) showing `filePath`'s contents. */
   openFile: (worktreeKey: string, filePath: string) => void;
+  /** Open (replacing the single viewer) showing the browser preview. */
+  openPreview: (worktreeKey: string) => void;
   /** Flip the current viewer between the diff and the editable file contents. */
   setTabView: (worktreeKey: string, view: WorkspaceContentTabView) => void;
   activateTab: (worktreeKey: string, tabId: string) => void;
@@ -77,11 +98,23 @@ export const useWorkspaceContentTabsStore = create<WorkspaceContentTabsStore>()(
   byWorktree: {},
   openFileDiff: (worktreeKey, filePath) => openContentTab(set, worktreeKey, filePath, "diff"),
   openFile: (worktreeKey, filePath) => openContentTab(set, worktreeKey, filePath, "file"),
+  openPreview: (worktreeKey) =>
+    set((state) => ({
+      // A single viewer: opening the preview replaces whatever it was showing.
+      byWorktree: updateWorktree(state.byWorktree, worktreeKey, () => ({
+        tabs: [{ id: PREVIEW_CONTENT_TAB_ID, filePath: "", view: "preview" }],
+        activeTabId: PREVIEW_CONTENT_TAB_ID,
+      })),
+    })),
   setTabView: (worktreeKey, view) =>
     set((state) => ({
       byWorktree: updateWorktree(state.byWorktree, worktreeKey, (current) => {
         const tab = current.tabs[0];
-        if (!tab || tab.view === view) return current;
+        // The edit/view toggle only applies to the file/diff viewer; the
+        // preview viewer has no file to flip.
+        if (!tab || tab.view === "preview" || view === "preview" || tab.view === view) {
+          return current;
+        }
         return { ...current, tabs: [{ ...tab, view }] };
       }),
     })),

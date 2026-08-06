@@ -5,8 +5,8 @@ import {
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
 import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
-import { useRightPanelStore } from "~/rightPanelStore";
 
+import { openBrowserPreviewInChat } from "./openBrowserPreviewInChat";
 import { openPreviewSession } from "./openPreviewSession";
 
 /** Creates a new browser tab. Reopening an existing tab is a separate UI action. */
@@ -19,6 +19,6 @@ export async function addBrowserSurface<E>(input: {
     threadRef: input.threadRef,
   });
   return mapAtomCommandResult(result, (snapshot) => {
-    useRightPanelStore.getState().openBrowser(input.threadRef, snapshot.tabId);
+    openBrowserPreviewInChat(input.threadRef, snapshot.tabId);
   });
 }

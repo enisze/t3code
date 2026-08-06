@@ -272,7 +272,24 @@ describe("DiffNavigatorFileList", () => {
     expect(markup.indexOf("b.ts")).toBeGreaterThan(markup.indexOf("a.ts"));
     expect(markup.indexOf("b.ts")).toBeGreaterThan(markup.indexOf("c.ts"));
     // Viewed rows are dimmed and labelled as already-viewed.
-    expect(markup).toContain("opacity-50");
+    expect(markup).toContain("opacity-70");
     expect(markup).toContain('aria-label="Mark b.ts as not viewed"');
+  });
+
+  it("highlights the active file's row", () => {
+    const markup = renderToStaticMarkup(
+      <DiffNavigatorFileList
+        files={[
+          { path: "a.ts", additions: 1, deletions: 0, viewed: false },
+          { path: "b.ts", additions: 1, deletions: 0, viewed: false },
+        ]}
+        resolvedTheme="light"
+        activeFilePath="b.ts"
+        onOpenFile={() => {}}
+        onToggleViewed={() => {}}
+      />,
+    );
+
+    expect(markup).toContain('data-active="true"');
   });
 });

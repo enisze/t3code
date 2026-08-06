@@ -54,6 +54,20 @@ export function parseThreadSegmentFromAttachmentId(attachmentId: string): string
   return match[1]?.toLowerCase() ?? null;
 }
 
+const SAFE_DOCUMENT_EXTENSION_PATTERN = /^[a-z0-9]{1,16}$/;
+
+// Preserve the uploaded document's own extension (e.g. .pdf/.xlsx) so the file
+// written into the worktree keeps a name the agent — and the user — recognize.
+// Anything unusual collapses to .bin, matching the image path's safe fallback.
+export function inferDocumentExtension(fileName: string): string {
+  const dotIndex = fileName.lastIndexOf(".");
+  if (dotIndex <= 0 || dotIndex === fileName.length - 1) {
+    return ".bin";
+  }
+  const raw = fileName.slice(dotIndex + 1).toLowerCase();
+  return SAFE_DOCUMENT_EXTENSION_PATTERN.test(raw) ? `.${raw}` : ".bin";
+}
+
 export function attachmentRelativePath(attachment: ChatAttachment): string {
   switch (attachment.type) {
     case "image": {
@@ -62,6 +76,9 @@ export function attachmentRelativePath(attachment: ChatAttachment): string {
         fileName: attachment.name,
       });
       return `${attachment.id}${extension}`;
+    }
+    case "document": {
+      return `${attachment.id}${inferDocumentExtension(attachment.name)}`;
     }
   }
 }

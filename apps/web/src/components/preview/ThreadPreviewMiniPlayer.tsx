@@ -10,7 +10,7 @@ import { Button } from "~/components/ui/button";
 import { toastManager } from "~/components/ui/toast";
 import { useThreadPreviewState } from "~/previewStateStore";
 import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
-import { useRightPanelStore } from "~/rightPanelStore";
+import { openBrowserPreviewInChat } from "./openBrowserPreviewInChat";
 
 import { previewBridge } from "./previewBridge";
 import {
@@ -61,9 +61,9 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
     usePreviewMiniPlayerStore.getState().close(threadRef);
   };
 
-  const openInPanel = () => {
+  const openInChat = () => {
     usePreviewMiniPlayerStore.getState().close(threadRef);
-    useRightPanelStore.getState().openBrowser(threadRef, tabId);
+    openBrowserPreviewInChat(threadRef, tabId);
   };
 
   const toggleNativePictureInPicture = () => {
@@ -244,10 +244,10 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
           <Button
             variant="ghost"
             size="icon-xs"
-            aria-label="Open preview in right panel"
-            title="Open in right panel"
+            aria-label="Open preview in chat"
+            title="Open in chat"
             onPointerDown={(event) => event.stopPropagation()}
-            onClick={openInPanel}
+            onClick={openInChat}
           >
             <PanelRightIcon />
           </Button>

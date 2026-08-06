@@ -57,9 +57,10 @@ interface RightPanelStoreState {
    * to keep the two permanent tabs present even for threads whose persisted
    * panel predates them.
    *
-   * `focusDiffUnlessFiles` snaps the active surface to Diff whenever a Diff tab
-   * is available, unless the user's last explicit selection was the Files tab —
-   * used to default a focused thread to its diff while honoring a Files pick.
+   * `focusDiffUnlessFiles` defaults a focused thread to its Diff tab when a Diff
+   * is available, but only when the active surface is a transient Preview (or
+   * nothing is focused yet). It preserves any surface the user deliberately
+   * parked on — Files, Plan, Terminal, or a specific file.
    */
   ensureFixedSurfaces: (
     ref: ScopedThreadRef,
@@ -303,8 +304,12 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             }
             if (options?.focusDiffUnlessFiles && available.diff) {
               const activeKind = surfaces.find((surface) => surface.id === activeSurfaceId)?.kind;
-              // Snap to Diff unless the user last explicitly picked Files.
-              if (activeKind !== "files") {
+              // Snap to Diff only from a transient Preview surface (or when
+              // nothing is focused yet). Never steal focus from a surface the
+              // user deliberately parked on — Files, Plan, Terminal, or a
+              // specific file — since this backfill can re-run seconds later
+              // (e.g. a draft flips to a server thread and a diff appears).
+              if (activeKind === undefined || activeKind === "preview") {
                 activeSurfaceId =
                   surfaces.find((surface) => surface.kind === "diff")?.id ?? activeSurfaceId;
               }
