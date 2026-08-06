@@ -101,6 +101,8 @@ const DIFF_PANEL_UNSAFE_CSS = `
   --diffs-bg: color-mix(in srgb, var(--card) 90%, var(--background)) !important;
   --diffs-light-bg: color-mix(in srgb, var(--card) 90%, var(--background)) !important;
   --diffs-dark-bg: color-mix(in srgb, var(--card) 90%, var(--background)) !important;
+  --diffs-light: color-mix(in srgb, var(--foreground) 96%, black) !important;
+  --diffs-dark: color-mix(in srgb, var(--foreground) 92%, white) !important;
   --diffs-token-light-bg: transparent;
   --diffs-token-dark-bg: transparent;
 
