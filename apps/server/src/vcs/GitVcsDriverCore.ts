@@ -48,9 +48,15 @@ const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES = 49_000;
 const RANGE_COMMIT_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_PATCH_MAX_OUTPUT_BYTES = 59_000;
-const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
-const REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES = 80_000;
-const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 120_000;
+// The working-tree and branch review previews back the diff panel's default
+// scopes, so they must render as completely as the per-turn checkpoint diff
+// (capped at 10 MB in GitVcsDriver.ts). The old 120 KB / 80 KB caps truncated
+// large branches well before the turn diff did, so the panel showed a
+// "truncated" banner and dropped files that the turn diff still listed. Match
+// the checkpoint diff budget so a full branch's changes fit.
+const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 10_000_000;
+const REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
+const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 10_000_000;
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
 
