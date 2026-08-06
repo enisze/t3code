@@ -394,7 +394,7 @@ export const DiffNavigatorFileList = memo(function DiffNavigatorFileList(props: 
                       : file.conflicted
                         ? "bg-destructive/[0.06] hover:bg-destructive/10"
                         : "hover:bg-accent/60",
-                    file.viewed && !isActive && "opacity-70",
+                    file.viewed && "opacity-70",
                   )}
                 >
                   <Checkbox
@@ -427,13 +427,9 @@ export const DiffNavigatorFileList = memo(function DiffNavigatorFileList(props: 
                     ) : null}
                     <span className="flex min-w-0 flex-1 items-baseline font-mono text-[11px]">
                       {directory ? (
-                        <span className="min-w-0 truncate text-muted-foreground/50">
-                          {directory}
-                        </span>
+                        <span className="min-w-0 truncate text-foreground">{directory}</span>
                       ) : null}
-                      <span className="shrink-0 text-muted-foreground/90 group-hover:text-foreground">
-                        {name}
-                      </span>
+                      <span className="shrink-0 text-foreground">{name}</span>
                     </span>
                     {hasNonZeroStat({ additions: file.additions, deletions: file.deletions }) ? (
                       <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums">
