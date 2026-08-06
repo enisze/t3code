@@ -888,6 +888,90 @@ describe("CheckpointReactor", () => {
     ).toBe(true);
   });
 
+  it("captures the pre-turn baseline in the session runtime cwd so the inline turn diff is scoped to the turn", async () => {
+    // The session runtime works in a different git repo than the thread's
+    // worktree. The baseline (`from`) must land in the same repo the completion
+    // snapshot + diff (`to`) use; otherwise the inline turn diff compares two
+    // unrelated trees and lists files the turn never touched.
+    const sessionRepo = createGitRepository();
+    tempDirs.push(sessionRepo);
+
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      providerSessionCwd: sessionRepo,
+    });
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-cross-repo"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+
+    harness.provider.emit({
+      type: "turn.started",
+      eventId: EventId.make("evt-turn-started-cross-repo"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-cross-repo"),
+    });
+    // The baseline lands in the session repo, not the worktree.
+    await waitForGitRefExists(
+      sessionRepo,
+      checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
+    );
+    expect(
+      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0)),
+    ).toBe(false);
+
+    // The turn edits a file in the session repo.
+    NodeFS.writeFileSync(NodePath.join(sessionRepo, "README.md"), "v2\n", "utf8");
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-cross-repo"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-cross-repo"),
+      payload: { state: "completed" },
+    });
+
+    await waitForEvent(harness.engine, (event) => event.type === "thread.turn-diff-completed");
+
+    // from/to both live in the session repo, so the diff is computable and
+    // scoped to exactly the turn's edit (README v1 -> v2).
+    expect(
+      gitRefExists(sessionRepo, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1)),
+    ).toBe(true);
+    expect(
+      gitShowFileAtRef(
+        sessionRepo,
+        checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
+        "README.md",
+      ),
+    ).toBe("v1\n");
+    expect(
+      gitShowFileAtRef(
+        sessionRepo,
+        checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1),
+        "README.md",
+      ),
+    ).toBe("v2\n");
+  });
+
   it("executes provider revert and emits thread.reverted for checkpoint revert requests", async () => {
     const harness = await createHarness();
     const createdAt = "2026-01-01T00:00:00.000Z";

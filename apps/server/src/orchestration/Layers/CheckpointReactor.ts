@@ -489,12 +489,27 @@ const make = Effect.gen(function* () {
       }
 
       const projects = yield* resolveThreadProjects(thread.projectId);
-      const checkpointCwd = yield* resolveCheckpointCwd({
-        threadId: thread.id,
-        thread,
-        projects,
-        preferSessionRuntime: false,
-      });
+      // The pre-turn baseline is the `from` side of the inline turn diff, and the
+      // completion snapshot + diff resolve cwd with preferSessionRuntime: true.
+      // If the baseline picks a different cwd (e.g. the thread worktree while the
+      // session runtime works in another repo), `from` and `to` snapshot
+      // different working trees and the diff lists every file that differs
+      // between them — unrelated to what the turn changed. Prefer the session
+      // runtime cwd so both snapshots come from the same tree, falling back to
+      // the worktree only when the session cwd isn't a usable git workspace.
+      const checkpointCwd =
+        (yield* resolveCheckpointCwd({
+          threadId: thread.id,
+          thread,
+          projects,
+          preferSessionRuntime: true,
+        })) ??
+        (yield* resolveCheckpointCwd({
+          threadId: thread.id,
+          thread,
+          projects,
+          preferSessionRuntime: false,
+        }));
       if (!checkpointCwd) {
         return;
       }
@@ -571,12 +586,24 @@ const make = Effect.gen(function* () {
     }
 
     const projects = yield* resolveThreadProjects(thread.projectId);
-    const checkpointCwd = yield* resolveCheckpointCwd({
-      threadId,
-      thread,
-      projects,
-      preferSessionRuntime: false,
-    });
+    // Prefer the completion capture's cwd resolution (preferSessionRuntime: true)
+    // so the baseline `from` snapshot and the turn's `to` snapshot describe the
+    // same working tree; otherwise the inline turn diff lists unrelated files.
+    // Fall back to the worktree when the session cwd isn't a usable git
+    // workspace.
+    const checkpointCwd =
+      (yield* resolveCheckpointCwd({
+        threadId,
+        thread,
+        projects,
+        preferSessionRuntime: true,
+      })) ??
+      (yield* resolveCheckpointCwd({
+        threadId,
+        thread,
+        projects,
+        preferSessionRuntime: false,
+      }));
     if (!checkpointCwd) {
       return;
     }
