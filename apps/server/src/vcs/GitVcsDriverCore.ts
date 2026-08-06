@@ -2287,36 +2287,72 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       .filter((diff) => diff.length > 0)
       .join("\n");
 
-    const baseResult =
+    // Resolve the fork point so the branch view diffs the base's merge-base
+    // against the WORKING TREE (not HEAD). Using `${baseRef}...HEAD` only shows
+    // committed changes, so any work the agent left uncommitted or untracked was
+    // missing from "Branch changes" even though the branch clearly introduced
+    // it. Diffing from the merge-base to the working tree captures committed +
+    // uncommitted tracked changes; untracked files are appended below.
+    const mergeBase =
       baseRef && branch
         ? yield* executeGit(
-            "GitVcsDriver.getReviewDiffPreview.base",
+            "GitVcsDriver.getReviewDiffPreview.mergeBase",
             input.cwd,
-            [
-              "diff",
-              "--patch",
-              "--no-color",
-              "--no-ext-diff",
-              "--no-textconv",
-              "--minimal",
-              ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
-              `${baseRef}...HEAD`,
-            ],
+            ["merge-base", baseRef, "HEAD"],
             {
+              allowNonZeroExit: true,
               maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
-              appendTruncationMarker: true,
             },
           ).pipe(
-            Effect.orElseSucceed(() => ({
-              exitCode: 0,
-              stdout: "",
-              stderr: "",
-              stdoutTruncated: false,
-              stderrTruncated: false,
-            })),
+            Effect.map((result) =>
+              result.exitCode === 0 && result.stdout.trim().length > 0
+                ? result.stdout.trim()
+                : null,
+            ),
+            Effect.orElseSucceed(() => null),
           )
         : null;
-    const baseDiff = baseResult?.stdout ?? "";
+    // Fall back to the base ref itself when the merge-base can't be resolved
+    // (e.g. no shared history yet); `git diff <ref>` still compares against the
+    // working tree.
+    const baseDiffRef = mergeBase ?? (branch ? baseRef : null);
+    const baseTrackedResult = baseDiffRef
+      ? yield* executeGit(
+          "GitVcsDriver.getReviewDiffPreview.base",
+          input.cwd,
+          [
+            "diff",
+            "--patch",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--minimal",
+            ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
+            baseDiffRef,
+            "--",
+          ],
+          {
+            maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
+            appendTruncationMarker: true,
+          },
+        ).pipe(
+          Effect.orElseSucceed(() => ({
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          })),
+        )
+      : null;
+    // Untracked files are new files the branch introduced, so they belong in the
+    // branch view too. Reuse the same untracked diff computed for the working
+    // tree source rather than recomputing it.
+    const baseDiff = baseTrackedResult
+      ? [baseTrackedResult.stdout.trimEnd(), dirtyUntracked.diff.trimEnd()]
+          .filter((diff) => diff.length > 0)
+          .join("\n")
+      : "";
     const hashDiff = (diff: string) =>
       crypto.digest("SHA-256", new TextEncoder().encode(diff)).pipe(
         Effect.map(Encoding.encodeHex),
@@ -2355,7 +2391,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         headRef: branch ?? "HEAD",
         diff: baseDiff,
         diffHash: baseDiffHash,
-        truncated: baseResult?.stdoutTruncated ?? false,
+        truncated: (baseTrackedResult?.stdoutTruncated ?? false) || dirtyUntracked.truncated,
       },
     ];
 
