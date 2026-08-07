@@ -88,7 +88,42 @@ describe("when: ref is clean and has an open PR", () => {
         icon: "pr",
         kind: "open_pr",
       },
+      {
+        id: "merge",
+        label: "Merge PR",
+        disabled: false,
+        icon: "merge",
+        kind: "merge_pr",
+      },
     ]);
+  });
+
+  it("offers conflict resolution instead of attempting to merge a conflicting PR", () => {
+    const items = buildMenuItems(
+      status({
+        pr: {
+          number: 12,
+          title: "Conflicting PR",
+          url: "https://example.com/pr/12",
+          baseRef: "main",
+          headRef: "feature/test",
+          state: "open",
+          mergeability: "conflicting",
+        },
+      }),
+      false,
+    );
+
+    assert.deepEqual(
+      items.find((item) => item.id === "merge"),
+      {
+        id: "merge",
+        label: "Resolve conflicts",
+        disabled: false,
+        icon: "resolve",
+        kind: "resolve_conflicts",
+      },
+    );
   });
 });
 
@@ -208,6 +243,13 @@ describe("when: ref is clean, ahead, and has an open PR", () => {
         disabled: false,
         icon: "pr",
         kind: "open_pr",
+      },
+      {
+        id: "merge",
+        label: "Merge PR",
+        disabled: false,
+        icon: "merge",
+        kind: "merge_pr",
       },
     ]);
   });

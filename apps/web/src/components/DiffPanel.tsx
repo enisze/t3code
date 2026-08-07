@@ -193,7 +193,6 @@ const DIFF_PANEL_UNSAFE_CSS = `
 interface DiffPanelProps {
   mode?: DiffPanelMode;
   composerDraftTarget: ScopedThreadRef | DraftId;
-  initialGitScope: "branch" | "unstaged";
   /**
    * The chat this panel belongs to. Passed explicitly because a brand-new chat
    * is a draft with no thread route params yet; when omitted the panel falls
@@ -227,7 +226,6 @@ export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 export default function DiffPanel({
   mode = "inline",
   composerDraftTarget,
-  initialGitScope: initialGitScopeProp,
   threadRef: threadRefProp,
   variant = "navigator",
   fileDiffPath,
@@ -238,7 +236,6 @@ export default function DiffPanel({
   const { resolvedTheme } = useTheme();
   const diffThemeName = useDiffThemeName();
   const settings = useClientSettings();
-  const [initialGitScope] = useState(initialGitScopeProp);
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("split");
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
   const [diffIgnoreWhitespace, setDiffIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
@@ -308,7 +305,6 @@ export default function DiffPanel({
       // across the worktree via the representative thread.
       currentThreadRef,
       workspaceThreadRef,
-      initialGitScope === "unstaged",
     ),
   );
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;

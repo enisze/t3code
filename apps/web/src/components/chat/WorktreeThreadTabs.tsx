@@ -228,7 +228,7 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
               <div
                 key={`draft:${draft.draftId}`}
                 className={cn(
-                  "group/tab flex h-7 min-w-24 max-w-44 shrink-0 items-center rounded-md text-sm transition-colors",
+                  "group/tab order-1 flex h-7 min-w-24 max-w-44 shrink-0 items-center rounded-md text-sm transition-colors",
                   active
                     ? "bg-accent text-foreground"
                     : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
@@ -428,7 +428,7 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
               <div
                 key={`content:${tab.id}`}
                 className={cn(
-                  "group/tab flex h-7 min-w-24 max-w-44 shrink-0 items-center rounded-md text-sm transition-colors",
+                  "group/tab order-2 flex h-7 min-w-24 max-w-44 shrink-0 items-center rounded-md text-sm transition-colors",
                   active
                     ? "bg-accent text-foreground"
                     : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
@@ -482,7 +482,7 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
                   aria-label={
                     worktreePath ? "New chat in this worktree" : "New chat in this project"
                   }
-                  className="relative inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  className="relative order-3 inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                   onClick={onNewChat}
                 />
               }

@@ -1836,7 +1836,7 @@ export default function GitActionsControl({
               ? gitStatusForActions.hasWorkingTreeChanges
                 ? "Commit and push"
                 : gitStatusForActions.pr.mergeability === "conflicting"
-                  ? "Solve conflicts"
+                  ? "Resolve conflicts"
                   : gitStatusForActions.pr.checks === "failing"
                     ? `Merge · ${gitStatusForActions.pr.failedCheckCount ?? 1} ${gitStatusForActions.pr.failedCheckCount === 1 ? "check" : "checks"} failing`
                     : "Merge"

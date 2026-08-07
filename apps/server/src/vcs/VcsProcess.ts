@@ -66,6 +66,23 @@ const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFai
     return "authentication";
   }
 
+  // The command ran, but its working directory couldn't be resolved to a
+  // repository the provider can act on: not a git repository, no remotes, or no
+  // remote pointing at the provider's host. The CLIs word this as "not a git
+  // repository", "no git remotes found", or (gh) "none of the git remotes …
+  // point to a known GitHub host". Classified above `not-found` so a bare
+  // "not found" in these messages can't misroute it to the PR-missing bucket.
+  if (
+    normalized.includes("not a git repository") ||
+    normalized.includes("no git remote") ||
+    normalized.includes("none of the git remotes") ||
+    normalized.includes("no github remotes found") ||
+    normalized.includes("no gitlab remotes found") ||
+    normalized.includes("no default remote repository")
+  ) {
+    return "repository-not-found";
+  }
+
   if (
     (command === "gh" &&
       (normalized.includes("could not resolve to a pullrequest") ||

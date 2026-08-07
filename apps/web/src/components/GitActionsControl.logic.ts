@@ -102,6 +102,7 @@ export function buildMenuItems(
   const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
   const hasOpenPr = gitStatus.pr?.state === "open";
+  const hasConflictingPr = hasOpenPr && gitStatus.pr?.mergeability === "conflicting";
   const isBehind = gitStatus.behindCount > 0;
   const hasDefaultBranchDelta = (gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) > 0;
   const canPushWithoutUpstream = hasPrimaryRemote && !gitStatus.hasUpstream;
@@ -173,10 +174,10 @@ export function buildMenuItems(
       },
       {
         id: "merge",
-        label: `Merge ${terminology.shortLabel}`,
+        label: hasConflictingPr ? "Resolve conflicts" : `Merge ${terminology.shortLabel}`,
         disabled: !canMergePr,
-        icon: "merge",
-        kind: "merge_pr",
+        icon: hasConflictingPr ? "resolve" : "merge",
+        kind: hasConflictingPr ? "resolve_conflicts" : "merge_pr",
       },
       ...(resolveItem ? [resolveItem] : []),
     ];

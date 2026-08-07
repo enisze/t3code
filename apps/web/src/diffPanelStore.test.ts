@@ -11,13 +11,8 @@ const REP_REF = scopeThreadRef(ENV, ThreadId.make("rep"));
 const CHAT_A = scopeThreadRef(ENV, ThreadId.make("chat-a"));
 const CHAT_B = scopeThreadRef(ENV, ThreadId.make("chat-b"));
 
-function selectFor(chatRef = THREAD_REF, sharedRef = THREAD_REF, hasWorkingTreeChanges = false) {
-  return selectThreadDiffPanelSelection(
-    useDiffPanelStore.getState(),
-    chatRef,
-    sharedRef,
-    hasWorkingTreeChanges,
-  );
+function selectFor(chatRef = THREAD_REF, sharedRef = THREAD_REF) {
+  return selectThreadDiffPanelSelection(useDiffPanelStore.getState(), chatRef, sharedRef);
 }
 
 describe("diffPanelStore", () => {
@@ -29,18 +24,14 @@ describe("diffPanelStore", () => {
     }),
   );
 
-  it("defaults each thread to branch changes when the working tree is clean", () => {
-    expect(selectFor()).toEqual({ kind: "branch", baseRef: null });
-  });
-
-  it("defaults each thread to working changes when the working tree is dirty", () => {
-    expect(selectFor(THREAD_REF, THREAD_REF, true)).toEqual({ kind: "unstaged" });
+  it("defaults each thread to working tree changes", () => {
+    expect(selectFor()).toEqual({ kind: "unstaged" });
   });
 
   it("preserves an explicit scope selection when the working tree state changes", () => {
     useDiffPanelStore.getState().selectGitScope(THREAD_REF, THREAD_REF, "branch");
 
-    expect(selectFor(THREAD_REF, THREAD_REF, true)).toEqual({ kind: "branch", baseRef: null });
+    expect(selectFor()).toEqual({ kind: "branch", baseRef: null });
   });
 
   it("clears incompatible selection fields when changing scopes", () => {

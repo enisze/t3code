@@ -2561,11 +2561,6 @@ function ChatViewContent(props: ChatViewProps) {
     }
   }, [workspaceThreadRef, activeProject, activeThreadKey, isGitRepo, shouldUsePlanSidebarSheet]);
   const showComposerContextStrip = isGitRepo && activeProject !== null;
-  // The diff surface defaults to branch changes (everything done on this branch
-  // vs. its base) rather than the working tree — the agent commits its work, so
-  // the working tree is usually empty and would show nothing. The in-panel scope
-  // dropdown still switches to the working tree or a specific turn.
-  const initialDiffPanelGitScope = "branch" as const;
   const terminalShortcutLabelOptions = useMemo(
     () => ({
       context: {
@@ -4765,6 +4760,8 @@ function ChatViewContent(props: ChatViewProps) {
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
+      activateChatContent();
+      setMaximizedRightPanelThreadKey(null);
       await onSubmitPlanFollowUp({
         text: followUp.text,
         interactionMode: followUp.interactionMode,
@@ -4830,6 +4827,8 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     sendInFlightRef.current = true;
+    activateChatContent();
+    setMaximizedRightPanelThreadKey(null);
     if (isDraftHeroState && activeThreadKey) {
       let resolveDockStarted: (() => void) | undefined;
       const dockStarted = new Promise<void>((resolve) => {
@@ -5869,8 +5868,8 @@ function ChatViewContent(props: ChatViewProps) {
       {panelToggleControls}
     </div>
   );
-  const rightPanelHeaderActions = activeProject ? (
-    <div className="flex shrink-0 items-center gap-2 [-webkit-app-region:no-drag]">
+  const rightPanelTabActions = activeProject ? (
+    <div className="flex shrink-0 items-center [-webkit-app-region:no-drag]">
       <Tooltip>
         <TooltipTrigger
           render={
@@ -5891,6 +5890,10 @@ function ChatViewContent(props: ChatViewProps) {
           Start a new chat with the configured review prompt
         </TooltipPopup>
       </Tooltip>
+    </div>
+  ) : null;
+  const rightPanelHeaderActions = activeProject ? (
+    <div className="flex shrink-0 items-center [-webkit-app-region:no-drag]">
       <GitActionsControl
         gitCwd={gitCwd}
         activeThreadRef={activeThreadRef}
@@ -5936,7 +5939,6 @@ function ChatViewContent(props: ChatViewProps) {
           mode="embedded"
           threadRef={activeThreadRef}
           composerDraftTarget={composerDraftTarget}
-          initialGitScope={initialDiffPanelGitScope}
           variant="navigator"
           navigatorActiveFilePath={
             activeContentTab?.view === "diff" || activeContentTab?.view === "file"
@@ -6203,7 +6205,6 @@ function ChatViewContent(props: ChatViewProps) {
                       mode="embedded"
                       threadRef={activeThreadRef}
                       composerDraftTarget={composerDraftTarget}
-                      initialGitScope={initialDiffPanelGitScope}
                       variant="file"
                       fileDiffPath={activeContentTab.filePath}
                       onOpenFileDiff={openFileDiffSurface}
@@ -6485,6 +6486,7 @@ function ChatViewContent(props: ChatViewProps) {
           mode="inline"
           maximized={rightPanelMaximized}
           headerActions={rightPanelHeaderActions}
+          tabActions={rightPanelTabActions}
           surfaces={rightPanelState.surfaces}
           activeSurfaceId={activeRightPanelSurface?.id ?? null}
           pendingSurfaceIds={pendingFileSurfaceIds}
@@ -6507,6 +6509,7 @@ function ChatViewContent(props: ChatViewProps) {
             mode="sheet"
             layoutControls={panelToggleControls}
             headerActions={rightPanelHeaderActions}
+            tabActions={rightPanelTabActions}
             surfaces={rightPanelState.surfaces}
             activeSurfaceId={activeRightPanelSurface?.id ?? null}
             pendingSurfaceIds={pendingFileSurfaceIds}
