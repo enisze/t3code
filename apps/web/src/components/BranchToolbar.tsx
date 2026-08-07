@@ -6,11 +6,10 @@ import {
   FolderGit2Icon,
   FolderGitIcon,
   FolderIcon,
-  GitPullRequestIcon,
   HistoryIcon,
   MonitorIcon,
 } from "lucide-react";
-import { memo, useCallback, useMemo } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { useProject, useThread, useThreadShellsForProjectRefs } from "../state/entities";
@@ -33,11 +32,11 @@ import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
 import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
 import { Button } from "./ui/button";
+import { Input } from "./ui/input";
 import {
   Menu,
   MenuGroup,
   MenuGroupLabel,
-  MenuItem,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
@@ -77,7 +76,7 @@ interface MobileRunContextSelectorProps {
   previousWorktreeLabel: string | null;
   onUsePreviousWorktree: () => void;
   checkoutPullRequestLabel: string;
-  onCheckoutPullRequest: (() => void) | undefined;
+  onCheckoutPullRequest: ((reference: string) => void) | undefined;
 }
 
 const MobileRunContextSelector = memo(function MobileRunContextSelector({
@@ -100,6 +99,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
     () => availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null,
     [availableEnvironments, environmentId],
   );
+  const [checkoutReference, setCheckoutReference] = useState("");
   const WorkspaceIcon =
     effectiveEnvMode === "worktree"
       ? FolderGit2Icon
@@ -150,6 +150,24 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
         <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
       </MenuTrigger>
       <MenuPopup align="start" side="top" className="w-64">
+        {onCheckoutPullRequest ? (
+          <div className="px-1.5 pt-1.5 pb-1">
+            <Input
+              autoFocus
+              value={checkoutReference}
+              placeholder={checkoutPullRequestLabel}
+              aria-label="Open branch or pull request"
+              onChange={(event) => setCheckoutReference(event.target.value)}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key !== "Enter" || !checkoutReference.trim()) return;
+                event.preventDefault();
+                onCheckoutPullRequest(checkoutReference.trim());
+                setCheckoutReference("");
+              }}
+            />
+          </div>
+        ) : null}
         {showEnvironmentPicker && availableEnvironments && onEnvironmentChange ? (
           <>
             <MenuGroup>
@@ -218,17 +236,6 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
             ) : null}
           </MenuRadioGroup>
         </MenuGroup>
-        {onCheckoutPullRequest ? (
-          <>
-            <MenuSeparator />
-            <MenuItem onClick={onCheckoutPullRequest}>
-              <span className="flex min-w-0 items-center gap-1.5">
-                <GitPullRequestIcon className="size-3" />
-                <span className="min-w-0 truncate">{checkoutPullRequestLabel}</span>
-              </span>
-            </MenuItem>
-          </>
-        ) : null}
       </MenuPopup>
     </Menu>
   );
@@ -327,9 +334,12 @@ export const BranchToolbar = memo(function BranchToolbar({
     [gitStatusQuery.data?.sourceControlProvider],
   );
   const checkoutPullRequestLabel = `Open branch or ${sourceControlPresentation.terminology.shortLabel}`;
-  const handleCheckoutPullRequest = useCallback(() => {
-    onCheckoutPullRequestRequest?.("");
-  }, [onCheckoutPullRequestRequest]);
+  const handleCheckoutPullRequest = useCallback(
+    (reference: string) => {
+      onCheckoutPullRequestRequest?.(reference);
+    },
+    [onCheckoutPullRequestRequest],
+  );
 
   const showEnvironmentPicker = Boolean(
     availableEnvironments && availableEnvironments.length > 1 && onEnvironmentChange,

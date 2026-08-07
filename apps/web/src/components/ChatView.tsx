@@ -1800,6 +1800,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
       setPullRequestDialogState({
         initialReference: reference ?? null,
+        autoSubmit: Boolean(reference?.trim()),
         key: Date.now(),
       });
     },
@@ -6444,6 +6445,7 @@ function ChatViewContent(props: ChatViewProps) {
                 threadId={activeThread.id}
                 cwd={activeProject?.workspaceRoot ?? null}
                 initialReference={pullRequestDialogState.initialReference}
+                autoSubmitInitialReference={pullRequestDialogState.autoSubmit}
                 onOpenChange={(open) => {
                   if (!open) {
                     closePullRequestDialog();

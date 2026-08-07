@@ -33,6 +33,7 @@ interface PullRequestThreadDialogProps {
   threadId: ThreadId;
   cwd: string | null;
   initialReference: string | null;
+  autoSubmitInitialReference?: boolean;
   onOpenChange: (open: boolean) => void;
   onPrepared: (input: { branch: string; worktreePath: string | null }) => Promise<boolean>;
 }
@@ -43,10 +44,12 @@ export function PullRequestThreadDialog({
   threadId,
   cwd,
   initialReference,
+  autoSubmitInitialReference = false,
   onOpenChange,
   onPrepared,
 }: PullRequestThreadDialogProps) {
   const referenceInputRef = useRef<HTMLInputElement>(null);
+  const autoSubmittedRef = useRef(false);
   const [reference, setReference] = useState(initialReference ?? "");
   const [referenceDirty, setReferenceDirty] = useState(false);
   const [isPreparing, setIsPreparing] = useState(false);
@@ -195,6 +198,19 @@ export function PullRequestThreadDialog({
     resolvedPullRequest,
     threadId,
   ]);
+
+  useEffect(() => {
+    if (
+      !autoSubmitInitialReference ||
+      autoSubmittedRef.current ||
+      isPreparing ||
+      (!resolvedPullRequest && !resolvedBranch)
+    ) {
+      return;
+    }
+    autoSubmittedRef.current = true;
+    void handleConfirm();
+  }, [autoSubmitInitialReference, handleConfirm, isPreparing, resolvedBranch, resolvedPullRequest]);
 
   const validationMessage = !referenceDirty
     ? null
