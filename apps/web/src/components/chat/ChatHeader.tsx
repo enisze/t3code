@@ -3,13 +3,9 @@ import {
   type EditorId,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
-  type ThreadId,
 } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { ScanSearchIcon } from "lucide-react";
+import { GlobeIcon } from "lucide-react";
 import { memo } from "react";
-import GitActionsControl from "../GitActionsControl";
-import { type DraftId } from "~/composerDraftStore";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   type NewProjectScriptInput,
@@ -24,8 +20,6 @@ import { Button } from "../ui/button";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
-  activeThreadId: ThreadId;
-  draftId?: DraftId;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
   activeProjectCwd: string | null;
@@ -35,8 +29,13 @@ interface ChatHeaderProps {
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   rightPanelOpen: boolean;
-  gitCwd: string | null;
-  onReview: () => void;
+  /**
+   * Configured localhost port for the in-app preview, or null when unset / the
+   * runtime can't host a preview. When set, the header shows a button that opens
+   * `http://localhost:<previewPort>` as a new preview tab.
+   */
+  previewPort: number | null;
+  onOpenPreview: () => void;
   onNewThreadInProject: () => void;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
@@ -61,8 +60,6 @@ export function shouldShowOpenInPicker(input: {
 
 export const ChatHeader = memo(function ChatHeader({
   activeThreadEnvironmentId,
-  activeThreadId,
-  draftId,
   activeThreadTitle,
   activeProjectName,
   activeProjectCwd,
@@ -72,8 +69,8 @@ export const ChatHeader = memo(function ChatHeader({
   keybindings,
   availableEditors,
   rightPanelOpen,
-  gitCwd,
-  onReview,
+  previewPort,
+  onOpenPreview,
   onNewThreadInProject,
   onRunProjectScript,
   onAddProjectScript,
@@ -169,34 +166,29 @@ export const ChatHeader = memo(function ChatHeader({
         />
         {activeProjectName ? (
           <>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    size="xs"
-                    variant="outline"
-                    onClick={onReview}
-                    aria-label="Start a review in a new chat"
-                  />
-                }
-              >
-                <ScanSearchIcon className="size-3.5" aria-hidden />
-                <span className="ml-0.5">Review</span>
-              </TooltipTrigger>
-              <TooltipPopup side="top">
-                Start a new chat with the configured review prompt
-              </TooltipPopup>
-            </Tooltip>
+            {previewPort !== null ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      onClick={onOpenPreview}
+                      aria-label={`Open localhost:${previewPort} in a preview tab`}
+                    />
+                  }
+                >
+                  <GlobeIcon className="size-3.5" aria-hidden />
+                  <span className="ml-0.5">Preview</span>
+                </TooltipTrigger>
+                <TooltipPopup side="top">
+                  Open http://localhost:{previewPort} in a preview tab
+                </TooltipPopup>
+              </Tooltip>
+            ) : null}
           </>
         ) : null}
-        {activeProjectName && (
-          <GitActionsControl
-            gitCwd={gitCwd}
-            activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
-            {...(draftId ? { draftId } : {})}
-          />
-        )}
       </div>
     </div>
   );

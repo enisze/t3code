@@ -1,32 +1,35 @@
 /**
  * Worktree-scoped "content viewer" for the chat column.
  *
- * The chat-column tab strip lists the worktree's chats plus at most ONE
- * ephemeral file-viewer tab. Opening a file — its diff (from the Diff
- * navigator) or its contents (from the Files explorer) — replaces that single
- * viewer instead of accumulating tabs. The viewer can flip between the diff and
- * the editable file contents via `setTabView` (the edit/view toggle). Keyed by
- * worktree so it stays visible while switching between chats in the same
- * worktree. `activeTabId === null` means the chat conversation is shown.
+ * The chat-column tab strip lists the worktree's chats plus content-viewer
+ * tabs: at most ONE ephemeral file-viewer tab (showing a file's diff or its
+ * editable contents — opening another file replaces it) alongside any number
+ * of browser-preview tabs. Opening a preview adds a new tab (each backed by its
+ * own preview session), so several localhost previews can be open at once. The
+ * file viewer can flip between the diff and the editable contents via
+ * `setTabView` (the edit/view toggle). Keyed by worktree so the strip stays
+ * visible while switching between chats in the same worktree.
+ * `activeTabId === null` means the chat conversation is shown.
  */
 import { create } from "zustand";
 
 /** Which view the content viewer renders. */
 export type WorkspaceContentTabView = "diff" | "file" | "preview";
 
-/** Stable id of the single browser-preview viewer tab. */
-export const PREVIEW_CONTENT_TAB_ID = "preview";
-
 export interface WorkspaceContentTab {
   /**
-   * Stable id — the repo-relative file path for file/diff viewers, or
-   * {@link PREVIEW_CONTENT_TAB_ID} for the browser preview (a single viewer at
-   * a time).
+   * Stable id — the repo-relative file path for the file/diff viewer, or the
+   * preview session's tab id for a browser-preview tab.
    */
   id: string;
-  /** Empty for the preview viewer, which is not backed by a file. */
+  /** Empty for preview tabs, which are not backed by a file. */
   filePath: string;
   view: WorkspaceContentTabView;
+  /**
+   * The preview session tab id this tab renders. Present only for preview tabs;
+   * lets several previews (each its own session) coexist in the strip.
+   */
+  previewTabId?: string;
 }
 
 /**
@@ -41,20 +44,23 @@ export function worktreeContentTabsKey(
 }
 
 interface WorktreeContentTabsState {
-  /** At most one viewer tab. */
+  /** At most one file/diff viewer tab, plus any number of preview tabs. */
   tabs: WorkspaceContentTab[];
   activeTabId: string | null;
 }
 
 interface WorkspaceContentTabsStore {
   byWorktree: Record<string, WorktreeContentTabsState>;
-  /** Open (replacing the single viewer) showing `filePath`'s diff. */
+  /** Open (replacing the single file viewer) showing `filePath`'s diff. */
   openFileDiff: (worktreeKey: string, filePath: string) => void;
-  /** Open (replacing the single viewer) showing `filePath`'s contents. */
+  /** Open (replacing the single file viewer) showing `filePath`'s contents. */
   openFile: (worktreeKey: string, filePath: string) => void;
-  /** Open (replacing the single viewer) showing the browser preview. */
-  openPreview: (worktreeKey: string) => void;
-  /** Flip the current viewer between the diff and the editable file contents. */
+  /**
+   * Add (or re-focus) a browser-preview tab backed by `previewTabId`. Preview
+   * tabs accumulate — they do not replace one another or the file viewer.
+   */
+  openPreview: (worktreeKey: string, previewTabId: string) => void;
+  /** Flip the file viewer between the diff and the editable file contents. */
   setTabView: (worktreeKey: string, view: WorkspaceContentTabView) => void;
   activateTab: (worktreeKey: string, tabId: string) => void;
   activateChat: (worktreeKey: string) => void;
@@ -79,43 +85,60 @@ const updateWorktree = (
   return { ...byWorktree, [worktreeKey]: next };
 };
 
-const openContentTab = (
+const openFileViewer = (
   set: (partial: (state: WorkspaceContentTabsStore) => Partial<WorkspaceContentTabsStore>) => void,
   worktreeKey: string,
   filePath: string,
   view: WorkspaceContentTabView,
 ): void => {
   set((state) => ({
-    // A single viewer: opening any file replaces whatever it was showing.
-    byWorktree: updateWorktree(state.byWorktree, worktreeKey, () => ({
-      tabs: [{ id: filePath, filePath, view }],
-      activeTabId: filePath,
-    })),
+    // A single file viewer: opening any file replaces whatever it was showing,
+    // while the preview tabs stay put.
+    byWorktree: updateWorktree(state.byWorktree, worktreeKey, (current) => {
+      const previews = current.tabs.filter((tab) => tab.view === "preview");
+      return {
+        tabs: [{ id: filePath, filePath, view }, ...previews],
+        activeTabId: filePath,
+      };
+    }),
   }));
 };
 
 export const useWorkspaceContentTabsStore = create<WorkspaceContentTabsStore>()((set) => ({
   byWorktree: {},
-  openFileDiff: (worktreeKey, filePath) => openContentTab(set, worktreeKey, filePath, "diff"),
-  openFile: (worktreeKey, filePath) => openContentTab(set, worktreeKey, filePath, "file"),
-  openPreview: (worktreeKey) =>
+  openFileDiff: (worktreeKey, filePath) => openFileViewer(set, worktreeKey, filePath, "diff"),
+  openFile: (worktreeKey, filePath) => openFileViewer(set, worktreeKey, filePath, "file"),
+  openPreview: (worktreeKey, previewTabId) =>
     set((state) => ({
-      // A single viewer: opening the preview replaces whatever it was showing.
-      byWorktree: updateWorktree(state.byWorktree, worktreeKey, () => ({
-        tabs: [{ id: PREVIEW_CONTENT_TAB_ID, filePath: "", view: "preview" }],
-        activeTabId: PREVIEW_CONTENT_TAB_ID,
-      })),
+      byWorktree: updateWorktree(state.byWorktree, worktreeKey, (current) => {
+        const existing = current.tabs.find((tab) => tab.previewTabId === previewTabId);
+        if (existing) {
+          // Already open — just re-focus it.
+          return current.activeTabId === existing.id
+            ? current
+            : { ...current, activeTabId: existing.id };
+        }
+        const tab: WorkspaceContentTab = {
+          id: previewTabId,
+          filePath: "",
+          view: "preview",
+          previewTabId,
+        };
+        return { tabs: [...current.tabs, tab], activeTabId: previewTabId };
+      }),
     })),
   setTabView: (worktreeKey, view) =>
     set((state) => ({
       byWorktree: updateWorktree(state.byWorktree, worktreeKey, (current) => {
-        const tab = current.tabs[0];
-        // The edit/view toggle only applies to the file/diff viewer; the
-        // preview viewer has no file to flip.
-        if (!tab || tab.view === "preview" || view === "preview" || tab.view === view) {
-          return current;
-        }
-        return { ...current, tabs: [{ ...tab, view }] };
+        // The edit/view toggle only applies to the file viewer; preview tabs
+        // have no file to flip.
+        if (view === "preview") return current;
+        const index = current.tabs.findIndex((tab) => tab.view !== "preview");
+        const tab = current.tabs[index];
+        if (!tab || tab.view === view) return current;
+        const tabs = [...current.tabs];
+        tabs[index] = { ...tab, view };
+        return { ...current, tabs };
       }),
     })),
   activateTab: (worktreeKey, tabId) =>

@@ -437,6 +437,7 @@ export function createVcsActionManager<R, E>(
       label: `vcs-action:run-stacked:${commandKey}`,
       scheduler: vcsCommandScheduler,
       concurrency: { mode: "serial", key: () => commandKey },
+      cancellable: true,
       execute: (input: RunVcsStackedActionInput, registry) => {
         if (target === null) {
           return Effect.fail(
@@ -527,6 +528,10 @@ export function createVcsActionManager<R, E>(
   return {
     stateAtom: getVcsActionStateAtom,
     runStackedAction: (target: VcsActionTarget) => getRunStackedActionCommand(target),
+    cancelStackedAction: (registry: AtomRegistry.AtomRegistry, target: VcsActionTarget) => {
+      getRunStackedActionCommand(target).cancel?.(registry);
+      setState(registry, target, () => EMPTY_VCS_ACTION_STATE);
+    },
     track: async <A, E>(
       registry: AtomRegistry.AtomRegistry,
       target: VcsActionTarget,

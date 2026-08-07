@@ -6,15 +6,16 @@ import {
   FolderGit2Icon,
   FolderGitIcon,
   FolderIcon,
-  GitPullRequestIcon,
   HistoryIcon,
   MonitorIcon,
 } from "lucide-react";
-import { memo, useCallback, useMemo } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { useProject, useThread, useThreadShellsForProjectRefs } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
+import { useBranches } from "../state/queries";
+import { parsePullRequestReference } from "../pullRequestReference";
 import { vcsEnvironment } from "../state/vcs";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useIsMobile } from "../hooks/useMediaQuery";
@@ -33,11 +34,11 @@ import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
 import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
 import { Button } from "./ui/button";
+import { Input } from "./ui/input";
 import {
   Menu,
   MenuGroup,
   MenuGroupLabel,
-  MenuItem,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
@@ -67,6 +68,7 @@ interface MobileRunContextSelectorProps {
   envLocked: boolean;
   envModeLocked: boolean;
   environmentId: EnvironmentId;
+  cwd: string | null;
   availableEnvironments: readonly EnvironmentOption[] | undefined;
   showEnvironmentPicker: boolean;
   showEnvironmentIndicator: boolean;
@@ -77,13 +79,14 @@ interface MobileRunContextSelectorProps {
   previousWorktreeLabel: string | null;
   onUsePreviousWorktree: () => void;
   checkoutPullRequestLabel: string;
-  onCheckoutPullRequest: (() => void) | undefined;
+  onCheckoutPullRequest: ((reference: string) => void) | undefined;
 }
 
 const MobileRunContextSelector = memo(function MobileRunContextSelector({
   envLocked,
   envModeLocked,
   environmentId,
+  cwd,
   availableEnvironments,
   showEnvironmentPicker,
   showEnvironmentIndicator,
@@ -100,6 +103,10 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
     () => availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null,
     [availableEnvironments, environmentId],
   );
+  const [checkoutReference, setCheckoutReference] = useState("");
+  const branchQuery = useBranches({ environmentId, cwd, query: checkoutReference });
+  const branchSuggestions = branchQuery.data?.refs.slice(0, 8) ?? [];
+  const pullRequestReference = parsePullRequestReference(checkoutReference.trim());
   const WorkspaceIcon =
     effectiveEnvMode === "worktree"
       ? FolderGit2Icon
@@ -150,6 +157,61 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
         <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
       </MenuTrigger>
       <MenuPopup align="start" side="top" className="w-64">
+        {onCheckoutPullRequest ? (
+          <div className="px-1.5 pt-1.5 pb-1">
+            <Input
+              autoFocus
+              value={checkoutReference}
+              placeholder={checkoutPullRequestLabel}
+              aria-label="Open branch or pull request"
+              onChange={(event) => setCheckoutReference(event.target.value)}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key !== "Enter" || !checkoutReference.trim()) return;
+                event.preventDefault();
+                onCheckoutPullRequest(checkoutReference.trim());
+                setCheckoutReference("");
+              }}
+            />
+            {pullRequestReference || branchSuggestions.length > 0 ? (
+              <div className="mt-1 grid max-h-56 overflow-y-auto">
+                {pullRequestReference ? (
+                  <button
+                    type="button"
+                    className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      onCheckoutPullRequest(pullRequestReference);
+                      setCheckoutReference("");
+                    }}
+                  >
+                    <FolderGit2Icon className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 truncate">Pull request {pullRequestReference}</span>
+                  </button>
+                ) : null}
+                {branchSuggestions.map((ref) => (
+                  <button
+                    key={`${ref.remoteName ?? "local"}:${ref.name}`}
+                    type="button"
+                    className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      onCheckoutPullRequest(
+                        ref.remoteName ? `${ref.remoteName}/${ref.name}` : ref.name,
+                      );
+                      setCheckoutReference("");
+                    }}
+                  >
+                    <FolderGitIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 truncate">
+                      {ref.remoteName ? `${ref.remoteName}/${ref.name}` : ref.name}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         {showEnvironmentPicker && availableEnvironments && onEnvironmentChange ? (
           <>
             <MenuGroup>
@@ -218,17 +280,6 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
             ) : null}
           </MenuRadioGroup>
         </MenuGroup>
-        {onCheckoutPullRequest ? (
-          <>
-            <MenuSeparator />
-            <MenuItem onClick={onCheckoutPullRequest}>
-              <span className="flex min-w-0 items-center gap-1.5">
-                <GitPullRequestIcon className="size-3" />
-                <span className="min-w-0 truncate">{checkoutPullRequestLabel}</span>
-              </span>
-            </MenuItem>
-          </>
-        ) : null}
       </MenuPopup>
     </Menu>
   );
@@ -326,10 +377,13 @@ export const BranchToolbar = memo(function BranchToolbar({
     () => getSourceControlPresentation(gitStatusQuery.data?.sourceControlProvider),
     [gitStatusQuery.data?.sourceControlProvider],
   );
-  const checkoutPullRequestLabel = `Checkout ${sourceControlPresentation.terminology.singular}`;
-  const handleCheckoutPullRequest = useCallback(() => {
-    onCheckoutPullRequestRequest?.("");
-  }, [onCheckoutPullRequestRequest]);
+  const checkoutPullRequestLabel = `Open branch or ${sourceControlPresentation.terminology.shortLabel}`;
+  const handleCheckoutPullRequest = useCallback(
+    (reference: string) => {
+      onCheckoutPullRequestRequest?.(reference);
+    },
+    [onCheckoutPullRequestRequest],
+  );
 
   const showEnvironmentPicker = Boolean(
     availableEnvironments && availableEnvironments.length > 1 && onEnvironmentChange,
@@ -351,6 +405,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           envLocked={envLocked}
           envModeLocked={envModeLocked}
           environmentId={environmentId}
+          cwd={activeProject.workspaceRoot}
           availableEnvironments={availableEnvironments}
           showEnvironmentPicker={showEnvironmentPicker}
           showEnvironmentIndicator={showEnvironmentIndicator}
@@ -380,6 +435,8 @@ export const BranchToolbar = memo(function BranchToolbar({
           )}
           <BranchToolbarEnvModeSelector
             envLocked={envModeLocked}
+            environmentId={environmentId}
+            cwd={activeProject.workspaceRoot}
             effectiveEnvMode={effectiveEnvMode}
             activeWorktreePath={activeWorktreePath}
             onEnvModeChange={onEnvModeChange}

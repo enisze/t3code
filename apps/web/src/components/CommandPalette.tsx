@@ -28,6 +28,7 @@ import {
   ArrowDownIcon,
   ArrowLeftIcon,
   ArrowUpIcon,
+  ArchiveRestoreIcon,
   CornerLeftUpIcon,
   FolderIcon,
   FolderPlusIcon,
@@ -53,6 +54,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useThreadActions } from "../hooks/useThreadActions";
 import { useClientSettings } from "../hooks/useSettings";
 import { readLocalApi } from "../localApi";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
@@ -64,6 +66,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useThreadShells } from "../state/entities";
+import { useArchivedThreadSnapshots } from "../lib/archivedThreadsState";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
@@ -505,6 +508,13 @@ function OpenCommandPaletteDialog(props: {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
+  const { unarchiveThread } = useThreadActions();
+  const archivedEnvironmentIds = useMemo(
+    () => [...new Set(projects.map((project) => project.environmentId))],
+    [projects],
+  );
+  const { snapshots: archivedSnapshots, refresh: refreshArchivedThreads } =
+    useArchivedThreadSnapshots(archivedEnvironmentIds);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const providers = useAtomValue(primaryServerProvidersAtom);
   const [viewStack, setViewStack] = useState<CommandPaletteView[]>([]);
@@ -917,6 +927,103 @@ function OpenCommandPaletteDialog(props: {
         },
       }),
     [activeThreadId, clientSettings.sidebarThreadSortOrder, navigate, projectTitleById, threads],
+  );
+  const archivedWorktreeItems = useMemo(() => {
+    const activeWorktreeKeys = new Set(
+      threads.flatMap((thread) =>
+        thread.archivedAt === null && thread.worktreePath !== null
+          ? [`${thread.environmentId}:${thread.projectId}:${thread.worktreePath}`]
+          : [],
+      ),
+    );
+    const groups = new Map<
+      string,
+      {
+        environmentId: EnvironmentId;
+        projectId: ProjectId;
+        projectTitle: string;
+        workspaceRoot: string;
+        worktreePath: string;
+        threads: Array<(typeof archivedSnapshots)[number]["snapshot"]["threads"][number]>;
+      }
+    >();
+
+    for (const { environmentId, snapshot } of archivedSnapshots) {
+      const archivedProjectById = new Map(
+        snapshot.projects.map((project) => [project.id, project]),
+      );
+      for (const thread of snapshot.threads) {
+        if (thread.worktreePath === null) continue;
+        const key = `${environmentId}:${thread.projectId}:${thread.worktreePath}`;
+        if (activeWorktreeKeys.has(key)) continue;
+        const project = archivedProjectById.get(thread.projectId);
+        if (!project) continue;
+        const existing = groups.get(key);
+        if (existing) {
+          existing.threads.push(thread);
+          continue;
+        }
+        groups.set(key, {
+          environmentId,
+          projectId: thread.projectId,
+          projectTitle: project.title,
+          workspaceRoot: project.workspaceRoot,
+          worktreePath: thread.worktreePath,
+          threads: [thread],
+        });
+      }
+    }
+
+    return [...groups.entries()].map(([key, group]): CommandPaletteActionItem => {
+      const representative = group.threads.toSorted((left, right) =>
+        right.updatedAt.localeCompare(left.updatedAt),
+      )[0]!;
+      const branch = representative.branch;
+      const worktreeName = group.worktreePath.split(/[\\/]/).filter(Boolean).at(-1) ?? "Worktree";
+      return {
+        kind: "action",
+        value: `archived-worktree:${key}`,
+        searchTerms: [
+          branch ?? "",
+          worktreeName,
+          group.worktreePath,
+          group.projectTitle,
+          group.workspaceRoot,
+          ...group.threads.map((thread) => thread.title),
+        ],
+        title: branch ?? worktreeName,
+        description: `${group.projectTitle} · Archived worktree`,
+        icon: <ArchiveRestoreIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          for (const thread of group.threads) {
+            const result = await unarchiveThread(scopeThreadRef(group.environmentId, thread.id));
+            if (result._tag === "Failure") {
+              if (!isAtomCommandInterrupted(result)) {
+                const error = squashAtomCommandFailure(result);
+                toastManager.add(
+                  stackedThreadToast({
+                    type: "error",
+                    title: "Failed to restore worktree",
+                    description: error instanceof Error ? error.message : "An error occurred.",
+                  }),
+                );
+              }
+              refreshArchivedThreads();
+              return;
+            }
+          }
+          refreshArchivedThreads();
+          await navigate({
+            to: "/$environmentId/$threadId",
+            params: buildThreadRouteParams(scopeThreadRef(group.environmentId, representative.id)),
+          });
+        },
+      };
+    });
+  }, [archivedSnapshots, navigate, refreshArchivedThreads, threads, unarchiveThread]);
+  const searchableThreadItems = useMemo(
+    () => [...allThreadItems, ...archivedWorktreeItems],
+    [allThreadItems, archivedWorktreeItems],
   );
   const recentThreadItems = allThreadItems.slice(0, RECENT_THREAD_LIMIT);
 
@@ -1348,7 +1455,7 @@ function OpenCommandPaletteDialog(props: {
     query: deferredQuery,
     isInSubmenu: currentView !== null,
     projectSearchItems: projectSearchItems,
-    threadSearchItems: allThreadItems,
+    threadSearchItems: searchableThreadItems,
   });
 
   const handleAddProjectForEnvironment = useCallback(

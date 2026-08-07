@@ -5,6 +5,7 @@ import {
   deriveLocalBranchNameFromRemoteRef,
   resolveEnvironmentOptionLabel,
   resolveBranchSelectionTarget,
+  resolveExactBranchWorktreeInput,
   resolveCurrentWorkspaceLabel,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
@@ -659,6 +660,54 @@ describe("resolveBranchSelectionTarget", () => {
       checkoutCwd: "/repo/.t3/worktrees/feature-a",
       nextWorktreePath: "/repo/.t3/worktrees/feature-a",
       reuseExistingWorktree: false,
+    });
+  });
+});
+
+describe("resolveExactBranchWorktreeInput", () => {
+  it("checks out a local branch directly without creating a child branch", () => {
+    expect(
+      resolveExactBranchWorktreeInput({
+        activeProjectCwd: "/repo",
+        ref: { name: "feature/review", isRemote: false, worktreePath: null },
+      }),
+    ).toEqual({
+      kind: "create",
+      cwd: "/repo",
+      refName: "feature/review",
+      path: null,
+    });
+  });
+
+  it("creates the corresponding local branch for a remote branch", () => {
+    expect(
+      resolveExactBranchWorktreeInput({
+        activeProjectCwd: "/repo",
+        ref: { name: "origin/feature/review", isRemote: true, worktreePath: null },
+      }),
+    ).toEqual({
+      kind: "create",
+      cwd: "/repo",
+      refName: "origin/feature/review",
+      newRefName: "feature/review",
+      path: null,
+    });
+  });
+
+  it("reuses a branch's existing secondary worktree", () => {
+    expect(
+      resolveExactBranchWorktreeInput({
+        activeProjectCwd: "/repo",
+        ref: {
+          name: "feature/review",
+          isRemote: false,
+          worktreePath: "/worktrees/feature-review",
+        },
+      }),
+    ).toEqual({
+      kind: "reuse",
+      branch: "feature/review",
+      worktreePath: "/worktrees/feature-review",
     });
   });
 });

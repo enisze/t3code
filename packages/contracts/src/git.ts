@@ -200,6 +200,9 @@ const VcsStatusChangeRequest = Schema.Struct({
   baseRef: TrimmedNonEmptyStringSchema,
   headRef: TrimmedNonEmptyStringSchema,
   state: VcsStatusChangeRequestState,
+  mergeability: Schema.optional(Schema.Literals(["clean", "conflicting", "blocked", "unknown"])),
+  checks: Schema.optional(Schema.Literals(["passing", "failing", "pending", "unknown"])),
+  failedCheckCount: Schema.optional(NonNegativeInt),
 });
 
 const VcsStatusLocalShape = {
@@ -215,6 +218,8 @@ const VcsStatusLocalShape = {
         path: TrimmedNonEmptyStringSchema,
         insertions: NonNegativeInt,
         deletions: NonNegativeInt,
+        /** Present and true when Git reports this as an unmerged path. */
+        conflicted: Schema.optionalKey(Schema.Boolean),
       }),
     ),
     insertions: NonNegativeInt,

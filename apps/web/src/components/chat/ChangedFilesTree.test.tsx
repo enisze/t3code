@@ -236,8 +236,20 @@ describe("DiffNavigatorFileList", () => {
     const markup = renderToStaticMarkup(
       <DiffNavigatorFileList
         files={[
-          { path: "apps/web/src/index.ts", additions: 2, deletions: 1, viewed: false },
-          { path: "apps/web/src/main.ts", additions: 3, deletions: 0, viewed: false },
+          {
+            path: "apps/web/src/index.ts",
+            additions: 2,
+            deletions: 1,
+            viewed: false,
+            conflicted: false,
+          },
+          {
+            path: "apps/web/src/main.ts",
+            additions: 3,
+            deletions: 0,
+            viewed: false,
+            conflicted: false,
+          },
         ]}
         resolvedTheme="light"
         onOpenFile={() => {}}
@@ -258,9 +270,9 @@ describe("DiffNavigatorFileList", () => {
     const markup = renderToStaticMarkup(
       <DiffNavigatorFileList
         files={[
-          { path: "a.ts", additions: 1, deletions: 0, viewed: false },
-          { path: "b.ts", additions: 1, deletions: 0, viewed: true },
-          { path: "c.ts", additions: 1, deletions: 0, viewed: false },
+          { path: "a.ts", additions: 1, deletions: 0, viewed: false, conflicted: false },
+          { path: "b.ts", additions: 1, deletions: 0, viewed: true, conflicted: false },
+          { path: "c.ts", additions: 1, deletions: 0, viewed: false, conflicted: false },
         ]}
         resolvedTheme="light"
         onOpenFile={() => {}}
@@ -280,8 +292,8 @@ describe("DiffNavigatorFileList", () => {
     const markup = renderToStaticMarkup(
       <DiffNavigatorFileList
         files={[
-          { path: "a.ts", additions: 1, deletions: 0, viewed: false },
-          { path: "b.ts", additions: 1, deletions: 0, viewed: false },
+          { path: "a.ts", additions: 1, deletions: 0, viewed: false, conflicted: false },
+          { path: "b.ts", additions: 1, deletions: 0, viewed: false, conflicted: false },
         ]}
         resolvedTheme="light"
         activeFilePath="b.ts"
@@ -291,5 +303,24 @@ describe("DiffNavigatorFileList", () => {
     );
 
     expect(markup).toContain('data-active="true"');
+  });
+
+  it("separates merge conflicts from other changed files", () => {
+    const markup = renderToStaticMarkup(
+      <DiffNavigatorFileList
+        files={[
+          { path: "ordinary.ts", additions: 1, deletions: 0, viewed: false, conflicted: false },
+          { path: "conflicted.ts", additions: 1, deletions: 1, viewed: false, conflicted: true },
+        ]}
+        resolvedTheme="light"
+        onOpenFile={() => {}}
+        onToggleViewed={() => {}}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Merge conflicts"');
+    expect(markup).toContain('aria-label="Other changes"');
+    expect(markup).toContain('aria-label="Merge conflict"');
+    expect(markup.indexOf("conflicted.ts")).toBeLessThan(markup.indexOf("ordinary.ts"));
   });
 });

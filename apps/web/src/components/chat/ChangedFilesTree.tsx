@@ -13,6 +13,7 @@ import {
   FileDiffIcon,
   FolderIcon,
   FolderClosedIcon,
+  TriangleAlertIcon,
 } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
@@ -323,6 +324,7 @@ export interface DiffNavigatorFile {
   additions: number;
   deletions: number;
   viewed: boolean;
+  conflicted: boolean;
 }
 
 /**
@@ -339,66 +341,108 @@ export const DiffNavigatorFileList = memo(function DiffNavigatorFileList(props: 
   onToggleViewed: (filePath: string) => void;
 }) {
   const { files, resolvedTheme, activeFilePath, onOpenFile, onToggleViewed } = props;
-  // Unviewed first (original order), then viewed (original order).
-  const orderedFiles = useMemo(
-    () => [...files.filter((file) => !file.viewed), ...files.filter((file) => file.viewed)],
-    [files],
-  );
+  const fileGroups = useMemo(() => {
+    const orderByViewed = (group: ReadonlyArray<DiffNavigatorFile>) => [
+      ...group.filter((file) => !file.viewed),
+      ...group.filter((file) => file.viewed),
+    ];
+    return [
+      { kind: "conflicts" as const, files: orderByViewed(files.filter((file) => file.conflicted)) },
+      { kind: "changes" as const, files: orderByViewed(files.filter((file) => !file.conflicted)) },
+    ].filter((group) => group.files.length > 0);
+  }, [files]);
 
   return (
-    <div className="space-y-0.5">
-      {orderedFiles.map((file) => {
-        const slashIndex = file.path.lastIndexOf("/");
-        const directory = slashIndex >= 0 ? file.path.slice(0, slashIndex + 1) : "";
-        const name = slashIndex >= 0 ? file.path.slice(slashIndex + 1) : file.path;
-        const isActive = activeFilePath === file.path;
-        return (
-          <div
-            key={`file:${file.path}`}
-            data-active={isActive || undefined}
-            className={cn(
-              "group flex w-full items-center gap-1.5 rounded-xl py-1 pr-3 pl-2 transition-colors",
-              isActive ? "bg-accent" : "hover:bg-accent/60",
-              file.viewed && !isActive && "opacity-70",
-            )}
-          >
-            <Checkbox
-              checked={file.viewed}
-              className="shrink-0"
-              aria-label={
-                file.viewed ? `Mark ${file.path} as not viewed` : `Mark ${file.path} as viewed`
-              }
-              onClick={(event) => event.stopPropagation()}
-              onCheckedChange={() => onToggleViewed(file.path)}
-            />
-            <button
-              type="button"
-              className="flex min-w-0 flex-1 items-center gap-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-md"
-              onClick={() => onOpenFile(file.path)}
+    <div className="space-y-3">
+      {fileGroups.map((group) => (
+        <section
+          key={group.kind}
+          aria-label={group.kind === "conflicts" ? "Merge conflicts" : "Other changes"}
+        >
+          {fileGroups.length > 1 || group.kind === "conflicts" ? (
+            <div
+              className={cn(
+                "mb-1.5 flex items-center gap-1.5 border-b px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-wide",
+                group.kind === "conflicts"
+                  ? "border-destructive/30 text-destructive"
+                  : "border-border/70 text-muted-foreground",
+              )}
             >
-              <PierreEntryIcon
-                pathValue={file.path}
-                kind="file"
-                theme={resolvedTheme}
-                className="size-3.5 shrink-0 text-muted-foreground/70"
-              />
-              <span className="flex min-w-0 flex-1 items-baseline font-mono text-[11px]">
-                {directory ? (
-                  <span className="min-w-0 truncate text-muted-foreground/50">{directory}</span>
-                ) : null}
-                <span className="shrink-0 text-muted-foreground/90 group-hover:text-foreground">
-                  {name}
-                </span>
+              {group.kind === "conflicts" ? <TriangleAlertIcon className="size-3" /> : null}
+              <span>{group.kind === "conflicts" ? "Merge conflicts" : "Other changes"}</span>
+              <span className="font-mono font-normal tabular-nums opacity-70">
+                {group.files.length}
               </span>
-              {hasNonZeroStat({ additions: file.additions, deletions: file.deletions }) ? (
-                <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums">
-                  <DiffStatLabel additions={file.additions} deletions={file.deletions} />
-                </span>
-              ) : null}
-            </button>
+            </div>
+          ) : null}
+          <div className="space-y-0.5">
+            {group.files.map((file) => {
+              const slashIndex = file.path.lastIndexOf("/");
+              const directory = slashIndex >= 0 ? file.path.slice(0, slashIndex + 1) : "";
+              const name = slashIndex >= 0 ? file.path.slice(slashIndex + 1) : file.path;
+              const isActive = activeFilePath === file.path;
+              return (
+                <div
+                  key={`file:${file.path}`}
+                  data-active={isActive || undefined}
+                  className={cn(
+                    "group flex w-full items-center gap-1.5 rounded-xl py-1 pr-3 pl-2 transition-colors",
+                    isActive
+                      ? file.conflicted
+                        ? "bg-destructive/12"
+                        : "bg-accent"
+                      : file.conflicted
+                        ? "bg-destructive/[0.06] hover:bg-destructive/10"
+                        : "hover:bg-accent/60",
+                    file.viewed && "opacity-70",
+                  )}
+                >
+                  <Checkbox
+                    checked={file.viewed}
+                    className="shrink-0"
+                    aria-label={
+                      file.viewed
+                        ? `Mark ${file.path} as not viewed`
+                        : `Mark ${file.path} as viewed`
+                    }
+                    onClick={(event) => event.stopPropagation()}
+                    onCheckedChange={() => onToggleViewed(file.path)}
+                  />
+                  <button
+                    type="button"
+                    className="flex min-w-0 flex-1 items-center gap-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-md"
+                    onClick={() => onOpenFile(file.path)}
+                  >
+                    <PierreEntryIcon
+                      pathValue={file.path}
+                      kind="file"
+                      theme={resolvedTheme}
+                      className="size-3.5 shrink-0 text-muted-foreground/70"
+                    />
+                    {file.conflicted ? (
+                      <TriangleAlertIcon
+                        className="size-3.5 shrink-0 text-destructive"
+                        aria-label="Merge conflict"
+                      />
+                    ) : null}
+                    <span className="flex min-w-0 flex-1 items-baseline font-mono text-[11px]">
+                      {directory ? (
+                        <span className="min-w-0 truncate text-foreground">{directory}</span>
+                      ) : null}
+                      <span className="shrink-0 text-foreground">{name}</span>
+                    </span>
+                    {hasNonZeroStat({ additions: file.additions, deletions: file.deletions }) ? (
+                      <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums">
+                        <DiffStatLabel additions={file.additions} deletions={file.deletions} />
+                      </span>
+                    ) : null}
+                  </button>
+                </div>
+              );
+            })}
           </div>
-        );
-      })}
+        </section>
+      ))}
     </div>
   );
 });

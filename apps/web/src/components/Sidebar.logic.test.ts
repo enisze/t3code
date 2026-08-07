@@ -661,28 +661,34 @@ describe("resolveSidebarV2Status", () => {
 });
 
 describe("sortThreadsForSidebarV2", () => {
-  const sortable = (input: { id: string; createdAt: string }) => ({
+  const sortable = (input: { id: string; createdAt: string; latestUserMessageAt?: string }) => ({
     id: input.id,
     createdAt: input.createdAt,
+    updatedAt: input.createdAt,
+    latestUserMessageAt: input.latestUserMessageAt ?? null,
   });
 
-  it("orders by creation time, newest first, ignoring activity", () => {
+  it("orders by latest activity within the project", () => {
     const sorted = sortThreadsForSidebarV2([
-      sortable({ id: "oldest", createdAt: "2026-03-09T08:00:00.000Z" }),
+      sortable({
+        id: "oldest",
+        createdAt: "2026-03-09T08:00:00.000Z",
+        latestUserMessageAt: "2026-03-09T13:00:00.000Z",
+      }),
       sortable({ id: "newest", createdAt: "2026-03-09T12:00:00.000Z" }),
       sortable({ id: "middle", createdAt: "2026-03-09T10:00:00.000Z" }),
     ]);
 
-    expect(sorted.map((thread) => thread.id)).toEqual(["newest", "middle", "oldest"]);
+    expect(sorted.map((thread) => thread.id)).toEqual(["oldest", "newest", "middle"]);
   });
 
-  it("breaks creation-time ties by id so the order is stable", () => {
+  it("breaks activity ties by id so the order is stable", () => {
     const sorted = sortThreadsForSidebarV2([
       sortable({ id: "b", createdAt: "2026-03-09T10:00:00.000Z" }),
       sortable({ id: "a", createdAt: "2026-03-09T10:00:00.000Z" }),
     ]);
 
-    expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
+    expect(sorted.map((thread) => thread.id)).toEqual(["b", "a"]);
   });
 });
 
@@ -1559,6 +1565,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     gitHubAccount: null,
     worktreeBranchPrefix: null,
     defaultWorktreeBranch: null,
+    previewPort: null,
     ...rest,
   };
 }

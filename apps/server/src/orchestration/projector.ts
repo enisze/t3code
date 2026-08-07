@@ -215,6 +215,7 @@ export function projectEvent(
             gitHubAccount: payload.gitHubAccount ?? null,
             worktreeBranchPrefix: payload.worktreeBranchPrefix ?? null,
             defaultWorktreeBranch: payload.defaultWorktreeBranch ?? null,
+            previewPort: payload.previewPort ?? null,
             scripts: payload.scripts,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -258,6 +259,9 @@ export function projectEvent(
                     : {}),
                   ...(payload.defaultWorktreeBranch !== undefined
                     ? { defaultWorktreeBranch: payload.defaultWorktreeBranch }
+                    : {}),
+                  ...(payload.previewPort !== undefined
+                    ? { previewPort: payload.previewPort }
                     : {}),
                   ...(payload.scripts !== undefined ? { scripts: payload.scripts } : {}),
                   updatedAt: payload.updatedAt,

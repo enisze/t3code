@@ -457,18 +457,12 @@ export function firstValidTimestamp(
   return null;
 }
 
-// v2 sort: static creation order, newest thread on top. Activity NEVER
-// reorders the list — a row holds its position from open until settled, so
-// the screen only moves at lifecycle transitions. Status (including pending
-// approval) is carried by each card's edge strip, not by position.
-export function sortThreadsForSidebarV2<
-  T extends { readonly id: string; readonly createdAt: string },
->(threads: readonly T[]): T[] {
-  return [...threads].toSorted(
-    (left, right) =>
-      parseTimestampMs(right.createdAt) - parseTimestampMs(left.createdAt) ||
-      left.id.localeCompare(right.id),
-  );
+// Keep the chats users touched most recently at the top of each project. The
+// project grouping step preserves this incoming order within every section.
+export function sortThreadsForSidebarV2<T extends { readonly id: string } & ThreadSortInput>(
+  threads: readonly T[],
+): T[] {
+  return sortThreads(threads, "updated_at");
 }
 
 type SettledTimestampInput = Pick<

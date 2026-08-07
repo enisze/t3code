@@ -1,11 +1,9 @@
-import {
-  FolderGit2Icon,
-  FolderGitIcon,
-  FolderIcon,
-  GitPullRequestIcon,
-  HistoryIcon,
-} from "lucide-react";
-import { memo, useMemo } from "react";
+import { FolderGit2Icon, FolderGitIcon, FolderIcon, HistoryIcon } from "lucide-react";
+import { memo, useMemo, useState } from "react";
+import type { EnvironmentId } from "@t3tools/contracts";
+
+import { useBranches } from "../state/queries";
+import { parsePullRequestReference } from "../pullRequestReference";
 
 import {
   resolveCurrentWorkspaceLabel,
@@ -19,27 +17,30 @@ import {
   SelectGroupLabel,
   SelectItem,
   SelectPopup,
-  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "./ui/select";
+import { Input } from "./ui/input";
 
 export const PREVIOUS_WORKTREE_SELECT_VALUE = "previous-worktree";
-export const CHECKOUT_PULL_REQUEST_SELECT_VALUE = "checkout-pull-request";
 
 interface BranchToolbarEnvModeSelectorProps {
   envLocked: boolean;
+  environmentId: EnvironmentId;
+  cwd: string | null;
   effectiveEnvMode: EnvMode;
   activeWorktreePath: string | null;
   onEnvModeChange: (mode: EnvMode) => void;
   previousWorktreeLabel?: string | null;
   onUsePreviousWorktree?: () => void;
   checkoutPullRequestLabel?: string;
-  onCheckoutPullRequest?: () => void;
+  onCheckoutPullRequest?: (reference: string) => void;
 }
 
 export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSelector({
   envLocked,
+  environmentId,
+  cwd,
   effectiveEnvMode,
   activeWorktreePath,
   onEnvModeChange,
@@ -50,7 +51,10 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
 }: BranchToolbarEnvModeSelectorProps) {
   const showPreviousWorktree = Boolean(previousWorktreeLabel && onUsePreviousWorktree);
   const showCheckoutPullRequest = Boolean(onCheckoutPullRequest);
-  const pullRequestLabel = checkoutPullRequestLabel ?? "Checkout pull request";
+  const [checkoutReference, setCheckoutReference] = useState("");
+  const branchQuery = useBranches({ environmentId, cwd, query: checkoutReference });
+  const branchSuggestions = branchQuery.data?.refs.slice(0, 8) ?? [];
+  const pullRequestReference = parsePullRequestReference(checkoutReference.trim());
   const envModeItems = useMemo(
     () => [
       { value: "local", label: resolveCurrentWorkspaceLabel(activeWorktreePath) },
@@ -58,17 +62,8 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
       ...(showPreviousWorktree && previousWorktreeLabel
         ? [{ value: PREVIOUS_WORKTREE_SELECT_VALUE, label: previousWorktreeLabel }]
         : []),
-      ...(showCheckoutPullRequest
-        ? [{ value: CHECKOUT_PULL_REQUEST_SELECT_VALUE, label: pullRequestLabel }]
-        : []),
     ],
-    [
-      activeWorktreePath,
-      previousWorktreeLabel,
-      pullRequestLabel,
-      showCheckoutPullRequest,
-      showPreviousWorktree,
-    ],
+    [activeWorktreePath, previousWorktreeLabel, showPreviousWorktree],
   );
 
   if (envLocked) {
@@ -98,10 +93,6 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
           onUsePreviousWorktree?.();
           return;
         }
-        if (value === CHECKOUT_PULL_REQUEST_SELECT_VALUE) {
-          onCheckoutPullRequest?.();
-          return;
-        }
         onEnvModeChange(value as EnvMode);
       }}
       items={envModeItems}
@@ -122,6 +113,61 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         <SelectValue />
       </SelectTrigger>
       <SelectPopup>
+        {showCheckoutPullRequest ? (
+          <div className="px-1.5 pt-1.5 pb-1">
+            <Input
+              autoFocus
+              value={checkoutReference}
+              placeholder={checkoutPullRequestLabel ?? "Branch or PR"}
+              aria-label="Open branch or pull request"
+              onChange={(event) => setCheckoutReference(event.target.value)}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key !== "Enter" || !checkoutReference.trim()) return;
+                event.preventDefault();
+                onCheckoutPullRequest?.(checkoutReference.trim());
+                setCheckoutReference("");
+              }}
+            />
+            {pullRequestReference || branchSuggestions.length > 0 ? (
+              <div className="mt-1 grid max-h-56 overflow-y-auto">
+                {pullRequestReference ? (
+                  <button
+                    type="button"
+                    className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      onCheckoutPullRequest?.(pullRequestReference);
+                      setCheckoutReference("");
+                    }}
+                  >
+                    <FolderGit2Icon className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 truncate">Pull request {pullRequestReference}</span>
+                  </button>
+                ) : null}
+                {branchSuggestions.map((ref) => (
+                  <button
+                    key={`${ref.remoteName ?? "local"}:${ref.name}`}
+                    type="button"
+                    className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      onCheckoutPullRequest?.(
+                        ref.remoteName ? `${ref.remoteName}/${ref.name}` : ref.name,
+                      );
+                      setCheckoutReference("");
+                    }}
+                  >
+                    <FolderGitIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 truncate">
+                      {ref.remoteName ? `${ref.remoteName}/${ref.name}` : ref.name}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         <SelectGroup>
           <SelectGroupLabel>Workspace</SelectGroupLabel>
           <SelectItem value="local">
@@ -149,17 +195,6 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
             </SelectItem>
           ) : null}
         </SelectGroup>
-        {showCheckoutPullRequest ? (
-          <>
-            <SelectSeparator />
-            <SelectItem value={CHECKOUT_PULL_REQUEST_SELECT_VALUE}>
-              <span className="inline-flex items-center gap-1.5">
-                <GitPullRequestIcon className="size-3" />
-                {pullRequestLabel}
-              </span>
-            </SelectItem>
-          </>
-        ) : null}
       </SelectPopup>
     </Select>
   );

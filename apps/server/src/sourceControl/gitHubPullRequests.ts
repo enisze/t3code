@@ -14,6 +14,9 @@ export interface NormalizedGitHubPullRequestRecord {
   readonly baseRefName: string;
   readonly headRefName: string;
   readonly state: "open" | "closed" | "merged";
+  readonly mergeability?: "clean" | "conflicting" | "blocked" | "unknown";
+  readonly checks?: "passing" | "failing" | "pending" | "unknown";
+  readonly failedCheckCount?: number;
   readonly updatedAt: Option.Option<DateTime.Utc>;
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
@@ -28,6 +31,18 @@ const GitHubPullRequestSchema = Schema.Struct({
   headRefName: TrimmedNonEmptyString,
   state: Schema.optional(Schema.NullOr(Schema.String)),
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
+  mergeable: Schema.optional(Schema.NullOr(Schema.String)),
+  mergeStateStatus: Schema.optional(Schema.NullOr(Schema.String)),
+  statusCheckRollup: Schema.optional(
+    Schema.NullOr(
+      Schema.Array(
+        Schema.Struct({
+          status: Schema.optional(Schema.NullOr(Schema.String)),
+          conclusion: Schema.optional(Schema.NullOr(Schema.String)),
+        }),
+      ),
+    ),
+  ),
   updatedAt: Schema.optional(Schema.OptionFromNullOr(Schema.DateTimeUtcFromString)),
   isCrossRepository: Schema.optional(Schema.Boolean),
   // gh < 2.47 exports headRepository as {id, name} only; nameWithOwner was
@@ -85,6 +100,47 @@ function normalizeGitHubPullRequestRecord(
     (headRepositoryOwnerLogin && headRepositoryName
       ? `${headRepositoryOwnerLogin}/${headRepositoryName}`
       : null);
+  const mergeable = raw.mergeable?.toUpperCase();
+  const mergeStateStatus = raw.mergeStateStatus?.toUpperCase();
+  const mergeability =
+    mergeable === "CONFLICTING" || mergeStateStatus === "DIRTY"
+      ? "conflicting"
+      : mergeable === "MERGEABLE" && mergeStateStatus === "CLEAN"
+        ? "clean"
+        : mergeStateStatus === "BLOCKED" || mergeStateStatus === "UNSTABLE"
+          ? "blocked"
+          : "unknown";
+  const failingConclusions = new Set([
+    "FAILURE",
+    "CANCELLED",
+    "TIMED_OUT",
+    "ACTION_REQUIRED",
+    "STARTUP_FAILURE",
+  ]);
+  const failedCheckCount = (raw.statusCheckRollup ?? []).filter((check) =>
+    failingConclusions.has(check.conclusion?.toUpperCase() ?? ""),
+  ).length;
+  const checks =
+    raw.statusCheckRollup == null
+      ? undefined
+      : (() => {
+          const rollup = raw.statusCheckRollup ?? [];
+          if (rollup.length === 0) return "passing" as const;
+          if (failedCheckCount > 0) {
+            return "failing" as const;
+          }
+          if (
+            rollup.some(
+              (check) =>
+                check.status?.toUpperCase() !== "COMPLETED" ||
+                !check.conclusion ||
+                check.conclusion.toUpperCase() === "NEUTRAL",
+            )
+          ) {
+            return "pending" as const;
+          }
+          return "passing" as const;
+        })();
 
   return {
     number: raw.number,
@@ -93,6 +149,9 @@ function normalizeGitHubPullRequestRecord(
     baseRefName: raw.baseRefName,
     headRefName: raw.headRefName,
     state: normalizeGitHubPullRequestState(raw),
+    ...(raw.mergeable != null || raw.mergeStateStatus != null ? { mergeability } : {}),
+    ...(checks ? { checks } : {}),
+    ...(raw.statusCheckRollup != null ? { failedCheckCount } : {}),
     updatedAt: raw.updatedAt ?? Option.none(),
     ...(typeof raw.isCrossRepository === "boolean"
       ? { isCrossRepository: raw.isCrossRepository }

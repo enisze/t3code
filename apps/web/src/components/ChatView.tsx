@@ -134,12 +134,13 @@ import {
   setActivePreviewTab,
   useThreadPreviewState,
 } from "../previewStateStore";
+import { openUrlInPreview } from "../browser/openFileInPreview";
 import { addBrowserSurface } from "./preview/addBrowserSurface";
 import { openBrowserPreviewInChat } from "./preview/openBrowserPreviewInChat";
 import { closePreviewSession } from "./preview/closePreviewSession";
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
 import { subscribePreviewAction } from "./preview/previewActionBus";
-import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
+import { getConfiguredPreviewUrls, previewTabLabel } from "./preview/previewEmptyStateLogic";
 import {
   selectThreadPreviewMiniPlayer,
   usePreviewMiniPlayerStore,
@@ -156,12 +157,14 @@ import {
   CheckCircle2Icon,
   ChevronDownIcon,
   GitBranchIcon,
+  ScanSearchIcon,
   TriangleAlertIcon,
   WifiOffIcon,
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+import GitActionsControl from "./GitActionsControl";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
@@ -185,7 +188,7 @@ import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
 } from "../logicalProject";
-import { buildDraftThreadRouteParams } from "../threadRoutes";
+import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../threadRoutes";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -228,6 +231,7 @@ import {
   useThreadProposedPlans,
   useThreadRefs,
   useThreadShell,
+  useThreadShellsForProjectRefs,
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
@@ -1491,6 +1495,7 @@ function ChatViewContent(props: ChatViewProps) {
   // siblings read and write the same panel state and see the same live
   // terminals. Threads with no worktree resolve back to their own ref.
   const workspaceThreadRef = useWorkspaceThreadRef(activeThreadRef);
+  const workspaceThreadKey = workspaceThreadRef ? scopedThreadKey(workspaceThreadRef) : null;
   const workspaceThreadId = workspaceThreadRef?.threadId ?? null;
   const terminalUiState = useTerminalUiStateStore((state) =>
     selectThreadTerminalUiState(state.terminalUiStateByThreadKey, workspaceThreadRef),
@@ -1637,6 +1642,11 @@ function ChatViewContent(props: ChatViewProps) {
     ? scopeProjectRef(activeThread.environmentId, activeThread.projectId)
     : null;
   const activeProject = useProject(activeProjectRef);
+  const activeProjectRefs = useMemo(
+    () => (activeProjectRef === null ? [] : [activeProjectRef]),
+    [activeProjectRef],
+  );
+  const activeProjectThreadShells = useThreadShellsForProjectRefs(activeProjectRefs);
   const handleNewThreadInActiveProject = useCallback(() => {
     startNewThreadForProject(activeProjectRef, handleNewThread);
   }, [activeProjectRef, handleNewThread]);
@@ -1660,12 +1670,14 @@ function ChatViewContent(props: ChatViewProps) {
   // The browser preview is shown as a content tab in the chat column (beside the
   // file/diff viewers), not in the right panel.
   const previewTabActive = activeContentTab?.view === "preview";
-  const handleNewChatInWorktree = useCallback(() => {
-    if (!activeProjectRef || !newChatWorktreePath) return;
+  const handleNewChatInScope = useCallback(() => {
+    if (!activeProjectRef) return;
     void handleNewThread(activeProjectRef, {
       branch: newChatWorktreeBranch,
       worktreePath: newChatWorktreePath,
-      envMode: "worktree",
+      envMode: newChatWorktreePath ? "worktree" : "local",
+      forceNew: true,
+      preservePreviousDraft: true,
     });
   }, [activeProjectRef, newChatWorktreeBranch, newChatWorktreePath, handleNewThread]);
   const activeEnvironmentShell = useEnvironmentQuery(
@@ -1788,6 +1800,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
       setPullRequestDialogState({
         initialReference: reference ?? null,
+        autoSubmit: Boolean(reference?.trim()),
         key: Date.now(),
       });
     },
@@ -1877,13 +1890,36 @@ function ChatViewContent(props: ChatViewProps) {
 
   const handlePreparedPullRequestThread = useCallback(
     async (input: { branch: string; worktreePath: string | null }) => {
+      const existing = activeProjectThreadShells.find(
+        (shell) =>
+          activeProject !== null &&
+          shell.environmentId === activeProject.environmentId &&
+          shell.projectId === activeProject.id &&
+          shell.archivedAt === null &&
+          shell.worktreePath !== null &&
+          (input.worktreePath !== null
+            ? shell.worktreePath === input.worktreePath
+            : shell.branch === input.branch),
+      );
+      if (existing) {
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams({
+            environmentId: existing.environmentId,
+            threadId: existing.id,
+          }),
+        });
+        return true;
+      }
+      if (input.worktreePath === null) return false;
       await openOrReuseProjectDraftThread({
         branch: input.branch,
         worktreePath: input.worktreePath,
-        envMode: input.worktreePath ? "worktree" : "local",
+        envMode: "worktree",
       });
+      return true;
     },
-    [openOrReuseProjectDraftThread],
+    [activeProject, activeProjectThreadShells, navigate, openOrReuseProjectDraftThread],
   );
 
   useEffect(() => {
@@ -2499,14 +2535,10 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     const store = useRightPanelStore.getState();
     const state = selectThreadRightPanelState(store.byThreadKey, workspaceThreadRef);
-    // A draft that joins an existing worktree resolves to that worktree's server
-    // representative, so the shared diff is already available — even before the
-    // draft's first message. Gating purely on `isServerThread` would make
-    // `ensureFixedSurfaces` drop the Diff tab from the shared workspace the
-    // moment a new chat opens in the worktree.
-    const sharesWorktreeWorkspace =
-      activeThreadRef !== null && workspaceThreadRef.threadId !== activeThreadRef.threadId;
-    const diffAvailable = isGitRepo && (isServerThread || sharesWorktreeWorkspace);
+    // The repository diff is available for client-side drafts too. Adding it
+    // immediately makes Diff the true first-open default; after that, the
+    // persisted active surface remains whatever the user selected last.
+    const diffAvailable = isGitRepo;
     const firstVisit = !autoOpenedRightPanelKeysRef.current.has(activeThreadKey);
     if (firstVisit) autoOpenedRightPanelKeysRef.current.add(activeThreadKey);
     if (firstVisit && !state.isOpen && state.surfaces.length === 0) {
@@ -2527,15 +2559,7 @@ function ChatViewContent(props: ChatViewProps) {
         { focusDiffUnlessFiles: true },
       );
     }
-  }, [
-    workspaceThreadRef,
-    activeThreadRef,
-    activeProject,
-    activeThreadKey,
-    isServerThread,
-    isGitRepo,
-    shouldUsePlanSidebarSheet,
-  ]);
+  }, [workspaceThreadRef, activeProject, activeThreadKey, isGitRepo, shouldUsePlanSidebarSheet]);
   const showComposerContextStrip = isGitRepo && activeProject !== null;
   // The diff surface defaults to branch changes (everything done on this branch
   // vs. its base) rather than the working tree — the agent commits its work, so
@@ -3132,6 +3156,17 @@ function ChatViewContent(props: ChatViewProps) {
     if (!workspaceThreadRef) return;
     void addBrowserSurface({ threadRef: workspaceThreadRef, openPreview });
   }, [workspaceThreadRef, openPreview]);
+  // Opens the project's configured localhost port as a new preview tab (from the
+  // chat header's "Preview" button). Each click opens its own tab.
+  const openConfiguredPreview = useCallback(() => {
+    const port = activeProject?.previewPort ?? null;
+    if (!workspaceThreadRef || port === null || !isPreviewSupportedInRuntime()) return;
+    void openUrlInPreview({
+      threadRef: workspaceThreadRef,
+      url: `http://localhost:${port}`,
+      openPreview,
+    });
+  }, [activeProject?.previewPort, workspaceThreadRef, openPreview]);
   const startReviewInNewChat = useCallback(() => {
     if (!activeProjectRef || !activeProject || !newChatWorktreePath) return;
     const reviewModelSelection =
@@ -3152,6 +3187,25 @@ function ChatViewContent(props: ChatViewProps) {
     newChatWorktreeBranch,
     newChatWorktreePath,
     primaryServerSettings.reviewPrompt,
+  ]);
+  const startConflictResolutionInNewChat = useCallback(() => {
+    if (!activeProjectRef || !newChatWorktreePath || !activeThread) return;
+    void handleNewThread(activeProjectRef, {
+      branch: newChatWorktreeBranch,
+      worktreePath: newChatWorktreePath,
+      envMode: "worktree",
+      forceNew: true,
+      initialPrompt: primaryServerSettings.resolvePrompt,
+      modelSelection: activeThread.modelSelection,
+      autoSubmitInitialPrompt: true,
+    });
+  }, [
+    activeProjectRef,
+    activeThread,
+    handleNewThread,
+    newChatWorktreeBranch,
+    newChatWorktreePath,
+    primaryServerSettings.resolvePrompt,
   ]);
   // Opens a file's contents as its own tab in the chat-column strip
   // (worktree-scoped), chosen from the Files explorer — the file-view sibling
@@ -3176,15 +3230,35 @@ function ChatViewContent(props: ChatViewProps) {
     (tabId: string) => {
       if (!contentTabsWorktreeKey) return;
       useWorkspaceContentTabsStore.getState().activateTab(contentTabsWorktreeKey, tabId);
+      // Preview content tabs are keyed by their preview session id, so focusing
+      // one must also make that session the active preview. This is a no-op for
+      // file/diff tabs, whose ids are file paths rather than session ids.
+      if (workspaceThreadRef) setActivePreviewTab(workspaceThreadRef, tabId);
     },
-    [contentTabsWorktreeKey],
+    [contentTabsWorktreeKey, workspaceThreadRef],
   );
   const closeContentTab = useCallback(
     (tabId: string) => {
       if (!contentTabsWorktreeKey) return;
+      const tab = contentTabsState.tabs.find((entry) => entry.id === tabId);
       useWorkspaceContentTabsStore.getState().closeTab(contentTabsWorktreeKey, tabId);
+      // Closing a preview tab also tears down its underlying browser session.
+      if (tab?.view === "preview" && tab.previewTabId && workspaceThreadRef) {
+        void closePreviewSession({
+          closePreview,
+          snapshot: activePreviewState.sessions[tab.previewTabId] ?? null,
+          tabId: tab.previewTabId,
+          threadRef: workspaceThreadRef,
+        });
+      }
     },
-    [contentTabsWorktreeKey],
+    [
+      contentTabsWorktreeKey,
+      contentTabsState.tabs,
+      workspaceThreadRef,
+      closePreview,
+      activePreviewState.sessions,
+    ],
   );
   const activateChatContent = useCallback(() => {
     if (!contentTabsWorktreeKey) return;
@@ -5795,6 +5869,37 @@ function ChatViewContent(props: ChatViewProps) {
       {panelToggleControls}
     </div>
   );
+  const rightPanelHeaderActions = activeProject ? (
+    <div className="flex shrink-0 items-center gap-2 [-webkit-app-region:no-drag]">
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              type="button"
+              size="xs"
+              variant="default"
+              className="shadow-sm"
+              onClick={startReviewInNewChat}
+              aria-label="Start a review in a new chat"
+            />
+          }
+        >
+          <ScanSearchIcon className="size-3.5" aria-hidden />
+          <span className="ml-0.5">Review</span>
+        </TooltipTrigger>
+        <TooltipPopup side="bottom">
+          Start a new chat with the configured review prompt
+        </TooltipPopup>
+      </Tooltip>
+      <GitActionsControl
+        gitCwd={gitCwd}
+        activeThreadRef={activeThreadRef}
+        previewUrl={configuredPreviewUrls[0] ?? null}
+        onSolveConflicts={startConflictResolutionInNewChat}
+        {...(routeKind === "draft" && draftId ? { draftId } : {})}
+      />
+    </div>
+  ) : null;
   const rightPanelContent = workspaceThreadRef ? (
     activeRightPanelSurface?.kind === "preview" ? (
       <Suspense fallback={null}>
@@ -5827,7 +5932,7 @@ function ChatViewContent(props: ChatViewProps) {
     ) : activeRightPanelSurface?.kind === "diff" ? (
       <Suspense fallback={null}>
         <DiffPanel
-          key={activeThreadKey}
+          key={workspaceThreadKey}
           mode="embedded"
           threadRef={activeThreadRef}
           composerDraftTarget={composerDraftTarget}
@@ -5929,8 +6034,6 @@ function ChatViewContent(props: ChatViewProps) {
           {!rightPanelOpen ? panelLayoutControls : null}
           <ChatHeader
             activeThreadEnvironmentId={activeThread.environmentId}
-            activeThreadId={activeThread.id}
-            {...(routeKind === "draft" && draftId ? { draftId } : {})}
             activeThreadTitle={activeThread.title}
             activeProjectName={activeProject?.title}
             activeProjectCwd={activeProject?.workspaceRoot ?? null}
@@ -5942,8 +6045,10 @@ function ChatViewContent(props: ChatViewProps) {
             keybindings={keybindings}
             availableEditors={availableEditors}
             rightPanelOpen={rightPanelOpen}
-            gitCwd={gitCwd}
-            onReview={startReviewInNewChat}
+            previewPort={
+              isPreviewSupportedInRuntime() ? (activeProject?.previewPort ?? null) : null
+            }
+            onOpenPreview={openConfiguredPreview}
             onNewThreadInProject={handleNewThreadInActiveProject}
             onRunProjectScript={runProjectScript}
             onAddProjectScript={saveProjectScript}
@@ -5955,16 +6060,24 @@ function ChatViewContent(props: ChatViewProps) {
         <WorktreeThreadTabs
           activeEnvironmentId={activeThread.environmentId}
           activeThreadId={activeThread.id}
+          activeProjectId={activeThread.projectId}
           worktreePath={newChatWorktreePath}
-          {...(newChatWorktreePath ? { onNewChatInWorktree: handleNewChatInWorktree } : {})}
-          contentTabs={contentTabsState.tabs.map((tab) => ({
-            id: tab.id,
-            title:
-              tab.view === "preview"
-                ? "Preview"
-                : tab.filePath.slice(tab.filePath.lastIndexOf("/") + 1),
-            view: tab.view,
-          }))}
+          activeDraftId={draftId}
+          onNewChat={handleNewChatInScope}
+          contentTabs={contentTabsState.tabs.map((tab) => {
+            if (tab.view !== "preview") {
+              return {
+                id: tab.id,
+                title: tab.filePath.slice(tab.filePath.lastIndexOf("/") + 1),
+                view: tab.view,
+              };
+            }
+            const session = tab.previewTabId
+              ? activePreviewState.sessions[tab.previewTabId]
+              : undefined;
+            const url = session && session.navStatus._tag !== "Idle" ? session.navStatus.url : "";
+            return { id: tab.id, title: previewTabLabel(url), view: tab.view };
+          })}
           activeContentTabId={contentTabsState.activeTabId}
           onSelectContentTab={selectContentTab}
           onCloseContentTab={closeContentTab}
@@ -6057,10 +6170,10 @@ function ChatViewContent(props: ChatViewProps) {
                 <Suspense fallback={null}>
                   {activeContentTab.view === "preview" ? (
                     <PreviewPanel
-                      key={`${activeThreadKey}:content:preview`}
+                      key={`${activeThreadKey}:content:preview:${activeContentTab.previewTabId ?? ""}`}
                       mode="embedded"
                       threadRef={workspaceThreadRef ?? activeThreadRef}
-                      tabId={activePreviewState.activeTabId}
+                      tabId={activeContentTab.previewTabId ?? activePreviewState.activeTabId}
                       configuredUrls={configuredPreviewUrls}
                       visible
                     />
@@ -6332,6 +6445,8 @@ function ChatViewContent(props: ChatViewProps) {
                 threadId={activeThread.id}
                 cwd={activeProject?.workspaceRoot ?? null}
                 initialReference={pullRequestDialogState.initialReference}
+                autoSubmitInitialReference={pullRequestDialogState.autoSubmit}
+                headless={pullRequestDialogState.autoSubmit}
                 onOpenChange={(open) => {
                   if (!open) {
                     closePullRequestDialog();
@@ -6369,6 +6484,7 @@ function ChatViewContent(props: ChatViewProps) {
         <RightPanelTabs
           mode="inline"
           maximized={rightPanelMaximized}
+          headerActions={rightPanelHeaderActions}
           surfaces={rightPanelState.surfaces}
           activeSurfaceId={activeRightPanelSurface?.id ?? null}
           pendingSurfaceIds={pendingFileSurfaceIds}
@@ -6390,6 +6506,7 @@ function ChatViewContent(props: ChatViewProps) {
           <RightPanelTabs
             mode="sheet"
             layoutControls={panelToggleControls}
+            headerActions={rightPanelHeaderActions}
             surfaces={rightPanelState.surfaces}
             activeSurfaceId={activeRightPanelSurface?.id ?? null}
             pendingSurfaceIds={pendingFileSurfaceIds}

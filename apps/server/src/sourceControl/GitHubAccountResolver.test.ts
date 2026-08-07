@@ -35,6 +35,7 @@ const projectShell = (input: {
   gitHubAccount: input.gitHubAccount,
   worktreeBranchPrefix: null,
   defaultWorktreeBranch: null,
+  previewPort: null,
   scripts: [],
   createdAt: NOW,
   updatedAt: NOW,

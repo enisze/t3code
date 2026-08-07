@@ -27,6 +27,7 @@ interface RightPanelTabsProps {
   mode: PreviewPanelMode;
   maximized?: boolean;
   layoutControls?: ReactNode;
+  headerActions?: ReactNode;
   surfaces: readonly RightPanelSurface[];
   activeSurfaceId: string | null;
   pendingSurfaceIds: ReadonlySet<string>;
@@ -311,6 +312,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             })}
           </div>
         </ScrollArea>
+        {props.headerActions}
         {props.layoutControls}
       </div>
       <div className="flex min-h-0 flex-1 flex-col">

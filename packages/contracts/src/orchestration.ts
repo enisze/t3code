@@ -15,6 +15,7 @@ import {
   IsoDateTime,
   MessageId,
   NonNegativeInt,
+  PortSchema,
   ProjectId,
   ProviderItemId,
   ThreadId,
@@ -273,6 +274,12 @@ export const OrchestrationProject = Schema.Struct({
   defaultWorktreeBranch: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /**
+   * Localhost port opened in the in-app browser preview (e.g. `5173` →
+   * `http://localhost:5173`) via the chat header's preview button. Null when
+   * unset. Only honored on the desktop build.
+   */
+  previewPort: Schema.NullOr(PortSchema).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -460,6 +467,7 @@ export const OrchestrationProjectShell = Schema.Struct({
   defaultWorktreeBranch: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  previewPort: Schema.NullOr(PortSchema).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -593,6 +601,7 @@ export const ProjectCreateCommand = Schema.Struct({
   gitHubAccount: Schema.optional(Schema.NullOr(GitHubAccountRef)),
   worktreeBranchPrefix: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   defaultWorktreeBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  previewPort: Schema.optional(Schema.NullOr(PortSchema)),
   createdAt: IsoDateTime,
 });
 
@@ -607,6 +616,7 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   gitHubAccount: Schema.optional(Schema.NullOr(GitHubAccountRef)),
   worktreeBranchPrefix: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   defaultWorktreeBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  previewPort: Schema.optional(Schema.NullOr(PortSchema)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
 });
 
@@ -997,6 +1007,7 @@ export const ProjectCreatedPayload = Schema.Struct({
   gitHubAccount: Schema.optional(Schema.NullOr(GitHubAccountRef)),
   worktreeBranchPrefix: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   defaultWorktreeBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  previewPort: Schema.optional(Schema.NullOr(PortSchema)),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -1012,6 +1023,7 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   gitHubAccount: Schema.optional(Schema.NullOr(GitHubAccountRef)),
   worktreeBranchPrefix: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   defaultWorktreeBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  previewPort: Schema.optional(Schema.NullOr(PortSchema)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
   updatedAt: IsoDateTime,
 });

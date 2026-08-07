@@ -22,7 +22,7 @@ export function openBrowserPreviewInChat(threadRef: ScopedThreadRef, tabId: stri
     useRightPanelStore.getState().openBrowser(threadRef, tabId);
     return;
   }
-  // Focus the just-opened tab, then reveal the preview viewer in the strip.
+  // Focus the just-opened session, then add (or re-focus) its tab in the strip.
   setActivePreviewTab(threadRef, tabId);
-  useWorkspaceContentTabsStore.getState().openPreview(worktreeKey);
+  useWorkspaceContentTabsStore.getState().openPreview(worktreeKey, tabId);
 }

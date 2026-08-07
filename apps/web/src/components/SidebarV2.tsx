@@ -1603,6 +1603,45 @@ export default function SidebarV2() {
     [updateProject],
   );
 
+  const updateProjectPreviewPort = useCallback(
+    async (member: SidebarProjectGroupMember, rawValue: string) => {
+      const trimmed = rawValue.trim();
+      let nextPort: number | null;
+      if (trimmed.length === 0) {
+        nextPort = null;
+      } else {
+        const parsed = Number(trimmed);
+        if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Invalid preview port",
+              description: "Enter a port between 1 and 65535.",
+            }),
+          );
+          return;
+        }
+        nextPort = parsed;
+      }
+      if ((member.previewPort ?? null) === nextPort) return;
+      const result = await updateProject({
+        environmentId: member.environmentId,
+        input: { projectId: member.id, previewPort: nextPort },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to update preview port",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [updateProject],
+  );
+
   const updateProjectDefaultWorktreeBranch = useCallback(
     async (member: SidebarProjectGroupMember, nextBranch: string | null) => {
       if ((member.defaultWorktreeBranch ?? null) === nextBranch) return;
@@ -3217,6 +3256,30 @@ export default function SidebarV2() {
                           /…
                         </code>
                         {member.worktreeBranchPrefix === null ? " (global default)" : null}
+                      </span>
+                    </label>
+                    <label className="grid min-w-0 gap-1.5">
+                      <span className="font-medium text-foreground">Preview port</span>
+                      <Input
+                        key={`preview-port:${member.physicalProjectKey}:${member.previewPort ?? ""}`}
+                        type="number"
+                        inputMode="numeric"
+                        min={1}
+                        max={65535}
+                        aria-label={`Localhost preview port in ${member.environmentLabel ?? "current environment"}`}
+                        defaultValue={member.previewPort ?? ""}
+                        placeholder="5173"
+                        onBlur={(event) => {
+                          void updateProjectPreviewPort(member, event.currentTarget.value);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") event.currentTarget.blur();
+                        }}
+                      />
+                      <span className="text-[11px] text-muted-foreground">
+                        The preview button in the chat header opens{" "}
+                        <code>http://localhost:{member.previewPort ?? "…"}</code> in the in-app
+                        browser.
                       </span>
                     </label>
                     <ProjectDefaultWorktreeBranchField

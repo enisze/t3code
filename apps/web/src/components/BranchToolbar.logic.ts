@@ -1,10 +1,9 @@
 import type { EnvironmentId, VcsRef, ProjectId } from "@t3tools/contracts";
+import { deriveLocalBranchNameFromRemoteRef } from "@t3tools/shared/git";
 import * as Schema from "effect/Schema";
 import { toSortableTimestamp } from "../lib/threadSort";
-export {
-  dedupeRemoteBranchesWithLocalMatches,
-  deriveLocalBranchNameFromRemoteRef,
-} from "@t3tools/shared/git";
+export { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
+export { deriveLocalBranchNameFromRemoteRef };
 
 export interface EnvironmentOption {
   environmentId: EnvironmentId;
@@ -232,6 +231,39 @@ export function resolveBranchSelectionTarget(input: {
     checkoutCwd: nextWorktreePath ?? activeProjectCwd,
     nextWorktreePath,
     reuseExistingWorktree: false,
+  };
+}
+
+export function resolveExactBranchWorktreeInput(input: {
+  activeProjectCwd: string;
+  ref: Pick<VcsRef, "name" | "isRemote" | "worktreePath">;
+}):
+  | { kind: "reuse"; branch: string; worktreePath: string }
+  | {
+      kind: "create";
+      cwd: string;
+      refName: string;
+      newRefName?: string;
+      path: null;
+    } {
+  const { activeProjectCwd, ref } = input;
+  if (ref.worktreePath && ref.worktreePath !== activeProjectCwd) {
+    return { kind: "reuse", branch: ref.name, worktreePath: ref.worktreePath };
+  }
+  if (ref.isRemote) {
+    return {
+      kind: "create",
+      cwd: activeProjectCwd,
+      refName: ref.name,
+      newRefName: deriveLocalBranchNameFromRemoteRef(ref.name),
+      path: null,
+    };
+  }
+  return {
+    kind: "create",
+    cwd: activeProjectCwd,
+    refName: ref.name,
+    path: null,
   };
 }
 

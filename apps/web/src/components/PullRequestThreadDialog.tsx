@@ -13,6 +13,7 @@ import { parsePullRequestReference } from "~/pullRequestReference";
 import { getSourceControlPresentation } from "~/sourceControlPresentation";
 import { useEnvironmentQuery } from "~/state/query";
 import { vcsEnvironment } from "~/state/vcs";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "./ui/button";
 import {
   Dialog,
@@ -32,8 +33,10 @@ interface PullRequestThreadDialogProps {
   threadId: ThreadId;
   cwd: string | null;
   initialReference: string | null;
+  autoSubmitInitialReference?: boolean;
+  headless?: boolean;
   onOpenChange: (open: boolean) => void;
-  onPrepared: (input: { branch: string; worktreePath: string | null }) => Promise<void> | void;
+  onPrepared: (input: { branch: string; worktreePath: string | null }) => Promise<boolean>;
 }
 
 export function PullRequestThreadDialog({
@@ -42,13 +45,16 @@ export function PullRequestThreadDialog({
   threadId,
   cwd,
   initialReference,
+  autoSubmitInitialReference = false,
+  headless = false,
   onOpenChange,
   onPrepared,
 }: PullRequestThreadDialogProps) {
   const referenceInputRef = useRef<HTMLInputElement>(null);
+  const autoSubmittedRef = useRef(false);
   const [reference, setReference] = useState(initialReference ?? "");
   const [referenceDirty, setReferenceDirty] = useState(false);
-  const [preparingMode, setPreparingMode] = useState<"local" | "worktree" | null>(null);
+  const [isPreparing, setIsPreparing] = useState(false);
   const [debouncedReference, referenceDebouncer] = useDebouncedValue(
     reference,
     { wait: 450 },
@@ -102,6 +108,18 @@ export function PullRequestThreadDialog({
     );
   }, [parsedReference, sourceControlScope]);
   const preparePullRequestThreadAction = usePreparePullRequestThreadAction(sourceControlScope);
+  const createWorktree = useAtomCommand(vcsEnvironment.createWorktree);
+  const branchQuery = useEnvironmentQuery(
+    open && cwd && reference.trim()
+      ? vcsEnvironment.listRefs({
+          environmentId,
+          input: { cwd, query: reference.trim(), limit: 20 },
+        })
+      : null,
+  );
+  const resolvedBranch = branchQuery.data?.refs.find(
+    (ref) => ref.name === reference.trim() || `${ref.remoteName}/${ref.name}` === reference.trim(),
+  );
 
   const liveResolvedPullRequest =
     parsedReference !== null && parsedReference === parsedDebouncedReference
@@ -129,52 +147,78 @@ export function PullRequestThreadDialog({
     }
   }, [resolvedPullRequest?.state]);
 
-  const handleConfirm = useCallback(
-    async (mode: "local" | "worktree") => {
-      if (!parsedReference) {
-        setReferenceDirty(true);
-        return;
-      }
-      if (!parsedReference || !resolvedPullRequest || !cwd) {
-        return;
-      }
-      setPreparingMode(mode);
+  const handleConfirm = useCallback(async () => {
+    if (!resolvedPullRequest && !resolvedBranch) {
+      setReferenceDirty(true);
+      return;
+    }
+    if (!cwd) return;
+    const targetBranch = resolvedPullRequest?.headBranch ?? resolvedBranch?.name;
+    if (!targetBranch) return;
+    if (
+      await onPrepared({ branch: targetBranch, worktreePath: resolvedBranch?.worktreePath ?? null })
+    ) {
+      onOpenChange(false);
+      return;
+    }
+    setIsPreparing(true);
+    if (resolvedPullRequest) {
       const result = await preparePullRequestThreadAction.run({
-        reference: parsedReference,
-        mode,
-        ...(mode === "worktree" ? { threadId } : {}),
+        reference: parsedReference!,
+        mode: "worktree",
+        threadId,
       });
-      setPreparingMode(null);
+      setIsPreparing(false);
       if (result._tag === "Failure") {
         if (isAtomCommandInterrupted(result)) {
           preparePullRequestThreadAction.resetError();
         }
         return;
       }
-      await onPrepared({
-        branch: result.value.branch,
-        worktreePath: result.value.worktreePath,
+      await onPrepared({ branch: result.value.branch, worktreePath: result.value.worktreePath });
+    } else {
+      const result = await createWorktree({
+        environmentId,
+        input: { cwd, refName: reference.trim(), path: null },
       });
-      onOpenChange(false);
-    },
-    [
-      cwd,
-      onOpenChange,
-      onPrepared,
-      parsedReference,
-      preparePullRequestThreadAction,
-      resolvedPullRequest,
-      threadId,
-    ],
-  );
+      setIsPreparing(false);
+      if (result._tag === "Failure") return;
+      await onPrepared({
+        branch: result.value.worktree.refName,
+        worktreePath: result.value.worktree.path,
+      });
+    }
+    onOpenChange(false);
+  }, [
+    cwd,
+    onOpenChange,
+    onPrepared,
+    createWorktree,
+    environmentId,
+    preparePullRequestThreadAction,
+    resolvedBranch,
+    resolvedPullRequest,
+    threadId,
+  ]);
+
+  useEffect(() => {
+    if (
+      !autoSubmitInitialReference ||
+      autoSubmittedRef.current ||
+      isPreparing ||
+      (!resolvedPullRequest && !resolvedBranch)
+    ) {
+      return;
+    }
+    autoSubmittedRef.current = true;
+    void handleConfirm();
+  }, [autoSubmitInitialReference, handleConfirm, isPreparing, resolvedBranch, resolvedPullRequest]);
 
   const validationMessage = !referenceDirty
     ? null
     : reference.trim().length === 0
       ? `Paste a ${terminology.singular} URL, checkout command, or enter 123 / #123.`
-      : parsedReference === null
-        ? `Use a ${terminology.singular} URL, checkout command, 123, or #123.`
-        : null;
+      : null;
   const errorMessage =
     validationMessage ??
     (resolvedPullRequest === null && pullRequestResolution.error
@@ -185,11 +229,13 @@ export function PullRequestThreadDialog({
           ? `Failed to prepare ${terminology.singular} thread.`
           : null);
 
+  if (headless) return null;
+
   return (
     <Dialog
       open={open}
       onOpenChange={(nextOpen) => {
-        if (!preparePullRequestThreadAction.isPending) {
+        if (!isPreparing) {
           onOpenChange(nextOpen);
         }
       }}
@@ -198,21 +244,22 @@ export function PullRequestThreadDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <SourceControlIcon className="size-4" />
-            Checkout {terminology.singular}
+            Open branch or {terminology.shortLabel}
           </DialogTitle>
           <DialogDescription>
-            Resolve a {sourceControlPresentation.providerName} {terminology.singular}, then create
-            the draft thread in the main repo or in a dedicated worktree.
+            Enter an existing branch or a {sourceControlPresentation.providerName}{" "}
+            {terminology.singular}. Existing chats are reused; otherwise a dedicated worktree is
+            created.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="space-y-4">
           <label className="grid gap-1.5">
             <span className="text-xs font-medium text-foreground capitalize">
-              {terminology.singular}
+              Branch or {terminology.shortLabel}
             </span>
             <Input
               ref={referenceInputRef}
-              placeholder={`${terminology.shortLabel} URL, checkout command, or #42`}
+              placeholder={`Branch name, ${terminology.shortLabel} URL, or #42`}
               value={reference}
               onChange={(event) => {
                 setReferenceDirty(true);
@@ -223,8 +270,8 @@ export function PullRequestThreadDialog({
                   return;
                 }
                 event.preventDefault();
-                if (!isResolving && !preparePullRequestThreadAction.isPending) {
-                  void handleConfirm("local");
+                if (!isResolving && !isPreparing) {
+                  void handleConfirm();
                 }
               }}
             />
@@ -246,6 +293,14 @@ export function PullRequestThreadDialog({
               </div>
             </div>
           ) : null}
+          {!resolvedPullRequest && resolvedBranch ? (
+            <div className="rounded-xl border border-border/70 bg-muted/24 p-3">
+              <p className="font-medium text-sm">{resolvedBranch.name}</p>
+              <p className="text-muted-foreground text-xs">
+                {resolvedBranch.worktreePath ? "Existing worktree" : "Existing branch"}
+              </p>
+            </div>
+          ) : null}
 
           {isResolving ? (
             <div className="flex items-center gap-2 text-muted-foreground text-xs">
@@ -262,40 +317,21 @@ export function PullRequestThreadDialog({
             variant="outline"
             size="sm"
             onClick={() => onOpenChange(false)}
-            disabled={preparePullRequestThreadAction.isPending}
+            disabled={isPreparing}
           >
             Cancel
           </Button>
           <Button
             type="button"
             size="sm"
-            variant="outline"
             onClick={() => {
-              void handleConfirm("local");
+              void handleConfirm();
             }}
             disabled={
-              !cwd ||
-              !resolvedPullRequest ||
-              isResolving ||
-              preparePullRequestThreadAction.isPending
+              !cwd || (!resolvedPullRequest && !resolvedBranch) || isResolving || isPreparing
             }
           >
-            {preparingMode === "local" ? "Preparing local..." : "Local"}
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => {
-              void handleConfirm("worktree");
-            }}
-            disabled={
-              !cwd ||
-              !resolvedPullRequest ||
-              isResolving ||
-              preparePullRequestThreadAction.isPending
-            }
-          >
-            {preparingMode === "worktree" ? "Preparing worktree..." : "Worktree"}
+            {isPreparing ? "Preparing worktree..." : "Open worktree"}
           </Button>
         </DialogFooter>
       </DialogPopup>
