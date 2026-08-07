@@ -3158,6 +3158,25 @@ function ChatViewContent(props: ChatViewProps) {
     newChatWorktreePath,
     primaryServerSettings.reviewPrompt,
   ]);
+  const startConflictResolutionInNewChat = useCallback(() => {
+    if (!activeProjectRef || !newChatWorktreePath || !activeThread) return;
+    void handleNewThread(activeProjectRef, {
+      branch: newChatWorktreeBranch,
+      worktreePath: newChatWorktreePath,
+      envMode: "worktree",
+      forceNew: true,
+      initialPrompt: primaryServerSettings.resolvePrompt,
+      modelSelection: activeThread.modelSelection,
+      autoSubmitInitialPrompt: true,
+    });
+  }, [
+    activeProjectRef,
+    activeThread,
+    handleNewThread,
+    newChatWorktreeBranch,
+    newChatWorktreePath,
+    primaryServerSettings.resolvePrompt,
+  ]);
   // Opens a file's contents as its own tab in the chat-column strip
   // (worktree-scoped), chosen from the Files explorer — the file-view sibling
   // of the diff tabs opened from the Diff navigator.
@@ -5846,6 +5865,7 @@ function ChatViewContent(props: ChatViewProps) {
         gitCwd={gitCwd}
         activeThreadRef={activeThreadRef}
         previewUrl={configuredPreviewUrls[0] ?? null}
+        onSolveConflicts={startConflictResolutionInNewChat}
         {...(routeKind === "draft" && draftId ? { draftId } : {})}
       />
     </div>

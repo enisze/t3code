@@ -29,6 +29,8 @@ export const ChangeRequest = Schema.Struct({
   baseRefName: TrimmedNonEmptyString,
   headRefName: TrimmedNonEmptyString,
   state: ChangeRequestState,
+  mergeability: Schema.optional(Schema.Literals(["clean", "conflicting", "blocked", "unknown"])),
+  checks: Schema.optional(Schema.Literals(["passing", "failing", "pending", "unknown"])),
   updatedAt: Schema.Option(Schema.DateTimeUtc),
   isCrossRepository: Schema.optional(Schema.Boolean),
   headRepositoryNameWithOwner: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),

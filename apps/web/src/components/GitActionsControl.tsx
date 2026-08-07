@@ -101,6 +101,7 @@ interface GitActionsControlProps {
   activeThreadRef: ScopedThreadRef | null;
   draftId?: DraftId;
   previewUrl?: string | null;
+  onSolveConflicts?: () => void;
 }
 
 interface PendingDefaultBranchAction {
@@ -992,6 +993,7 @@ export default function GitActionsControl({
   activeThreadRef,
   draftId,
   previewUrl = null,
+  onSolveConflicts,
 }: GitActionsControlProps) {
   const updateThreadMetadata = useAtomCommand(
     threadEnvironment.updateMetadata,
@@ -1812,12 +1814,20 @@ export default function GitActionsControl({
           <Button
             variant={gitStatusForActions?.pr?.state === "open" ? "default" : "outline"}
             size="xs"
-            disabled={!gitStatusForActions || isGitActionRunning}
+            disabled={
+              !gitStatusForActions ||
+              isGitActionRunning ||
+              (gitStatusForActions.pr?.state === "open" &&
+                gitStatusForActions.pr.mergeability !== "conflicting" &&
+                gitStatusForActions.pr.checks === "failing")
+            }
             onClick={() => {
               if (!gitStatusForActions) return;
               if (gitStatusForActions.pr?.state === "open") {
                 if (gitStatusForActions.hasWorkingTreeChanges) {
                   void runGitActionWithToast({ action: "commit_push" });
+                } else if (gitStatusForActions.pr.mergeability === "conflicting") {
+                  onSolveConflicts?.();
                 } else {
                   void mergeExistingPr();
                 }
@@ -1831,7 +1841,11 @@ export default function GitActionsControl({
             {gitStatusForActions?.pr?.state === "open"
               ? gitStatusForActions.hasWorkingTreeChanges
                 ? "Commit and push"
-                : "Merge"
+                : gitStatusForActions.pr.mergeability === "conflicting"
+                  ? "Solve conflicts"
+                  : gitStatusForActions.pr.checks === "failing"
+                    ? "Checks failed"
+                    : "Merge"
               : "Create PR"}
           </Button>
         </div>
