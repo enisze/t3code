@@ -15,8 +15,7 @@ type GitScopeSelection = Extract<DiffPanelSelection, { kind: "branch" | "unstage
 /** A checkpoint (turn) view — belongs to a single conversation. */
 type TurnSelection = Extract<DiffPanelSelection, { kind: "turn" }>;
 
-const DEFAULT_SELECTION: DiffPanelSelection = { kind: "branch", baseRef: null };
-const DEFAULT_WORKING_TREE_SELECTION: DiffPanelSelection = { kind: "unstaged" };
+const DEFAULT_SELECTION: DiffPanelSelection = { kind: "unstaged" };
 
 interface DiffPanelStoreState {
   // Working-tree / branch selection is part of the shared per-worktree
@@ -189,17 +188,15 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
 
 /**
  * Resolve the diff view for a chat. A per-chat turn selection wins over the
- * shared working-tree/branch view; absent both, fall back to the working tree
- * when it has changes, else the branch diff.
+ * shared working-tree/branch view; absent both, fall back to the working tree.
  */
 export function selectThreadDiffPanelSelection(
   state: Pick<DiffPanelStoreState, "gitScopeByThreadKey" | "turnByThreadKey">,
   chatRef: ScopedThreadRef | null | undefined,
   sharedRef: ScopedThreadRef | null | undefined,
-  hasWorkingTreeChanges = false,
 ): DiffPanelSelection {
   const turn = chatRef ? state.turnByThreadKey[scopedThreadKey(chatRef)] : undefined;
   if (turn) return turn;
   const gitScope = sharedRef ? state.gitScopeByThreadKey[scopedThreadKey(sharedRef)] : undefined;
-  return gitScope ?? (hasWorkingTreeChanges ? DEFAULT_WORKING_TREE_SELECTION : DEFAULT_SELECTION);
+  return gitScope ?? DEFAULT_SELECTION;
 }

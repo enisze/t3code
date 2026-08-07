@@ -76,6 +76,11 @@ export interface VcsProcessTimeoutFailure {
 export const VcsProcessExitFailureKind = Schema.Literals([
   "authentication",
   "not-found",
+  // The working directory couldn't be resolved to a repository the provider can
+  // act on — it isn't a git repository, has no remotes, or none of its remotes
+  // point to the provider's host. Distinct from `not-found` (the change request
+  // itself is missing) because the fix is about the directory, not the PR.
+  "repository-not-found",
   // The authenticated identity is valid but lacks permission for the operation
   // (e.g. merging as a project-selected account that isn't a collaborator).
   "permission-denied",
@@ -149,11 +154,13 @@ export class VcsProcessExitError extends Schema.TaggedErrorClass<VcsProcessExitE
             : context.command === "gh" || context.command === "az"
               ? "Pull request not found."
               : "VCS resource not found."
-          : failureKind === "permission-denied"
-            ? "The authenticated account lacks permission for this operation."
-            : failureKind === "merge-blocked"
-              ? "The change request can't be merged (conflicts, failing checks, branch protection, or a disallowed merge method)."
-              : "Process exited with a non-zero status.";
+          : failureKind === "repository-not-found"
+            ? "No repository found for this directory. It may not be a git repository, or its remotes don't point to the expected host."
+            : failureKind === "permission-denied"
+              ? "The authenticated account lacks permission for this operation."
+              : failureKind === "merge-blocked"
+                ? "The change request can't be merged (conflicts, failing checks, branch protection, or a disallowed merge method)."
+                : "Process exited with a non-zero status.";
 
     return new VcsProcessExitError({
       ...context,

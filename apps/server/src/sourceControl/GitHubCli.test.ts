@@ -383,6 +383,36 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("surfaces a friendly error when the directory has no GitHub repository", () =>
+    Effect.gen(function* () {
+      const cause = new VcsProcessExitError({
+        operation: "GitHubCli.execute",
+        command: "gh pr view",
+        cwd: "/repo",
+        exitCode: 1,
+        failureKind: "repository-not-found",
+        detail:
+          "No repository found for this directory. It may not be a git repository, or its remotes don't point to the expected host.",
+      });
+      mockRun.mockReturnValueOnce(Effect.fail(cause));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const error = yield* gh
+        .getPullRequest({
+          cwd: "/repo",
+          reference: "33",
+        })
+        .pipe(Effect.flip);
+
+      assert.strictEqual(error._tag, "GitHubRepositoryNotFoundError");
+      assert.equal(error.message.includes("No GitHub repository was found"), true);
+      assert.strictEqual(error.command, "gh");
+      assert.strictEqual(error.cwd, "/repo");
+      assert.strictEqual(error.cause, cause);
+      assert.equal(error.message.includes(cause.detail), false);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("merges with a real merge commit when the repository allows it", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(

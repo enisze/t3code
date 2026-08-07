@@ -140,6 +140,29 @@ describe("VcsProcess.run", () => {
     }).pipe(provideLive),
   );
 
+  it.effect("classifies repository-resolution failures without retaining stderr", () =>
+    Effect.gen(function* () {
+      const secretStderr =
+        "none of the git remotes configured for this repository point to a known GitHub host super-secret-token";
+      const error = yield* run({
+        operation: "test.repository",
+        command: "node",
+        args: ["-e", "process.stderr.write(process.argv[1]); process.exit(1)", secretStderr],
+        cwd: process.cwd(),
+      }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(VcsProcessExitError);
+      expect(error).toMatchObject({
+        detail:
+          "No repository found for this directory. It may not be a git repository, or its remotes don't point to the expected host.",
+        failureKind: "repository-not-found",
+        stderrLength: secretStderr.length,
+      });
+      expect(error.message).not.toContain(secretStderr);
+      expect(error.message).not.toContain("super-secret-token");
+    }).pipe(provideLive),
+  );
+
   it.effect("classifies permission failures without retaining stderr", () =>
     Effect.gen(function* () {
       const secretStderr = "must have write access to run this command super-secret-token";
