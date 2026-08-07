@@ -5828,7 +5828,8 @@ function ChatViewContent(props: ChatViewProps) {
             <Button
               type="button"
               size="xs"
-              variant="outline"
+              variant="default"
+              className="shadow-sm"
               onClick={startReviewInNewChat}
               aria-label="Start a review in a new chat"
             />
@@ -5844,6 +5845,7 @@ function ChatViewContent(props: ChatViewProps) {
       <GitActionsControl
         gitCwd={gitCwd}
         activeThreadRef={activeThreadRef}
+        previewUrl={configuredPreviewUrls[0] ?? null}
         {...(routeKind === "draft" && draftId ? { draftId } : {})}
       />
     </div>
