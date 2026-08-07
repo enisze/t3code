@@ -760,7 +760,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("includes uncommitted and untracked work in the branch preview", () =>
+    it.effect("separates committed branch changes from working-tree changes", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
@@ -781,13 +781,16 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         });
         const branchDiff =
           preview.sources.find((source) => source.kind === "branch-range")?.diff ?? "";
+        const workingTreeDiff =
+          preview.sources.find((source) => source.kind === "working-tree")?.diff ?? "";
 
-        // The branch view must reflect everything the branch introduced vs its
-        // base: the committed file, the uncommitted edit, and the untracked file.
         assert.include(branchDiff, "committed.txt");
-        assert.include(branchDiff, "README.md");
-        assert.include(branchDiff, "edited uncommitted");
-        assert.include(branchDiff, "untracked.txt");
+        assert.notInclude(branchDiff, "edited uncommitted");
+        assert.notInclude(branchDiff, "untracked.txt");
+        assert.include(workingTreeDiff, "README.md");
+        assert.include(workingTreeDiff, "edited uncommitted");
+        assert.include(workingTreeDiff, "untracked.txt");
+        assert.notInclude(workingTreeDiff, "committed.txt");
       }),
     );
   });

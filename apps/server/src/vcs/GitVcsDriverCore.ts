@@ -2307,12 +2307,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       .filter((diff) => diff.length > 0)
       .join("\n");
 
-    // Resolve the fork point so the branch view diffs the base's merge-base
-    // against the WORKING TREE (not HEAD). Using `${baseRef}...HEAD` only shows
-    // committed changes, so any work the agent left uncommitted or untracked was
-    // missing from "Branch changes" even though the branch clearly introduced
-    // it. Diffing from the merge-base to the working tree captures committed +
-    // uncommitted tracked changes; untracked files are appended below.
+    // Resolve the fork point so the branch view contains committed branch history
+    // only. Working-tree and untracked changes belong exclusively to the separate
+    // working-tree source above.
     const mergeBase =
       baseRef && branch
         ? yield* executeGit(
@@ -2332,9 +2329,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             Effect.orElseSucceed(() => null),
           )
         : null;
-    // Fall back to the base ref itself when the merge-base can't be resolved
-    // (e.g. no shared history yet); `git diff <ref>` still compares against the
-    // working tree.
+    // Fall back to the base ref itself when the merge-base can't be resolved.
     const baseDiffRef = mergeBase ?? (branch ? baseRef : null);
     const baseTrackedResult = baseDiffRef
       ? yield* executeGit(
@@ -2349,6 +2344,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             "--minimal",
             ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
             baseDiffRef,
+            "HEAD",
             "--",
           ],
           {
@@ -2365,14 +2361,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           })),
         )
       : null;
-    // Untracked files are new files the branch introduced, so they belong in the
-    // branch view too. Reuse the same untracked diff computed for the working
-    // tree source rather than recomputing it.
-    const baseDiff = baseTrackedResult
-      ? [baseTrackedResult.stdout.trimEnd(), dirtyUntracked.diff.trimEnd()]
-          .filter((diff) => diff.length > 0)
-          .join("\n")
-      : "";
+    const baseDiff = baseTrackedResult?.stdout.trimEnd() ?? "";
     const hashDiff = (diff: string) =>
       crypto.digest("SHA-256", new TextEncoder().encode(diff)).pipe(
         Effect.map(Encoding.encodeHex),
@@ -2411,7 +2400,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         headRef: branch ?? "HEAD",
         diff: baseDiff,
         diffHash: baseDiffHash,
-        truncated: (baseTrackedResult?.stdoutTruncated ?? false) || dirtyUntracked.truncated,
+        truncated: baseTrackedResult?.stdoutTruncated ?? false,
       },
     ];
 
