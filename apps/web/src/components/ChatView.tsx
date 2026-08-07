@@ -188,7 +188,7 @@ import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
 } from "../logicalProject";
-import { buildDraftThreadRouteParams } from "../threadRoutes";
+import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../threadRoutes";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -231,6 +231,7 @@ import {
   useThreadProposedPlans,
   useThreadRefs,
   useThreadShell,
+  useThreadShellsForProjectRefs,
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
@@ -1641,6 +1642,11 @@ function ChatViewContent(props: ChatViewProps) {
     ? scopeProjectRef(activeThread.environmentId, activeThread.projectId)
     : null;
   const activeProject = useProject(activeProjectRef);
+  const activeProjectRefs = useMemo(
+    () => (activeProjectRef === null ? [] : [activeProjectRef]),
+    [activeProjectRef],
+  );
+  const activeProjectThreadShells = useThreadShellsForProjectRefs(activeProjectRefs);
   const handleNewThreadInActiveProject = useCallback(() => {
     startNewThreadForProject(activeProjectRef, handleNewThread);
   }, [activeProjectRef, handleNewThread]);
@@ -1883,13 +1889,36 @@ function ChatViewContent(props: ChatViewProps) {
 
   const handlePreparedPullRequestThread = useCallback(
     async (input: { branch: string; worktreePath: string | null }) => {
+      const existing = activeProjectThreadShells.find(
+        (shell) =>
+          activeProject !== null &&
+          shell.environmentId === activeProject.environmentId &&
+          shell.projectId === activeProject.id &&
+          shell.archivedAt === null &&
+          shell.worktreePath !== null &&
+          (input.worktreePath !== null
+            ? shell.worktreePath === input.worktreePath
+            : shell.branch === input.branch),
+      );
+      if (existing) {
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams({
+            environmentId: existing.environmentId,
+            threadId: existing.id,
+          }),
+        });
+        return true;
+      }
+      if (input.worktreePath === null) return false;
       await openOrReuseProjectDraftThread({
         branch: input.branch,
         worktreePath: input.worktreePath,
-        envMode: input.worktreePath ? "worktree" : "local",
+        envMode: "worktree",
       });
+      return true;
     },
-    [openOrReuseProjectDraftThread],
+    [activeProject, activeProjectThreadShells, navigate, openOrReuseProjectDraftThread],
   );
 
   useEffect(() => {

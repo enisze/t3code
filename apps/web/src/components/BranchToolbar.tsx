@@ -326,7 +326,7 @@ export const BranchToolbar = memo(function BranchToolbar({
     () => getSourceControlPresentation(gitStatusQuery.data?.sourceControlProvider),
     [gitStatusQuery.data?.sourceControlProvider],
   );
-  const checkoutPullRequestLabel = `Checkout ${sourceControlPresentation.terminology.singular}`;
+  const checkoutPullRequestLabel = `Open branch or ${sourceControlPresentation.terminology.shortLabel}`;
   const handleCheckoutPullRequest = useCallback(() => {
     onCheckoutPullRequestRequest?.("");
   }, [onCheckoutPullRequestRequest]);
