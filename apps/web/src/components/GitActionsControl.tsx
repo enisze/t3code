@@ -31,6 +31,7 @@ import {
   LockIcon,
   GlobeIcon,
   WandSparklesIcon,
+  XIcon,
 } from "lucide-react";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "~/components/Icons";
@@ -1773,6 +1774,16 @@ export default function GitActionsControl({
           <span className="ml-0.5">
             {initAction.isPending ? "Initializing..." : "Initialize Git"}
           </span>
+        </Button>
+      ) : runImmediateGitAction.isPending ? (
+        <Button
+          variant="outline"
+          size="xs"
+          onClick={runImmediateGitAction.cancel}
+          aria-label="Cancel pull request creation"
+        >
+          <XIcon className="size-3.5" aria-hidden />
+          <span className="ml-0.5">Cancel</span>
         </Button>
       ) : (
         <Group aria-label="Git actions" className="shrink-0">

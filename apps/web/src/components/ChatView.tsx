@@ -157,12 +157,14 @@ import {
   CheckCircle2Icon,
   ChevronDownIcon,
   GitBranchIcon,
+  ScanSearchIcon,
   TriangleAlertIcon,
   WifiOffIcon,
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+import GitActionsControl from "./GitActionsControl";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
@@ -2503,14 +2505,10 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     const store = useRightPanelStore.getState();
     const state = selectThreadRightPanelState(store.byThreadKey, workspaceThreadRef);
-    // A draft that joins an existing worktree resolves to that worktree's server
-    // representative, so the shared diff is already available — even before the
-    // draft's first message. Gating purely on `isServerThread` would make
-    // `ensureFixedSurfaces` drop the Diff tab from the shared workspace the
-    // moment a new chat opens in the worktree.
-    const sharesWorktreeWorkspace =
-      activeThreadRef !== null && workspaceThreadRef.threadId !== activeThreadRef.threadId;
-    const diffAvailable = isGitRepo && (isServerThread || sharesWorktreeWorkspace);
+    // The repository diff is available for client-side drafts too. Adding it
+    // immediately makes Diff the true first-open default; after that, the
+    // persisted active surface remains whatever the user selected last.
+    const diffAvailable = isGitRepo;
     const firstVisit = !autoOpenedRightPanelKeysRef.current.has(activeThreadKey);
     if (firstVisit) autoOpenedRightPanelKeysRef.current.add(activeThreadKey);
     if (firstVisit && !state.isOpen && state.surfaces.length === 0) {
@@ -2531,15 +2529,7 @@ function ChatViewContent(props: ChatViewProps) {
         { focusDiffUnlessFiles: true },
       );
     }
-  }, [
-    workspaceThreadRef,
-    activeThreadRef,
-    activeProject,
-    activeThreadKey,
-    isServerThread,
-    isGitRepo,
-    shouldUsePlanSidebarSheet,
-  ]);
+  }, [workspaceThreadRef, activeProject, activeThreadKey, isGitRepo, shouldUsePlanSidebarSheet]);
   const showComposerContextStrip = isGitRepo && activeProject !== null;
   // The diff surface defaults to branch changes (everything done on this branch
   // vs. its base) rather than the working tree — the agent commits its work, so
@@ -5830,6 +5820,34 @@ function ChatViewContent(props: ChatViewProps) {
       {panelToggleControls}
     </div>
   );
+  const rightPanelHeaderActions = activeProject ? (
+    <div className="flex shrink-0 items-center gap-2 [-webkit-app-region:no-drag]">
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              onClick={startReviewInNewChat}
+              aria-label="Start a review in a new chat"
+            />
+          }
+        >
+          <ScanSearchIcon className="size-3.5" aria-hidden />
+          <span className="ml-0.5">Review</span>
+        </TooltipTrigger>
+        <TooltipPopup side="bottom">
+          Start a new chat with the configured review prompt
+        </TooltipPopup>
+      </Tooltip>
+      <GitActionsControl
+        gitCwd={gitCwd}
+        activeThreadRef={activeThreadRef}
+        {...(routeKind === "draft" && draftId ? { draftId } : {})}
+      />
+    </div>
+  ) : null;
   const rightPanelContent = workspaceThreadRef ? (
     activeRightPanelSurface?.kind === "preview" ? (
       <Suspense fallback={null}>
@@ -5868,8 +5886,6 @@ function ChatViewContent(props: ChatViewProps) {
           composerDraftTarget={composerDraftTarget}
           initialGitScope={initialDiffPanelGitScope}
           variant="navigator"
-          onReview={startReviewInNewChat}
-          {...(routeKind === "draft" && draftId ? { draftId } : {})}
           navigatorActiveFilePath={
             activeContentTab?.view === "diff" || activeContentTab?.view === "file"
               ? activeContentTab.filePath
@@ -6414,6 +6430,7 @@ function ChatViewContent(props: ChatViewProps) {
         <RightPanelTabs
           mode="inline"
           maximized={rightPanelMaximized}
+          headerActions={rightPanelHeaderActions}
           surfaces={rightPanelState.surfaces}
           activeSurfaceId={activeRightPanelSurface?.id ?? null}
           pendingSurfaceIds={pendingFileSurfaceIds}
@@ -6435,6 +6452,7 @@ function ChatViewContent(props: ChatViewProps) {
           <RightPanelTabs
             mode="sheet"
             layoutControls={panelToggleControls}
+            headerActions={rightPanelHeaderActions}
             surfaces={rightPanelState.surfaces}
             activeSurfaceId={activeRightPanelSurface?.id ?? null}
             pendingSurfaceIds={pendingFileSurfaceIds}

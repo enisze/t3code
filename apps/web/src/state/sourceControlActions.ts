@@ -245,7 +245,7 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
     [runStackedAction, scope],
   );
 
-  return useAction({
+  const trackedAction = useAction({
     kind: "runStackedAction",
     label: "Running source control action",
     scope,
@@ -253,6 +253,10 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
     onSuccess: status.refresh,
     managedExternally: true,
   });
+  return {
+    ...trackedAction,
+    cancel: () => vcsActionManager.cancelStackedAction(appAtomRegistry, scope),
+  };
 }
 
 export function useSourceControlPublishRepositoryAction(scope: SourceControlActionScope) {
