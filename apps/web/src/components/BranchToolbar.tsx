@@ -14,6 +14,8 @@ import { memo, useCallback, useMemo, useState } from "react";
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { useProject, useThread, useThreadShellsForProjectRefs } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
+import { useBranches } from "../state/queries";
+import { parsePullRequestReference } from "../pullRequestReference";
 import { vcsEnvironment } from "../state/vcs";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useIsMobile } from "../hooks/useMediaQuery";
@@ -66,6 +68,7 @@ interface MobileRunContextSelectorProps {
   envLocked: boolean;
   envModeLocked: boolean;
   environmentId: EnvironmentId;
+  cwd: string | null;
   availableEnvironments: readonly EnvironmentOption[] | undefined;
   showEnvironmentPicker: boolean;
   showEnvironmentIndicator: boolean;
@@ -83,6 +86,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   envLocked,
   envModeLocked,
   environmentId,
+  cwd,
   availableEnvironments,
   showEnvironmentPicker,
   showEnvironmentIndicator,
@@ -100,6 +104,9 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
     [availableEnvironments, environmentId],
   );
   const [checkoutReference, setCheckoutReference] = useState("");
+  const branchQuery = useBranches({ environmentId, cwd, query: checkoutReference });
+  const branchSuggestions = branchQuery.data?.refs.slice(0, 8) ?? [];
+  const pullRequestReference = parsePullRequestReference(checkoutReference.trim());
   const WorkspaceIcon =
     effectiveEnvMode === "worktree"
       ? FolderGit2Icon
@@ -166,6 +173,43 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
                 setCheckoutReference("");
               }}
             />
+            {pullRequestReference || branchSuggestions.length > 0 ? (
+              <div className="mt-1 grid max-h-56 overflow-y-auto">
+                {pullRequestReference ? (
+                  <button
+                    type="button"
+                    className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      onCheckoutPullRequest(pullRequestReference);
+                      setCheckoutReference("");
+                    }}
+                  >
+                    <FolderGit2Icon className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 truncate">Pull request {pullRequestReference}</span>
+                  </button>
+                ) : null}
+                {branchSuggestions.map((ref) => (
+                  <button
+                    key={`${ref.remoteName ?? "local"}:${ref.name}`}
+                    type="button"
+                    className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      onCheckoutPullRequest(
+                        ref.remoteName ? `${ref.remoteName}/${ref.name}` : ref.name,
+                      );
+                      setCheckoutReference("");
+                    }}
+                  >
+                    <FolderGitIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 truncate">
+                      {ref.remoteName ? `${ref.remoteName}/${ref.name}` : ref.name}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
         ) : null}
         {showEnvironmentPicker && availableEnvironments && onEnvironmentChange ? (
@@ -361,6 +405,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           envLocked={envLocked}
           envModeLocked={envModeLocked}
           environmentId={environmentId}
+          cwd={activeProject.workspaceRoot}
           availableEnvironments={availableEnvironments}
           showEnvironmentPicker={showEnvironmentPicker}
           showEnvironmentIndicator={showEnvironmentIndicator}
@@ -390,6 +435,8 @@ export const BranchToolbar = memo(function BranchToolbar({
           )}
           <BranchToolbarEnvModeSelector
             envLocked={envModeLocked}
+            environmentId={environmentId}
+            cwd={activeProject.workspaceRoot}
             effectiveEnvMode={effectiveEnvMode}
             activeWorktreePath={activeWorktreePath}
             onEnvModeChange={onEnvModeChange}

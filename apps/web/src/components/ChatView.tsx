@@ -6446,6 +6446,7 @@ function ChatViewContent(props: ChatViewProps) {
                 cwd={activeProject?.workspaceRoot ?? null}
                 initialReference={pullRequestDialogState.initialReference}
                 autoSubmitInitialReference={pullRequestDialogState.autoSubmit}
+                headless={pullRequestDialogState.autoSubmit}
                 onOpenChange={(open) => {
                   if (!open) {
                     closePullRequestDialog();

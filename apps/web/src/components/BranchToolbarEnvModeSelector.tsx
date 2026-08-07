@@ -1,5 +1,9 @@
 import { FolderGit2Icon, FolderGitIcon, FolderIcon, HistoryIcon } from "lucide-react";
 import { memo, useMemo, useState } from "react";
+import type { EnvironmentId } from "@t3tools/contracts";
+
+import { useBranches } from "../state/queries";
+import { parsePullRequestReference } from "../pullRequestReference";
 
 import {
   resolveCurrentWorkspaceLabel,
@@ -22,6 +26,8 @@ export const PREVIOUS_WORKTREE_SELECT_VALUE = "previous-worktree";
 
 interface BranchToolbarEnvModeSelectorProps {
   envLocked: boolean;
+  environmentId: EnvironmentId;
+  cwd: string | null;
   effectiveEnvMode: EnvMode;
   activeWorktreePath: string | null;
   onEnvModeChange: (mode: EnvMode) => void;
@@ -33,6 +39,8 @@ interface BranchToolbarEnvModeSelectorProps {
 
 export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSelector({
   envLocked,
+  environmentId,
+  cwd,
   effectiveEnvMode,
   activeWorktreePath,
   onEnvModeChange,
@@ -44,6 +52,9 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   const showPreviousWorktree = Boolean(previousWorktreeLabel && onUsePreviousWorktree);
   const showCheckoutPullRequest = Boolean(onCheckoutPullRequest);
   const [checkoutReference, setCheckoutReference] = useState("");
+  const branchQuery = useBranches({ environmentId, cwd, query: checkoutReference });
+  const branchSuggestions = branchQuery.data?.refs.slice(0, 8) ?? [];
+  const pullRequestReference = parsePullRequestReference(checkoutReference.trim());
   const envModeItems = useMemo(
     () => [
       { value: "local", label: resolveCurrentWorkspaceLabel(activeWorktreePath) },
@@ -118,6 +129,43 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
                 setCheckoutReference("");
               }}
             />
+            {pullRequestReference || branchSuggestions.length > 0 ? (
+              <div className="mt-1 grid max-h-56 overflow-y-auto">
+                {pullRequestReference ? (
+                  <button
+                    type="button"
+                    className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      onCheckoutPullRequest?.(pullRequestReference);
+                      setCheckoutReference("");
+                    }}
+                  >
+                    <FolderGit2Icon className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 truncate">Pull request {pullRequestReference}</span>
+                  </button>
+                ) : null}
+                {branchSuggestions.map((ref) => (
+                  <button
+                    key={`${ref.remoteName ?? "local"}:${ref.name}`}
+                    type="button"
+                    className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      onCheckoutPullRequest?.(
+                        ref.remoteName ? `${ref.remoteName}/${ref.name}` : ref.name,
+                      );
+                      setCheckoutReference("");
+                    }}
+                  >
+                    <FolderGitIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 truncate">
+                      {ref.remoteName ? `${ref.remoteName}/${ref.name}` : ref.name}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
         ) : null}
         <SelectGroup>

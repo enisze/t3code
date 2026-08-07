@@ -34,6 +34,7 @@ interface PullRequestThreadDialogProps {
   cwd: string | null;
   initialReference: string | null;
   autoSubmitInitialReference?: boolean;
+  headless?: boolean;
   onOpenChange: (open: boolean) => void;
   onPrepared: (input: { branch: string; worktreePath: string | null }) => Promise<boolean>;
 }
@@ -45,6 +46,7 @@ export function PullRequestThreadDialog({
   cwd,
   initialReference,
   autoSubmitInitialReference = false,
+  headless = false,
   onOpenChange,
   onPrepared,
 }: PullRequestThreadDialogProps) {
@@ -177,7 +179,7 @@ export function PullRequestThreadDialog({
     } else {
       const result = await createWorktree({
         environmentId,
-        input: { cwd, refName: resolvedBranch!.name, path: null },
+        input: { cwd, refName: reference.trim(), path: null },
       });
       setIsPreparing(false);
       if (result._tag === "Failure") return;
@@ -226,6 +228,8 @@ export function PullRequestThreadDialog({
         : preparePullRequestThreadAction.error
           ? `Failed to prepare ${terminology.singular} thread.`
           : null);
+
+  if (headless) return null;
 
   return (
     <Dialog
