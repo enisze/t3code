@@ -144,6 +144,7 @@ interface PullRequestInfo extends OpenPrInfo, PullRequestHeadRemoteInfo {
   state: "open" | "closed" | "merged";
   mergeability?: "clean" | "conflicting" | "blocked" | "unknown";
   checks?: "passing" | "failing" | "pending" | "unknown";
+  failedCheckCount?: number;
   updatedAt: Option.Option<DateTime.Utc>;
 }
 
@@ -533,6 +534,7 @@ function toStatusPr(pr: PullRequestInfo): {
   state: "open" | "closed" | "merged";
   mergeability?: "clean" | "conflicting" | "blocked" | "unknown";
   checks?: "passing" | "failing" | "pending" | "unknown";
+  failedCheckCount?: number;
 } {
   return {
     number: pr.number,
@@ -543,6 +545,7 @@ function toStatusPr(pr: PullRequestInfo): {
     state: pr.state,
     ...(pr.mergeability ? { mergeability: pr.mergeability } : {}),
     ...(pr.checks ? { checks: pr.checks } : {}),
+    ...(pr.failedCheckCount !== undefined ? { failedCheckCount: pr.failedCheckCount } : {}),
   };
 }
 

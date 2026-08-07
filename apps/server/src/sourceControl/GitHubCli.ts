@@ -256,6 +256,7 @@ export interface GitHubPullRequestSummary {
   readonly state?: "open" | "closed" | "merged";
   readonly mergeability?: "clean" | "conflicting" | "blocked" | "unknown";
   readonly checks?: "passing" | "failing" | "pending" | "unknown";
+  readonly failedCheckCount?: number;
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
   readonly headRepositoryOwnerLogin?: string | null;

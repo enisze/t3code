@@ -1814,13 +1814,7 @@ export default function GitActionsControl({
           <Button
             variant={gitStatusForActions?.pr?.state === "open" ? "default" : "outline"}
             size="xs"
-            disabled={
-              !gitStatusForActions ||
-              isGitActionRunning ||
-              (gitStatusForActions.pr?.state === "open" &&
-                gitStatusForActions.pr.mergeability !== "conflicting" &&
-                gitStatusForActions.pr.checks === "failing")
-            }
+            disabled={!gitStatusForActions || isGitActionRunning}
             onClick={() => {
               if (!gitStatusForActions) return;
               if (gitStatusForActions.pr?.state === "open") {
@@ -1844,7 +1838,7 @@ export default function GitActionsControl({
                 : gitStatusForActions.pr.mergeability === "conflicting"
                   ? "Solve conflicts"
                   : gitStatusForActions.pr.checks === "failing"
-                    ? "Checks failed"
+                    ? `Merge · ${gitStatusForActions.pr.failedCheckCount ?? 1} ${gitStatusForActions.pr.failedCheckCount === 1 ? "check" : "checks"} failing`
                     : "Merge"
               : "Create PR"}
           </Button>

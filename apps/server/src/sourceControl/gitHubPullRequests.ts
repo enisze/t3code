@@ -16,6 +16,7 @@ export interface NormalizedGitHubPullRequestRecord {
   readonly state: "open" | "closed" | "merged";
   readonly mergeability?: "clean" | "conflicting" | "blocked" | "unknown";
   readonly checks?: "passing" | "failing" | "pending" | "unknown";
+  readonly failedCheckCount?: number;
   readonly updatedAt: Option.Option<DateTime.Utc>;
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
@@ -109,20 +110,23 @@ function normalizeGitHubPullRequestRecord(
         : mergeStateStatus === "BLOCKED" || mergeStateStatus === "UNSTABLE"
           ? "blocked"
           : "unknown";
+  const failingConclusions = new Set([
+    "FAILURE",
+    "CANCELLED",
+    "TIMED_OUT",
+    "ACTION_REQUIRED",
+    "STARTUP_FAILURE",
+  ]);
+  const failedCheckCount = (raw.statusCheckRollup ?? []).filter((check) =>
+    failingConclusions.has(check.conclusion?.toUpperCase() ?? ""),
+  ).length;
   const checks =
     raw.statusCheckRollup == null
       ? undefined
       : (() => {
           const rollup = raw.statusCheckRollup ?? [];
           if (rollup.length === 0) return "passing" as const;
-          const failing = new Set([
-            "FAILURE",
-            "CANCELLED",
-            "TIMED_OUT",
-            "ACTION_REQUIRED",
-            "STARTUP_FAILURE",
-          ]);
-          if (rollup.some((check) => failing.has(check.conclusion?.toUpperCase() ?? ""))) {
+          if (failedCheckCount > 0) {
             return "failing" as const;
           }
           if (
@@ -147,6 +151,7 @@ function normalizeGitHubPullRequestRecord(
     state: normalizeGitHubPullRequestState(raw),
     ...(raw.mergeable != null || raw.mergeStateStatus != null ? { mergeability } : {}),
     ...(checks ? { checks } : {}),
+    ...(raw.statusCheckRollup != null ? { failedCheckCount } : {}),
     updatedAt: raw.updatedAt ?? Option.none(),
     ...(typeof raw.isCrossRepository === "boolean"
       ? { isCrossRepository: raw.isCrossRepository }

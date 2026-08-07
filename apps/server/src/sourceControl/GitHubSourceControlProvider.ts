@@ -31,6 +31,9 @@ function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeReq
     state: summary.state ?? "open",
     ...(summary.mergeability ? { mergeability: summary.mergeability } : {}),
     ...(summary.checks ? { checks: summary.checks } : {}),
+    ...(summary.failedCheckCount !== undefined
+      ? { failedCheckCount: summary.failedCheckCount }
+      : {}),
     updatedAt: Option.none(),
     ...(summary.isCrossRepository !== undefined
       ? { isCrossRepository: summary.isCrossRepository }

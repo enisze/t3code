@@ -99,6 +99,7 @@ describe("GitHubCli.layer", () => {
         state: "open",
         mergeability: "conflicting",
         checks: "failing",
+        failedCheckCount: 1,
         isCrossRepository: true,
         headRepositoryNameWithOwner: "octocat/codething-mvp",
         headRepositoryOwnerLogin: "octocat",

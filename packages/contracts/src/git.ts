@@ -202,6 +202,7 @@ const VcsStatusChangeRequest = Schema.Struct({
   state: VcsStatusChangeRequestState,
   mergeability: Schema.optional(Schema.Literals(["clean", "conflicting", "blocked", "unknown"])),
   checks: Schema.optional(Schema.Literals(["passing", "failing", "pending", "unknown"])),
+  failedCheckCount: Schema.optional(NonNegativeInt),
 });
 
 const VcsStatusLocalShape = {
