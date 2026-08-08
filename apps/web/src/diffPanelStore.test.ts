@@ -24,8 +24,14 @@ describe("diffPanelStore", () => {
     }),
   );
 
-  it("defaults each thread to working tree changes", () => {
-    expect(selectFor()).toEqual({ kind: "unstaged" });
+  it("defaults each thread to the combined working tree changes", () => {
+    expect(selectFor()).toEqual({ kind: "all" });
+  });
+
+  it("selects the combined working tree scope", () => {
+    useDiffPanelStore.getState().selectGitScope(THREAD_REF, THREAD_REF, "all");
+
+    expect(selectFor()).toEqual({ kind: "all" });
   });
 
   it("preserves an explicit scope selection when the working tree state changes", () => {

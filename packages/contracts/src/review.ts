@@ -10,7 +10,11 @@ export const ReviewDiffPreviewInput = Schema.Struct({
 });
 export type ReviewDiffPreviewInput = typeof ReviewDiffPreviewInput.Type;
 
-export const ReviewDiffPreviewSourceKind = Schema.Literals(["working-tree", "branch-range"]);
+export const ReviewDiffPreviewSourceKind = Schema.Literals([
+  "working-tree-all",
+  "working-tree",
+  "branch-range",
+]);
 export type ReviewDiffPreviewSourceKind = typeof ReviewDiffPreviewSourceKind.Type;
 
 export const ReviewDiffPreviewSource = Schema.Struct({

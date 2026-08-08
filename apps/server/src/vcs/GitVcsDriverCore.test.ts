@@ -783,6 +783,8 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           preview.sources.find((source) => source.kind === "branch-range")?.diff ?? "";
         const workingTreeDiff =
           preview.sources.find((source) => source.kind === "working-tree")?.diff ?? "";
+        const allChangesDiff =
+          preview.sources.find((source) => source.kind === "working-tree-all")?.diff ?? "";
 
         assert.include(branchDiff, "committed.txt");
         assert.notInclude(branchDiff, "edited uncommitted");
@@ -791,6 +793,11 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.include(workingTreeDiff, "edited uncommitted");
         assert.include(workingTreeDiff, "untracked.txt");
         assert.notInclude(workingTreeDiff, "committed.txt");
+        // The combined "working tree" view spans committed branch history *and*
+        // uncommitted work: every change since the fork point in one diff.
+        assert.include(allChangesDiff, "committed.txt");
+        assert.include(allChangesDiff, "edited uncommitted");
+        assert.include(allChangesDiff, "untracked.txt");
       }),
     );
   });
