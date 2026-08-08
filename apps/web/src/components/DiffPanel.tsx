@@ -5,7 +5,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
-import type { ScopedThreadRef, TurnId } from "@t3tools/contracts";
+import type { ReviewDiffPreviewSourceKind, ScopedThreadRef, TurnId } from "@t3tools/contracts";
 import {
   ArrowRightIcon,
   CheckIcon,
@@ -24,7 +24,11 @@ import { type DraftId } from "../composerDraftStore";
 import { openDiffFilePrimaryAction } from "../diffFileActions";
 import { useCheckpointDiff } from "~/lib/checkpointDiffState";
 import { cn } from "~/lib/utils";
-import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
+import {
+  type GitScope,
+  selectThreadDiffPanelSelection,
+  useDiffPanelStore,
+} from "../diffPanelStore";
 import { selectViewedSignatures, useDiffViewedStore } from "../diffViewedStore";
 import { useTheme } from "../hooks/useTheme";
 import {
@@ -78,6 +82,20 @@ import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices
 type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
+
+// The dropdown's three git scopes. "Working tree" is the combined view (every
+// change since the fork point, committed *and* uncommitted); "Uncommitted
+// changes" is the local dirty diff; "Branch changes" is the committed range.
+const GIT_SCOPE_LABELS: Record<GitScope, string> = {
+  all: "Working tree",
+  unstaged: "Uncommitted changes",
+  branch: "Branch changes",
+};
+const GIT_SCOPE_SOURCE_KIND: Record<GitScope, ReviewDiffPreviewSourceKind> = {
+  all: "working-tree-all",
+  unstaged: "working-tree",
+  branch: "branch-range",
+};
 
 /**
  * Tracks which files the user has explicitly expanded, keyed by file path so
@@ -354,7 +372,12 @@ export default function DiffPanel({
   }, [currentThreadRef, diffSelection, orderedTurnDiffSummaries]);
 
   const selectedTurnId = diffSelection.kind === "turn" ? diffSelection.turnId : null;
-  const selectedGitScope = diffSelection.kind === "unstaged" ? "unstaged" : "branch";
+  const selectedGitScope: GitScope =
+    diffSelection.kind === "unstaged"
+      ? "unstaged"
+      : diffSelection.kind === "branch"
+        ? "branch"
+        : "all";
   const selectedBaseRef = diffSelection.kind === "branch" ? diffSelection.baseRef : null;
   const selectedFilePath = diffSelection.kind === "turn" ? diffSelection.filePath : null;
   const selectedFileRevealRequestId =
@@ -370,9 +393,7 @@ export default function DiffPanel({
   const latestTurn = orderedTurnDiffSummaries[0];
   const selectedScopeLabel =
     selectedTurnId === null
-      ? selectedGitScope === "unstaged"
-        ? "Working tree"
-        : "Branch changes"
+      ? GIT_SCOPE_LABELS[selectedGitScope]
       : selectedTurn?.turnId === latestTurn?.turnId
         ? "Latest turn"
         : `Turn ${selectedCheckpointTurnCount ?? "?"}`;
@@ -389,9 +410,7 @@ export default function DiffPanel({
   );
   const reviewSectionTitle = selectedTurn
     ? `Turn ${selectedCheckpointTurnCount ?? "?"}`
-    : selectedGitScope === "unstaged"
-      ? "Working tree"
-      : "Branch changes";
+    : GIT_SCOPE_LABELS[selectedGitScope];
   const selectedCheckpointRange = useMemo(
     () =>
       typeof selectedCheckpointTurnCount === "number"
@@ -446,7 +465,7 @@ export default function DiffPanel({
     ? fallbackBranchDiffPreview
     : primaryBranchDiffPreview;
   const selectedGitSource = branchDiffPreview.data?.sources.find(
-    (source) => source.kind === (selectedGitScope === "unstaged" ? "working-tree" : "branch-range"),
+    (source) => source.kind === GIT_SCOPE_SOURCE_KIND[selectedGitScope],
   );
   const localBranchRefs = useEnvironmentQuery(
     selectedTurnId === null &&
@@ -706,7 +725,7 @@ export default function DiffPanel({
     if (!currentThreadRef) return;
     useDiffPanelStore.getState().selectTurn(currentThreadRef, turnId);
   };
-  const selectGitScope = (scope: "branch" | "unstaged") => {
+  const selectGitScope = (scope: GitScope) => {
     if (!workspaceThreadRef || !currentThreadRef) return;
     useDiffPanelStore.getState().selectGitScope(workspaceThreadRef, currentThreadRef, scope);
   };
@@ -759,13 +778,23 @@ export default function DiffPanel({
               <DropdownMenuContent align="start" className="w-60">
                 <DropdownMenuItem
                   className={
+                    selectedTurnId === null && selectedGitScope === "all"
+                      ? "bg-foreground/[0.08]"
+                      : undefined
+                  }
+                  onClick={() => selectGitScope("all")}
+                >
+                  <span>Working tree</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className={
                     selectedTurnId === null && selectedGitScope === "unstaged"
                       ? "bg-foreground/[0.08]"
                       : undefined
                   }
                   onClick={() => selectGitScope("unstaged")}
                 >
-                  <span>Working tree</span>
+                  <span>Uncommitted changes</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   className={
@@ -1099,8 +1128,10 @@ export default function DiffPanel({
                   selectedTurn
                     ? "Loading checkpoint diff..."
                     : selectedGitScope === "unstaged"
-                      ? "Loading working tree diff..."
-                      : "Loading branch diff..."
+                      ? "Loading uncommitted changes diff..."
+                      : selectedGitScope === "branch"
+                        ? "Loading branch diff..."
+                        : "Loading working tree diff..."
                 }
               />
             ) : (

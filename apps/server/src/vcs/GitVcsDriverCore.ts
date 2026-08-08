@@ -2362,6 +2362,43 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         )
       : null;
     const baseDiff = baseTrackedResult?.stdout.trimEnd() ?? "";
+    // The combined "working tree" view: every change since the fork point,
+    // committed branch history *and* uncommitted working-tree edits in one
+    // diff. Diffing the base ref against the working tree (no `HEAD` endpoint)
+    // spans both. With no base ref to fork from, it degrades to the dirty
+    // working-tree diff, which is the most it can meaningfully show.
+    const allTrackedResult = baseDiffRef
+      ? yield* executeGit(
+          "GitVcsDriver.getReviewDiffPreview.all",
+          input.cwd,
+          [
+            "diff",
+            "--patch",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--minimal",
+            ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
+            baseDiffRef,
+            "--",
+          ],
+          {
+            maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
+            appendTruncationMarker: true,
+          },
+        ).pipe(
+          Effect.orElseSucceed(() => ({
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          })),
+        )
+      : dirtyTrackedResult;
+    const allDiff = [allTrackedResult.stdout.trimEnd(), dirtyUntracked.diff.trimEnd()]
+      .filter((diff) => diff.length > 0)
+      .join("\n");
     const hashDiff = (diff: string) =>
       crypto.digest("SHA-256", new TextEncoder().encode(diff)).pipe(
         Effect.map(Encoding.encodeHex),
@@ -2376,12 +2413,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             }),
         ),
       );
-    const [dirtyDiffHash, baseDiffHash] = yield* Effect.all([
+    const [dirtyDiffHash, baseDiffHash, allDiffHash] = yield* Effect.all([
       hashDiff(dirtyDiff),
       hashDiff(baseDiff),
+      hashDiff(allDiff),
     ]);
 
     const sources: ReviewDiffPreviewSource[] = [
+      {
+        id: "working-tree-all",
+        kind: "working-tree-all",
+        title: baseRef ? `All changes vs ${baseRef}` : "All changes",
+        baseRef: baseDiffRef,
+        headRef: null,
+        diff: allDiff,
+        diffHash: allDiffHash,
+        truncated: allTrackedResult.stdoutTruncated || dirtyUntracked.truncated,
+      },
       {
         id: "working-tree",
         kind: "working-tree",
