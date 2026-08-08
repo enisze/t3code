@@ -2272,8 +2272,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     const branch = details.branch;
+    const requestedBaseRef = input.baseRef;
+    const remoteRequestedBaseRef =
+      requestedBaseRef && input.preferRemoteBaseRef
+        ? yield* Effect.gen(function* () {
+            const primaryRemoteName = yield* resolvePrimaryRemoteName(input.cwd).pipe(
+              Effect.orElseSucceed(() => null),
+            );
+            if (!primaryRemoteName || requestedBaseRef.startsWith(`${primaryRemoteName}/`)) {
+              return requestedBaseRef;
+            }
+            return (yield* remoteBranchExists(input.cwd, primaryRemoteName, requestedBaseRef))
+              ? `${primaryRemoteName}/${requestedBaseRef}`
+              : requestedBaseRef;
+          })
+        : requestedBaseRef;
     const baseRef =
-      input.baseRef ??
+      remoteRequestedBaseRef ??
       (branch
         ? yield* resolveBaseBranchForNoUpstream(input.cwd, branch).pipe(
             Effect.orElseSucceed(() => null),

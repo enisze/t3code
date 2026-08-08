@@ -825,16 +825,28 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         yield* git(cwd, ["add", "feature.txt"]);
         yield* git(cwd, ["commit", "-m", "feature commit"]);
 
-        const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
+        const preview = yield* driver.getReviewDiffPreview({
+          cwd,
+          // Change-request providers report an unqualified target branch. The
+          // review diff must still use its remote-tracking copy.
+          baseRef: "main",
+          preferRemoteBaseRef: true,
+          ignoreWhitespace: false,
+        });
         const branchSource = preview.sources.find((source) => source.kind === "branch-range");
+        const workingTreeSource = preview.sources.find(
+          (source) => source.kind === "working-tree-all",
+        );
 
-        // The automatic base is the remote-tracking ref, not the local branch.
+        // The resolved base is the remote-tracking ref, not the local branch.
         assert.equal(branchSource?.baseRef, "origin/main");
         // The branch diff is taken against origin's tip: the commit that only
         // exists on origin/main is part of the base, so it never leaks in as a
         // branch change.
         assert.notInclude(branchSource?.diff ?? "", "on-origin.txt");
         assert.include(branchSource?.diff ?? "", "feature.txt");
+        assert.notInclude(workingTreeSource?.diff ?? "", "on-origin.txt");
+        assert.include(workingTreeSource?.diff ?? "", "feature.txt");
       }),
     );
 

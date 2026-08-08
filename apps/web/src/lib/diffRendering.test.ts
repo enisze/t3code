@@ -114,12 +114,12 @@ describe("buildFileDiffContentSignature", () => {
     const before = filesFrom(patchWith(["-alpha", "+beta"], ["-one", "+two"]));
     const after = filesFrom(patchWith(["-alpha", "+beta"], ["-one", "+three"]));
 
-    // a.ts is unchanged between the two patches; its signature must not move,
-    // even though the whole-patch render key does.
+    // a.ts is unchanged between the two patches, so both its content signature
+    // and virtualized item identity must remain stable.
     expect(buildFileDiffContentSignature(after[0]!)).toBe(
       buildFileDiffContentSignature(before[0]!),
     );
-    expect(buildFileDiffRenderKey(after[0]!)).not.toBe(buildFileDiffRenderKey(before[0]!));
+    expect(buildFileDiffRenderKey(after[0]!)).toBe(buildFileDiffRenderKey(before[0]!));
 
     // b.ts changed, so its signature must move.
     expect(buildFileDiffContentSignature(after[1]!)).not.toBe(
@@ -134,6 +134,7 @@ describe("buildFileDiffContentSignature", () => {
     expect(buildFileDiffContentSignature(after[0]!)).not.toBe(
       buildFileDiffContentSignature(before[0]!),
     );
+    expect(buildFileDiffRenderKey(after[0]!)).toBe(buildFileDiffRenderKey(before[0]!));
   });
 });
 

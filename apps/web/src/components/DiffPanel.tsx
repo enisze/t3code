@@ -49,7 +49,7 @@ import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { DiffNavigatorFileList, type DiffNavigatorFile } from "./chat/ChangedFilesTree";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
-import { AnnotatableCodeView, type AnnotatableCodeViewHandle } from "./diffs/AnnotatableCodeView";
+import { AnnotatableCodeView } from "./diffs/AnnotatableCodeView";
 import { Button } from "./ui/button";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 import { Switch } from "./ui/switch";
@@ -287,8 +287,6 @@ export default function DiffPanel({
   const focusedFilePath = variant === "file" ? (fileDiffPath ?? null) : null;
   // Whether the navigator tree shows folders expanded (defaults to open so the
   // full folder structure is visible, matching the changed-files list).
-  const codeViewRef = useRef<AnnotatableCodeViewHandle>(null);
-
   const routeThreadRef = useParams({
     strict: false,
     select: (params) => resolveThreadRouteRef(params),
@@ -379,9 +377,11 @@ export default function DiffPanel({
         ? "branch"
         : "all";
   const selectedBaseRef = diffSelection.kind === "branch" ? diffSelection.baseRef : null;
-  const selectedFilePath = diffSelection.kind === "turn" ? diffSelection.filePath : null;
-  const selectedFileRevealRequestId =
-    diffSelection.kind === "turn" ? diffSelection.revealRequestId : 0;
+  const openPullRequestBaseRef =
+    gitStatusQuery.data?.pr?.state === "open" ? gitStatusQuery.data.pr.baseRef : null;
+  // Automatic review scopes follow the open change request's actual target.
+  // This matters for stacked branches and PRs retargeted away from the repo default.
+  const effectiveBaseRef = selectedBaseRef ?? openPullRequestBaseRef;
   const selectedTurn =
     selectedTurnId === null
       ? undefined
@@ -401,12 +401,21 @@ export default function DiffPanel({
   const collapseScopeKey = workspaceThreadRef
     ? `${workspaceThreadRef.environmentId}:${workspaceThreadRef.threadId}:${reviewSectionId}`
     : null;
+  const viewedScopeId =
+    selectedTurn !== undefined
+      ? reviewSectionId
+      : selectedGitScope === "unstaged"
+        ? "unstaged"
+        : "branch-and-working-tree";
+  const viewedScopeKey = workspaceThreadRef
+    ? `${workspaceThreadRef.environmentId}:${workspaceThreadRef.threadId}:${viewedScopeId}`
+    : null;
   const expandedDiffFilePaths =
     expandedDiffFiles.scopeKey === collapseScopeKey
       ? expandedDiffFiles.filePaths
       : EMPTY_EXPANDED_DIFF_FILE_PATHS;
   const viewedSignatures = useDiffViewedStore((state) =>
-    selectViewedSignatures(state.viewedByScope, collapseScopeKey),
+    selectViewedSignatures(state.viewedByScope, viewedScopeKey),
   );
   const reviewSectionTitle = selectedTurn
     ? `Turn ${selectedCheckpointTurnCount ?? "?"}`
@@ -438,7 +447,10 @@ export default function DiffPanel({
           environmentId: workspaceThread.environmentId,
           input: {
             cwd: activeCwd,
-            ...(selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
+            ...(effectiveBaseRef ? { baseRef: effectiveBaseRef } : {}),
+            ...(openPullRequestBaseRef && selectedBaseRef === null
+              ? { preferRemoteBaseRef: true }
+              : {}),
             ignoreWhitespace: diffIgnoreWhitespace,
           },
         })
@@ -455,7 +467,10 @@ export default function DiffPanel({
           environmentId: workspaceThread.environmentId,
           input: {
             cwd: serverConfig.cwd,
-            ...(selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
+            ...(effectiveBaseRef ? { baseRef: effectiveBaseRef } : {}),
+            ...(openPullRequestBaseRef && selectedBaseRef === null
+              ? { preferRemoteBaseRef: true }
+              : {}),
             ignoreWhitespace: diffIgnoreWhitespace,
           },
         })
@@ -543,12 +558,41 @@ export default function DiffPanel({
       }),
     );
   }, [renderablePatch]);
+  const sharedGitViewedSignatures = useMemo(() => {
+    if (selectedTurn !== undefined || selectedGitScope === "unstaged") return null;
+    const signaturesByKind = new Map<ReviewDiffPreviewSourceKind, Map<string, string>>();
+    for (const kind of ["branch-range", "working-tree-all"] as const) {
+      const source = branchDiffPreview.data?.sources.find((candidate) => candidate.kind === kind);
+      const patch = source ? getRenderablePatch(source.diff, `diff-viewed:${kind}`) : null;
+      signaturesByKind.set(
+        kind,
+        new Map(
+          patch?.kind === "files"
+            ? patch.files.map((file) => [
+                resolveFileDiffPath(file),
+                buildFileDiffContentSignature(file),
+              ])
+            : [],
+        ),
+      );
+    }
+    const branchSignatures = signaturesByKind.get("branch-range")!;
+    const workingTreeSignatures = signaturesByKind.get("working-tree-all")!;
+    const paths = new Set([...branchSignatures.keys(), ...workingTreeSignatures.keys()]);
+    return new Map(
+      [...paths].map((path) => [
+        path,
+        `${branchSignatures.get(path) ?? ""}:${workingTreeSignatures.get(path) ?? ""}`,
+      ]),
+    );
+  }, [branchDiffPreview.data?.sources, selectedGitScope, selectedTurn]);
   const codeViewFiles = useMemo(
     () =>
       renderableFiles.map((fileDiff) => {
         const fileKey = buildFileDiffRenderKey(fileDiff);
         const filePath = resolveFileDiffPath(fileDiff);
         const signature = buildFileDiffContentSignature(fileDiff);
+        const viewedSignature = sharedGitViewedSignatures?.get(filePath) ?? signature;
         return {
           fileDiff,
           filePath,
@@ -556,19 +600,20 @@ export default function DiffPanel({
           signature,
           // Viewed only counts while the file's content is unchanged since it
           // was marked; an edit clears the mark ("the check is gone").
-          viewed: viewedSignatures[filePath] === signature,
+          viewed: viewedSignatures[filePath] === viewedSignature,
+          viewedSignature,
           // Files default to collapsed; only explicit expansion opens them.
           collapsed: !expandedDiffFilePaths.has(filePath),
         };
       }),
-    [expandedDiffFilePaths, renderableFiles, viewedSignatures],
+    [expandedDiffFilePaths, renderableFiles, sharedGitViewedSignatures, viewedSignatures],
   );
   const viewedFileKeySet = useMemo(
     () => new Set(codeViewFiles.filter((file) => file.viewed).map((file) => file.fileKey)),
     [codeViewFiles],
   );
   const signatureByFilePath = useMemo(
-    () => new Map(codeViewFiles.map((file) => [file.filePath, file.signature])),
+    () => new Map(codeViewFiles.map((file) => [file.filePath, file.viewedSignature])),
     [codeViewFiles],
   );
   const focusedFile = useMemo(
@@ -605,13 +650,6 @@ export default function DiffPanel({
       };
     });
   }, [codeViewFiles, gitStatusQuery.data?.workingTree.files, selectedTurnId]);
-
-  useEffect(() => {
-    if (!selectedFilePath) return;
-    const file = codeViewFiles.find((candidate) => candidate.filePath === selectedFilePath);
-    if (!file) return;
-    codeViewRef.current?.scrollTo({ type: "item", id: file.fileKey, align: "start" });
-  }, [codeViewFiles, selectedFilePath, selectedFileRevealRequestId]);
 
   const openDiffFile = useCallback(
     (filePath: string) => {
@@ -682,11 +720,11 @@ export default function DiffPanel({
 
   const toggleFileViewed = useCallback(
     (filePath: string) => {
-      if (!collapseScopeKey) return;
+      if (!viewedScopeKey) return;
       const signature = signatureByFilePath.get(filePath);
       if (signature === undefined) return;
       const nowViewed = viewedSignatures[filePath] !== signature;
-      useDiffViewedStore.getState().setFileViewed(collapseScopeKey, filePath, signature, nowViewed);
+      useDiffViewedStore.getState().setFileViewed(viewedScopeKey, filePath, signature, nowViewed);
       // Collapse a file when it is marked viewed, and expand it when unmarked.
       setDiffFileExpanded(filePath, !nowViewed);
       // After marking a file viewed, jump to the next still-unviewed file so a
@@ -711,10 +749,10 @@ export default function DiffPanel({
     },
     [
       codeViewFiles,
-      collapseScopeKey,
       onOpenFileDiff,
       setDiffFileExpanded,
       signatureByFilePath,
+      viewedScopeKey,
       viewedSignatures,
     ],
   );
@@ -1168,7 +1206,6 @@ export default function DiffPanel({
               <>
                 <div className="min-h-0 flex-1">
                   <AnnotatableCodeView
-                    viewerRef={codeViewRef}
                     key={`${collapseScopeKey ?? reviewSectionId}:${focusedFilePath ?? "all"}`}
                     className="diff-render-surface h-full min-h-0 overflow-auto"
                     files={displayedCodeViewFiles}
