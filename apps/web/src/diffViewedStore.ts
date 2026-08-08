@@ -10,6 +10,10 @@ interface DiffViewedStoreState {
   /** Maps a diff scope key to the files marked viewed (path -> content signature). */
   viewedByScope: Record<string, ViewedSignatures>;
   setFileViewed: (scopeKey: string, filePath: string, signature: string, viewed: boolean) => void;
+  reconcileViewedSignatures: (
+    scopeKey: string,
+    currentSignatures: ReadonlyMap<string, string>,
+  ) => void;
   clearScope: (scopeKey: string) => void;
 }
 
@@ -34,6 +38,18 @@ export const useDiffViewedStore = create<DiffViewedStoreState>()(
           if (!(filePath in current)) return state;
           const { [filePath]: _removed, ...rest } = current;
           return { viewedByScope: { ...state.viewedByScope, [scopeKey]: rest } };
+        }),
+      reconcileViewedSignatures: (scopeKey, currentSignatures) =>
+        set((state) => {
+          const current = state.viewedByScope[scopeKey];
+          if (!current) return state;
+          const valid = Object.fromEntries(
+            Object.entries(current).filter(
+              ([filePath, signature]) => currentSignatures.get(filePath) === signature,
+            ),
+          );
+          if (Object.keys(valid).length === Object.keys(current).length) return state;
+          return { viewedByScope: { ...state.viewedByScope, [scopeKey]: valid } };
         }),
       clearScope: (scopeKey) =>
         set((state) => {

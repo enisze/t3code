@@ -64,4 +64,22 @@ describe("diffViewedStore", () => {
   it("returns an empty signature map for a null scope", () => {
     expect(selectViewedSignatures({}, null)).toEqual({});
   });
+
+  it("removes a viewed mark when the file's current signature changes", () => {
+    const store = useDiffViewedStore.getState();
+    store.setFileViewed(SCOPE, "changed.ts", "sig-before", true);
+    store.setFileViewed(SCOPE, "same.ts", "sig-same", true);
+
+    store.reconcileViewedSignatures(
+      SCOPE,
+      new Map([
+        ["changed.ts", "sig-after"],
+        ["same.ts", "sig-same"],
+      ]),
+    );
+
+    expect(selectViewedSignatures(useDiffViewedStore.getState().viewedByScope, SCOPE)).toEqual({
+      "same.ts": "sig-same",
+    });
+  });
 });
