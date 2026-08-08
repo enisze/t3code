@@ -8,14 +8,20 @@ import { resolveStorage } from "./lib/storage";
 export type DiffPanelSelection =
   | { kind: "branch"; baseRef: string | null }
   | { kind: "unstaged" }
+  | { kind: "all" }
   | { kind: "turn"; turnId: TurnId; filePath: string | null; revealRequestId: number };
 
+/** Which git-scope entries can back the shared working-tree/branch view. */
+export type GitScope = "all" | "unstaged" | "branch";
+
 /** The working-tree / branch view — shared across a worktree's chats. */
-type GitScopeSelection = Extract<DiffPanelSelection, { kind: "branch" | "unstaged" }>;
+type GitScopeSelection = Extract<DiffPanelSelection, { kind: "branch" | "unstaged" | "all" }>;
 /** A checkpoint (turn) view — belongs to a single conversation. */
 type TurnSelection = Extract<DiffPanelSelection, { kind: "turn" }>;
 
-const DEFAULT_SELECTION: DiffPanelSelection = { kind: "unstaged" };
+// The combined working-tree view (every change since the fork point, committed
+// and uncommitted) is the default the panel lands on.
+const DEFAULT_SELECTION: DiffPanelSelection = { kind: "all" };
 
 interface DiffPanelStoreState {
   // Working-tree / branch selection is part of the shared per-worktree
@@ -29,11 +35,7 @@ interface DiffPanelStoreState {
   turnByThreadKey: Record<string, TurnSelection>;
   // `sharedRef` owns the shared git-scope; `chatRef` is the current chat whose
   // per-chat turn selection is dropped when it switches back to a git scope.
-  selectGitScope: (
-    sharedRef: ScopedThreadRef,
-    chatRef: ScopedThreadRef,
-    scope: "branch" | "unstaged",
-  ) => void;
+  selectGitScope: (sharedRef: ScopedThreadRef, chatRef: ScopedThreadRef, scope: GitScope) => void;
   selectBranchBaseRef: (
     sharedRef: ScopedThreadRef,
     chatRef: ScopedThreadRef,
@@ -75,7 +77,9 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
               [sharedKey]:
                 scope === "branch"
                   ? { kind: "branch", baseRef: previousBaseRef }
-                  : { kind: "unstaged" },
+                  : scope === "unstaged"
+                    ? { kind: "unstaged" }
+                    : { kind: "all" },
             },
             // Picking a git scope leaves the turn view for this chat.
             turnByThreadKey: withoutKey(state.turnByThreadKey, chatKey),
@@ -164,7 +168,11 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
         };
         const gitScopeByThreadKey: Record<string, GitScopeSelection> = {};
         for (const [key, selection] of Object.entries(legacy.byThreadKey ?? {})) {
-          if (selection.kind === "branch" || selection.kind === "unstaged") {
+          if (
+            selection.kind === "branch" ||
+            selection.kind === "unstaged" ||
+            selection.kind === "all"
+          ) {
             gitScopeByThreadKey[key] = selection;
           }
         }

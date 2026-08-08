@@ -1484,35 +1484,42 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     );
     const defaultBranch =
       primaryRemoteName === null ? null : yield* resolveDefaultBranchName(cwd, primaryRemoteName);
-    const candidates = [
+    // Ordered by the spec: the PR base (what this branch merges into) wins, then
+    // the repository's default branch (the branch it was most likely taken
+    // from), then the conventional names.
+    const remotePrefix =
+      primaryRemoteName && primaryRemoteName !== "origin" ? `${primaryRemoteName}/` : null;
+    const normalizedCandidates = [
       configuredBaseBranch.length > 0 ? configuredBaseBranch : null,
       defaultBranch,
       ...DEFAULT_BASE_BRANCH_CANDIDATES,
-    ];
-
-    for (const candidate of candidates) {
-      if (!candidate) {
-        continue;
-      }
-
-      const remotePrefix =
-        primaryRemoteName && primaryRemoteName !== "origin" ? `${primaryRemoteName}/` : null;
-      const normalizedCandidate = candidate.startsWith("origin/")
+    ].flatMap((candidate) => {
+      if (!candidate) return [];
+      const normalized = candidate.startsWith("origin/")
         ? candidate.slice("origin/".length)
         : remotePrefix && candidate.startsWith(remotePrefix)
           ? candidate.slice(remotePrefix.length)
           : candidate;
-      if (normalizedCandidate.length === 0 || normalizedCandidate === refName) {
-        continue;
-      }
+      if (normalized.length === 0 || normalized === refName) return [];
+      return [normalized];
+    });
 
-      if (
-        primaryRemoteName &&
-        (yield* remoteBranchExists(cwd, primaryRemoteName, normalizedCandidate))
-      ) {
-        return `${primaryRemoteName}/${normalizedCandidate}`;
+    // Always diff against origin: try every candidate as a remote-tracking ref
+    // first, so an earlier candidate that only exists locally never shadows a
+    // later one that is published on the remote. A stale local branch is never
+    // preferred over the remote it tracks.
+    if (primaryRemoteName) {
+      for (const normalizedCandidate of normalizedCandidates) {
+        if (yield* remoteBranchExists(cwd, primaryRemoteName, normalizedCandidate)) {
+          return `${primaryRemoteName}/${normalizedCandidate}`;
+        }
       }
+    }
 
+    // Fall back to a local branch only when no remote-tracking base exists (a
+    // remoteless repo, or a base that has never been pushed) so the branch diff
+    // still works instead of collapsing to nothing.
+    for (const normalizedCandidate of normalizedCandidates) {
       if (yield* branchExists(cwd, normalizedCandidate)) {
         return normalizedCandidate;
       }
@@ -2362,6 +2369,43 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         )
       : null;
     const baseDiff = baseTrackedResult?.stdout.trimEnd() ?? "";
+    // The combined "working tree" view: every change since the fork point,
+    // committed branch history *and* uncommitted working-tree edits in one
+    // diff. Diffing the base ref against the working tree (no `HEAD` endpoint)
+    // spans both. With no base ref to fork from, it degrades to the dirty
+    // working-tree diff, which is the most it can meaningfully show.
+    const allTrackedResult = baseDiffRef
+      ? yield* executeGit(
+          "GitVcsDriver.getReviewDiffPreview.all",
+          input.cwd,
+          [
+            "diff",
+            "--patch",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--minimal",
+            ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
+            baseDiffRef,
+            "--",
+          ],
+          {
+            maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
+            appendTruncationMarker: true,
+          },
+        ).pipe(
+          Effect.orElseSucceed(() => ({
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          })),
+        )
+      : dirtyTrackedResult;
+    const allDiff = [allTrackedResult.stdout.trimEnd(), dirtyUntracked.diff.trimEnd()]
+      .filter((diff) => diff.length > 0)
+      .join("\n");
     const hashDiff = (diff: string) =>
       crypto.digest("SHA-256", new TextEncoder().encode(diff)).pipe(
         Effect.map(Encoding.encodeHex),
@@ -2376,12 +2420,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             }),
         ),
       );
-    const [dirtyDiffHash, baseDiffHash] = yield* Effect.all([
+    const [dirtyDiffHash, baseDiffHash, allDiffHash] = yield* Effect.all([
       hashDiff(dirtyDiff),
       hashDiff(baseDiff),
+      hashDiff(allDiff),
     ]);
 
     const sources: ReviewDiffPreviewSource[] = [
+      {
+        id: "working-tree-all",
+        kind: "working-tree-all",
+        title: baseRef ? `All changes vs ${baseRef}` : "All changes",
+        baseRef: baseDiffRef,
+        headRef: null,
+        diff: allDiff,
+        diffHash: allDiffHash,
+        truncated: allTrackedResult.stdoutTruncated || dirtyUntracked.truncated,
+      },
       {
         id: "working-tree",
         kind: "working-tree",
