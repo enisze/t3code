@@ -636,6 +636,13 @@ export default function DiffPanel({
     () => new Map(codeViewFiles.map((file) => [file.filePath, file.viewedSignature])),
     [codeViewFiles],
   );
+  const currentViewedSignatures = sharedGitViewedSignatures ?? signatureByFilePath;
+  useEffect(() => {
+    if (!viewedScopeKey || !hasResolvedPatch) return;
+    useDiffViewedStore
+      .getState()
+      .reconcileViewedSignatures(viewedScopeKey, currentViewedSignatures);
+  }, [currentViewedSignatures, hasResolvedPatch, viewedScopeKey]);
   const focusedFile = useMemo(
     () =>
       focusedFilePath

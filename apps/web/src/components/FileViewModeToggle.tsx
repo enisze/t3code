@@ -15,8 +15,8 @@ export function FileViewModeToggle(props: {
   const { view, onChange } = props;
   return (
     <ToggleGroup
-      className="shrink-0"
-      variant="outline"
+      className="shrink-0 gap-0 rounded-lg border border-border/70 bg-muted/35 p-0.5"
+      variant="ghost"
       size="xs"
       value={[view === "file" ? "edit" : "diff"]}
       onValueChange={(value) => {
@@ -28,7 +28,11 @@ export function FileViewModeToggle(props: {
       <Tooltip>
         <TooltipTrigger
           render={
-            <Toggle aria-label="View diff" value="diff">
+            <Toggle
+              aria-label="View diff"
+              className="h-6 min-w-0 rounded-md px-2.5 text-xs data-pressed:bg-background/80"
+              value="diff"
+            >
               Diff
             </Toggle>
           }
@@ -38,7 +42,11 @@ export function FileViewModeToggle(props: {
       <Tooltip>
         <TooltipTrigger
           render={
-            <Toggle aria-label="Edit file" value="edit">
+            <Toggle
+              aria-label="Edit file"
+              className="h-6 min-w-0 rounded-md px-2.5 text-xs data-pressed:bg-background/80"
+              value="edit"
+            >
               Edit
             </Toggle>
           }
