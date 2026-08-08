@@ -1205,9 +1205,11 @@ export default function DiffPanel({
             focusedFile ? (
               <>
                 <div className="min-h-0 flex-1">
+                  {/* CodeView measures wrapped rows after rendering. Disable native scroll
+                      anchoring so it does not compete with Pierre's viewport correction. */}
                   <AnnotatableCodeView
                     key={`${collapseScopeKey ?? reviewSectionId}:${focusedFilePath ?? "all"}`}
-                    className="diff-render-surface h-full min-h-0 overflow-auto"
+                    className="diff-render-surface h-full min-h-0 overflow-auto [overflow-anchor:none]"
                     files={displayedCodeViewFiles}
                     sectionId={reviewSectionId}
                     sectionTitle={reviewSectionTitle}
