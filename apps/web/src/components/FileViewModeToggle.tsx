@@ -1,11 +1,9 @@
-import { EyeIcon, PencilIcon } from "lucide-react";
-
 import type { WorkspaceContentTabView } from "../workspaceContentTabsStore";
 import { Toggle, ToggleGroup } from "./ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 /**
- * Segmented toggle for the single file viewer: "View" shows the file's diff,
+ * Segmented toggle for the single file viewer: "Diff" shows the file's diff,
  * "Edit" shows its editable contents. Rendered inside each viewer's own header
  * (DiffPanel / FilePreviewPanel) so the control stays in one place regardless
  * of which view is active.
@@ -20,19 +18,18 @@ export function FileViewModeToggle(props: {
       className="shrink-0"
       variant="outline"
       size="xs"
-      value={[view === "file" ? "edit" : "view"]}
+      value={[view === "file" ? "edit" : "diff"]}
       onValueChange={(value) => {
         const next = value[0];
-        if (next === "view") onChange("diff");
+        if (next === "diff") onChange("diff");
         else if (next === "edit") onChange("file");
       }}
     >
       <Tooltip>
         <TooltipTrigger
           render={
-            <Toggle aria-label="View diff" value="view">
-              <EyeIcon className="size-3" />
-              View
+            <Toggle aria-label="View diff" value="diff">
+              Diff
             </Toggle>
           }
         />
@@ -42,7 +39,6 @@ export function FileViewModeToggle(props: {
         <TooltipTrigger
           render={
             <Toggle aria-label="Edit file" value="edit">
-              <PencilIcon className="size-3" />
               Edit
             </Toggle>
           }
