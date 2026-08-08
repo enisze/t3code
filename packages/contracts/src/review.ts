@@ -6,6 +6,8 @@ import { VcsError } from "./vcs.ts";
 export const ReviewDiffPreviewInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   baseRef: Schema.optional(TrimmedNonEmptyString),
+  /** Prefer the primary remote's copy when `baseRef` is an unqualified branch name. */
+  preferRemoteBaseRef: Schema.optionalKey(Schema.Boolean),
   ignoreWhitespace: Schema.optionalKey(Schema.Boolean),
 });
 export type ReviewDiffPreviewInput = typeof ReviewDiffPreviewInput.Type;
