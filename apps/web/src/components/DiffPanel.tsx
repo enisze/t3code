@@ -1281,14 +1281,12 @@ export default function DiffPanel({
                       themeType: resolvedTheme as DiffThemeType,
                       unsafeCSS: DIFF_PANEL_UNSAFE_CSS,
                       stickyHeaders: true,
-                      // Wrapped rows cannot be estimated from source-line count. Render a
-                      // bounded chunk around the viewport so Pierre can measure their real
-                      // heights and extend the scroll range through the final file. Merely
-                      // inflating lineHeight still cuts off lines that wrap more than the
-                      // guessed average. Scroll mode keeps CodeView's minimal chunk size.
+                      // Keep Pierre's virtual window fine-grained even for wrapped rows.
+                      // Larger chunks leave the rendered content stationary until scrolling
+                      // crosses a chunk boundary, then visibly jump to catch up.
                       itemMetrics: {
                         diffHeaderHeight: 33,
-                        hunkLineCount: wordWrap ? 50 : 1,
+                        hunkLineCount: 1,
                         lineHeight: 20,
                       },
                       layout: { paddingTop: 0, paddingBottom: 8, gap: 8 },
