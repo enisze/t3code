@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
+  activateWorkspaceChat,
   selectWorktreeContentTabs,
   useWorkspaceContentTabsStore,
   worktreeContentTabsKey,
@@ -61,6 +62,15 @@ describe("workspaceContentTabsStore", () => {
     useWorkspaceContentTabsStore.getState().activateChat(KEY);
     expect(tabs().activeTabId).toBeNull();
     expect(tabs().tabs).toHaveLength(1);
+  });
+
+  it("reveals the chat when a new thread starts from an active file diff", () => {
+    useWorkspaceContentTabsStore.getState().openFileDiff(KEY, "a.ts");
+
+    activateWorkspaceChat({ environmentId: "env-1", worktreePath: "/worktree" });
+
+    expect(tabs().activeTabId).toBeNull();
+    expect(tabs().tabs).toEqual([{ id: "a.ts", filePath: "a.ts", view: "diff" }]);
   });
 
   it("opens a browser preview tab and activates it", () => {
