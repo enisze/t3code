@@ -43,6 +43,17 @@ export function worktreeContentTabsKey(
   return worktreePath ? `${environmentId}:${worktreePath}` : null;
 }
 
+export function activateWorkspaceChat(
+  input: {
+    environmentId: string;
+    worktreePath: string | null;
+  } | null,
+): void {
+  if (!input) return;
+  const worktreeKey = worktreeContentTabsKey(input.environmentId, input.worktreePath);
+  if (worktreeKey) useWorkspaceContentTabsStore.getState().activateChat(worktreeKey);
+}
+
 interface WorktreeContentTabsState {
   /** At most one file/diff viewer tab, plus any number of preview tabs. */
   tabs: WorkspaceContentTab[];

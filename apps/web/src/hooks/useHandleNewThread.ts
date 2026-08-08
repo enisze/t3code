@@ -31,6 +31,7 @@ import { primaryServerSettingsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
+import { activateWorkspaceChat } from "../workspaceContentTabsStore";
 
 interface NewThreadOptions {
   branch?: string | null;
@@ -90,6 +91,10 @@ export function useNewThreadHandler() {
           : null;
       const carrySourceDraft =
         currentRouteTarget?.kind === "draft" ? getDraftSession(currentRouteTarget.draftId) : null;
+      // A file/diff tab can remain active over the current route. New Chat must
+      // reveal the conversation even when the destination is an already-open
+      // reusable draft and navigation intentionally becomes a no-op.
+      activateWorkspaceChat(carrySourceShell ?? carrySourceDraft);
       // Composer overrides win over the persisted thread state — they are
       // what the user currently sees in the composer controls.
       const carrySourceComposer = currentRouteTarget
