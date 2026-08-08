@@ -1484,35 +1484,42 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     );
     const defaultBranch =
       primaryRemoteName === null ? null : yield* resolveDefaultBranchName(cwd, primaryRemoteName);
-    const candidates = [
+    // Ordered by the spec: the PR base (what this branch merges into) wins, then
+    // the repository's default branch (the branch it was most likely taken
+    // from), then the conventional names.
+    const remotePrefix =
+      primaryRemoteName && primaryRemoteName !== "origin" ? `${primaryRemoteName}/` : null;
+    const normalizedCandidates = [
       configuredBaseBranch.length > 0 ? configuredBaseBranch : null,
       defaultBranch,
       ...DEFAULT_BASE_BRANCH_CANDIDATES,
-    ];
-
-    for (const candidate of candidates) {
-      if (!candidate) {
-        continue;
-      }
-
-      const remotePrefix =
-        primaryRemoteName && primaryRemoteName !== "origin" ? `${primaryRemoteName}/` : null;
-      const normalizedCandidate = candidate.startsWith("origin/")
+    ].flatMap((candidate) => {
+      if (!candidate) return [];
+      const normalized = candidate.startsWith("origin/")
         ? candidate.slice("origin/".length)
         : remotePrefix && candidate.startsWith(remotePrefix)
           ? candidate.slice(remotePrefix.length)
           : candidate;
-      if (normalizedCandidate.length === 0 || normalizedCandidate === refName) {
-        continue;
-      }
+      if (normalized.length === 0 || normalized === refName) return [];
+      return [normalized];
+    });
 
-      if (
-        primaryRemoteName &&
-        (yield* remoteBranchExists(cwd, primaryRemoteName, normalizedCandidate))
-      ) {
-        return `${primaryRemoteName}/${normalizedCandidate}`;
+    // Always diff against origin: try every candidate as a remote-tracking ref
+    // first, so an earlier candidate that only exists locally never shadows a
+    // later one that is published on the remote. A stale local branch is never
+    // preferred over the remote it tracks.
+    if (primaryRemoteName) {
+      for (const normalizedCandidate of normalizedCandidates) {
+        if (yield* remoteBranchExists(cwd, primaryRemoteName, normalizedCandidate)) {
+          return `${primaryRemoteName}/${normalizedCandidate}`;
+        }
       }
+    }
 
+    // Fall back to a local branch only when no remote-tracking base exists (a
+    // remoteless repo, or a base that has never been pushed) so the branch diff
+    // still works instead of collapsing to nothing.
+    for (const normalizedCandidate of normalizedCandidates) {
       if (yield* branchExists(cwd, normalizedCandidate)) {
         return normalizedCandidate;
       }

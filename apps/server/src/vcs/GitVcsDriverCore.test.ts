@@ -800,6 +800,71 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.include(allChangesDiff, "untracked.txt");
       }),
     );
+
+    it.effect("compares against the origin base branch, never a stale local copy", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const origin = yield* makeTmpDir("git-vcs-driver-origin-");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["init", "--bare", origin]);
+        yield* git(cwd, ["branch", "-M", "main"]);
+        yield* git(cwd, ["remote", "add", "origin", origin]);
+        yield* git(cwd, ["push", "origin", "main"]);
+        yield* git(cwd, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]);
+        // Advance origin/main one commit ahead of the local `main`, so the local
+        // branch is a stale copy of the base.
+        yield* writeTextFile(cwd, "on-origin.txt", "on origin\n");
+        yield* git(cwd, ["add", "on-origin.txt"]);
+        yield* git(cwd, ["commit", "-m", "commit only on origin main"]);
+        yield* git(cwd, ["push", "origin", "main"]);
+        yield* git(cwd, ["reset", "--hard", "HEAD~1"]);
+        // Work happens on a feature branch forked from the stale local main.
+        yield* git(cwd, ["checkout", "-b", "feature/work"]);
+        yield* writeTextFile(cwd, "feature.txt", "feature\n");
+        yield* git(cwd, ["add", "feature.txt"]);
+        yield* git(cwd, ["commit", "-m", "feature commit"]);
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
+        const branchSource = preview.sources.find((source) => source.kind === "branch-range");
+
+        // The automatic base is the remote-tracking ref, not the local branch.
+        assert.equal(branchSource?.baseRef, "origin/main");
+        // The branch diff is taken against origin's tip: the commit that only
+        // exists on origin/main is part of the base, so it never leaks in as a
+        // branch change.
+        assert.notInclude(branchSource?.diff ?? "", "on-origin.txt");
+        assert.include(branchSource?.diff ?? "", "feature.txt");
+      }),
+    );
+
+    it.effect("skips a local-only base candidate in favor of the origin default", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const origin = yield* makeTmpDir("git-vcs-driver-origin-");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["init", "--bare", origin]);
+        yield* git(cwd, ["branch", "-M", "main"]);
+        yield* git(cwd, ["remote", "add", "origin", origin]);
+        yield* git(cwd, ["push", "origin", "main"]);
+        yield* git(cwd, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]);
+        // A base branch that only ever existed locally — it was never published,
+        // so it cannot be an "against origin" comparison target.
+        yield* git(cwd, ["branch", "local-only-base"]);
+        yield* git(cwd, ["checkout", "-b", "feature/work"]);
+        // Point the recorded PR base at the local-only branch.
+        yield* git(cwd, ["config", "branch.feature/work.gh-merge-base", "local-only-base"]);
+        yield* writeTextFile(cwd, "feature.txt", "feature\n");
+        yield* git(cwd, ["add", "feature.txt"]);
+        yield* git(cwd, ["commit", "-m", "feature commit"]);
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
+        const branchSource = preview.sources.find((source) => source.kind === "branch-range");
+
+        assert.equal(branchSource?.baseRef, "origin/main");
+      }),
+    );
   });
 
   describe("repository status", () => {
