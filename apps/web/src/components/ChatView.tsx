@@ -2413,7 +2413,15 @@ function ChatViewContent(props: ChatViewProps) {
   const draftHeroDockRequested =
     activeThreadKey !== null && dockedDraftHeroThreadKey === activeThreadKey;
   const isDraftHeroState =
-    isLocalDraftThread && timelineEntries.length === 0 && !isWorking && !draftHeroDockRequested;
+    isLocalDraftThread &&
+    timelineEntries.length === 0 &&
+    !isWorking &&
+    !draftHeroDockRequested &&
+    // A file/diff/preview content tab fills the chat column as an overlay that
+    // reserves space for the composer via its measured height. The hero
+    // composer is `absolute inset-0`, so its height would collapse the file
+    // content to nothing — dock the composer instead so the tab stays visible.
+    !activeContentTab;
   const [
     attachDraftHeroTransitionGroupRef,
     attachDraftHeroComposerAnchorRef,
