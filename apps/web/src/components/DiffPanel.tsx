@@ -479,6 +479,26 @@ export default function DiffPanel({
   const branchDiffPreview = shouldRetryBranchDiffAtEnvironmentCwd
     ? fallbackBranchDiffPreview
     : primaryBranchDiffPreview;
+  const latestCompletedTurnMarker = latestTurn
+    ? `${latestTurn.turnId}:${latestTurn.completedAt}`
+    : null;
+  const refreshBranchDiffPreview = branchDiffPreview.refresh;
+  const refreshGitStatus = gitStatusQuery.refresh;
+  const refreshedTurnMarkerRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      latestCompletedTurnMarker === null ||
+      refreshedTurnMarkerRef.current === latestCompletedTurnMarker
+    ) {
+      return;
+    }
+    refreshedTurnMarkerRef.current = latestCompletedTurnMarker;
+    // The query atom is shared and cached by cwd/base. A completed turn changes
+    // the filesystem without changing that key, so explicitly replace the stale
+    // branch/working-tree snapshot with one that includes the turn's local work.
+    refreshBranchDiffPreview();
+    refreshGitStatus();
+  }, [latestCompletedTurnMarker, refreshBranchDiffPreview, refreshGitStatus]);
   const selectedGitSource = branchDiffPreview.data?.sources.find(
     (source) => source.kind === GIT_SCOPE_SOURCE_KIND[selectedGitScope],
   );
