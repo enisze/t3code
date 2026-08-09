@@ -287,6 +287,7 @@ import {
   deriveLockedProvider,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
+  resolveTimelineComposerLayout,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   shouldAutoCreateWorktreeThread,
@@ -2425,6 +2426,10 @@ function ChatViewContent(props: ChatViewProps) {
     // composer is `absolute inset-0`, so its height would collapse the file
     // content to nothing — dock the composer instead so the tab stays visible.
     !activeContentTab;
+  const timelineComposerLayout = resolveTimelineComposerLayout({
+    isDraftHeroState,
+    composerHeight: composerOverlayHeight,
+  });
   const [
     attachDraftHeroTransitionGroupRef,
     attachDraftHeroComposerAnchorRef,
@@ -3715,11 +3720,11 @@ function ChatViewContent(props: ChatViewProps) {
       return getAnchoredTurnMetrics({
         state,
         anchorIndex,
-        composerOverlayHeight,
+        composerOverlayHeight: timelineComposerLayout.contentInsetEndAdjustment,
         anchorOffset: CHAT_LIST_ANCHOR_OFFSET,
       });
     },
-    [composerOverlayHeight],
+    [timelineComposerLayout.contentInsetEndAdjustment],
   );
   const timelineRealContentOverflowsViewport = useCallback(
     (list?: LegendListRef | null) => {
@@ -3744,11 +3749,13 @@ function ChatViewContent(props: ChatViewProps) {
       const realContentBottom = lastRowTop + Math.max(1, lastRowHeight);
       const visibleScrollLength = Math.max(
         0,
-        (state.scrollLength ?? 0) - composerOverlayHeight - CHAT_LIST_ANCHOR_OFFSET,
+        (state.scrollLength ?? 0) -
+          timelineComposerLayout.contentInsetEndAdjustment -
+          CHAT_LIST_ANCHOR_OFFSET,
       );
       return realContentBottom > visibleScrollLength;
     },
-    [composerOverlayHeight],
+    [timelineComposerLayout.contentInsetEndAdjustment],
   );
 
   // Live-follow stays active after send/thread-open until an actual list scroll
@@ -6300,7 +6307,10 @@ function ChatViewContent(props: ChatViewProps) {
               />
             </div>
             {/* Messages Wrapper */}
-            <div className="relative flex min-h-0 flex-1 flex-col">
+            <div
+              className="relative flex min-h-0 flex-1 flex-col"
+              style={{ paddingBottom: timelineComposerLayout.viewportPaddingBottom }}
+            >
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
                 key={activeThread.id}
@@ -6331,7 +6341,7 @@ function ChatViewContent(props: ChatViewProps) {
                 anchorMessageId={timelineAnchorMessageId}
                 onAnchorReady={onTimelineAnchorReady}
                 onAnchorSizeChanged={onTimelineAnchorSizeChanged}
-                contentInsetEndAdjustment={composerOverlayHeight}
+                contentInsetEndAdjustment={timelineComposerLayout.contentInsetEndAdjustment}
                 onIsAtEndChange={onIsAtEndChange}
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}

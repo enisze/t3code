@@ -32,13 +32,13 @@ import {
 import { selectViewedSignatures, useDiffViewedStore } from "../diffViewedStore";
 import { useTheme } from "../hooks/useTheme";
 import {
-  buildFileDiffContentSignature,
   buildFileDiffRenderKey,
   getDiffCollapseIconClassName,
   getDiffLineStat,
   getRenderablePatch,
   resolveFileDiffPath,
 } from "../lib/diffRendering";
+import { buildDiffViewedSignature } from "../lib/diffViewedSignature";
 import { useDiffThemeName } from "../hooks/useDiffThemeName";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useProject, useThread } from "../state/entities";
@@ -596,10 +596,7 @@ export default function DiffPanel({
         kind,
         new Map(
           patch?.kind === "files"
-            ? patch.files.map((file) => [
-                resolveFileDiffPath(file),
-                buildFileDiffContentSignature(file),
-              ])
+            ? patch.files.map((file) => [resolveFileDiffPath(file), buildDiffViewedSignature(file)])
             : [],
         ),
       );
@@ -619,7 +616,7 @@ export default function DiffPanel({
       renderableFiles.map((fileDiff) => {
         const fileKey = buildFileDiffRenderKey(fileDiff);
         const filePath = resolveFileDiffPath(fileDiff);
-        const signature = buildFileDiffContentSignature(fileDiff);
+        const signature = buildDiffViewedSignature(fileDiff);
         const viewedSignature = sharedGitViewedSignatures?.get(filePath) ?? signature;
         return {
           fileDiff,
