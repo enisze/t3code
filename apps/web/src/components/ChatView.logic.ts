@@ -28,6 +28,14 @@ export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
+export function canCreateEmptyWorktreeThread(input: {
+  hasSendableContent: boolean;
+  isLocalDraftThread: boolean;
+  envMode: DraftThreadEnvMode;
+}): boolean {
+  return !input.hasSendableContent && input.isLocalDraftThread && input.envMode === "worktree";
+}
+
 export function startNewThreadForProject(
   projectRef: ScopedProjectRef | null,
   handleNewThread: (projectRef: ScopedProjectRef) => Promise<void>,

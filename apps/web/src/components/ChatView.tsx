@@ -270,6 +270,7 @@ import {
   buildLocalDraftThread,
   buildLoadingThreadFromShell,
   buildThreadTurnInterruptInput,
+  canCreateEmptyWorktreeThread,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
@@ -1191,6 +1192,7 @@ function ChatViewContent(props: ChatViewProps) {
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
   const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
+  const createWorktree = useAtomCommand(vcsEnvironment.createWorktree, { reportFailure: false });
   const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
@@ -4730,7 +4732,7 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
     const sendCtx = composerRef.current?.getSendContext();
-    if (!sendCtx?.providerAvailable) return;
+    if (!sendCtx) return;
     const {
       images: composerImages,
       documents: composerDocuments,
@@ -4760,6 +4762,92 @@ function ChatViewContent(props: ChatViewProps) {
         composerPreviewAnnotations.length +
         composerReviewComments.length,
     });
+    const shouldCreateEmptyWorktreeThread = canCreateEmptyWorktreeThread({
+      hasSendableContent,
+      isLocalDraftThread,
+      envMode: sendEnvMode,
+    });
+    if (shouldCreateEmptyWorktreeThread) {
+      if (!activeProject) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Choose a project first",
+            description: "This draft no longer points to an available project.",
+          }),
+        );
+        return;
+      }
+      if (!activeThreadBranch) {
+        setThreadError(activeThread.id, "Select a base branch before creating the worktree.");
+        return;
+      }
+
+      sendInFlightRef.current = true;
+      beginLocalDispatch({ preparingWorktree: !activeThread.worktreePath });
+      setThreadError(activeThread.id, null);
+
+      let worktreePath = activeThread.worktreePath;
+      let threadBranch = activeThreadBranch;
+      let failure: AtomCommandResult<unknown, unknown> | null = null;
+      if (!worktreePath) {
+        const worktreeResult = await createWorktree({
+          environmentId,
+          input: {
+            cwd: activeProject.workspaceRoot,
+            refName: activeThreadBranch,
+            newRefName: buildTemporaryWorktreeBranchName(
+              randomHex,
+              activeProject.worktreeBranchPrefix ?? settings.worktreeBranchPrefix,
+            ),
+            baseRefName: activeThreadBranch,
+            path: null,
+          },
+        });
+        if (worktreeResult._tag === "Failure") {
+          failure = worktreeResult;
+        } else {
+          worktreePath = worktreeResult.value.worktree.path;
+          threadBranch = worktreeResult.value.worktree.refName;
+        }
+      }
+
+      if (failure === null && worktreePath) {
+        const createdAt = activeThread.createdAt;
+        const modelSelection = createModelSelection(
+          ctxSelectedModelSelection.instanceId,
+          ctxSelectedModel || activeProject.defaultModelSelection?.model || DEFAULT_MODEL,
+          ctxSelectedModelSelection.options,
+        );
+        const createResult = await createThread({
+          environmentId,
+          input: {
+            threadId: activeThread.id,
+            projectId: activeProject.id,
+            title: "New thread",
+            modelSelection,
+            runtimeMode,
+            interactionMode,
+            branch: threadBranch,
+            worktreePath,
+            createdAt,
+          },
+        });
+        if (createResult._tag === "Failure") failure = createResult;
+      }
+
+      if (failure !== null && !isAtomCommandInterrupted(failure)) {
+        const error = squashAtomCommandFailure(failure);
+        setThreadError(
+          activeThread.id,
+          error instanceof Error ? error.message : "Failed to create worktree thread.",
+        );
+      }
+      sendInFlightRef.current = false;
+      resetLocalDispatch();
+      return;
+    }
+    if (!sendCtx.providerAvailable) return;
     if (showPlanFollowUpPrompt && activeProposedPlan) {
       const followUp = resolvePlanFollowUpSubmission({
         draftText: trimmed,
@@ -6293,6 +6381,9 @@ function ChatViewContent(props: ChatViewProps) {
                             activeThread={activeThread}
                             isServerThread={isServerThread}
                             isLocalDraftThread={isLocalDraftThread}
+                            canCreateEmptyWorktreeThread={
+                              isLocalDraftThread && envMode === "worktree"
+                            }
                             forceExpandedOnMobile={forceExpandedMobileComposer && isDraftHeroState}
                             projectSelectionRequired={isLocalDraftThread && activeProject === null}
                             phase={phase}
