@@ -18,6 +18,22 @@ export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // Visible sidebar rows are prewarmed into the thread-detail cache so opening a
 // nearby thread usually reuses an already-hot subscription.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 10;
+
+/**
+ * Dedicated worktrees may be checked out to another branch from inside a chat.
+ * Their live Git ref is authoritative for presentation; local-checkout threads
+ * keep their recorded branch so the existing branch-mismatch flow can restore it.
+ */
+export function resolveSidebarThreadBranch(input: {
+  worktreePath: string | null;
+  threadBranch: string | null;
+  currentGitBranch: string | null;
+}): string | null {
+  return input.worktreePath !== null
+    ? (input.currentGitBranch ?? input.threadBranch)
+    : input.threadBranch;
+}
+
 type SidebarProject = {
   id: string;
   title: string;

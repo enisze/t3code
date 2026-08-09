@@ -21,8 +21,9 @@ import {
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
   resolveSidebarStageBadgeLabel,
-  resolveThreadRowClassName,
+  resolveSidebarThreadBranch,
   resolveSidebarV2Status,
+  resolveThreadRowClassName,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   formatWorkingDurationLabel,
@@ -51,6 +52,38 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("resolveSidebarThreadBranch", () => {
+  it("shows the branch currently checked out in a dedicated worktree", () => {
+    expect(
+      resolveSidebarThreadBranch({
+        worktreePath: "/repo/.worktrees/feature-next",
+        threadBranch: "feature/previous",
+        currentGitBranch: "feature/next",
+      }),
+    ).toBe("feature/next");
+  });
+
+  it("keeps the recorded branch for a local-checkout thread", () => {
+    expect(
+      resolveSidebarThreadBranch({
+        worktreePath: null,
+        threadBranch: "feature/thread",
+        currentGitBranch: "feature/local-checkout",
+      }),
+    ).toBe("feature/thread");
+  });
+
+  it("falls back to the recorded branch while worktree status is unavailable", () => {
+    expect(
+      resolveSidebarThreadBranch({
+        worktreePath: "/repo/.worktrees/feature",
+        threadBranch: "feature/thread",
+        currentGitBranch: null,
+      }),
+    ).toBe("feature/thread");
+  });
+});
 
 describe("shouldNavigateAfterProjectRemoval", () => {
   const projectThreads = [{ environmentId: "environment-local", id: "thread-1" }];
