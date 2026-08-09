@@ -73,9 +73,9 @@ import {
   rewriteMarkdownFileUriHref,
   type MarkdownFileLinkMeta,
 } from "../markdown-links";
+import { openMarkdownFilePrimaryAction } from "../markdownFileActions";
 import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
-import { useRightPanelStore } from "../rightPanelStore";
 import { useWorkspaceThreadRef } from "../lib/workspaceThreadRef";
 import { useActiveEnvironmentId } from "../state/entities";
 import { serverEnvironment } from "../state/server";
@@ -1112,12 +1112,14 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   // panel, so resolve the thread to its worktree representative first.
   const workspaceThreadRef = useWorkspaceThreadRef(threadRef);
   const handleOpenInFilePreview = useCallback(() => {
-    if (!workspaceThreadRef || !workspaceRelativePath) {
-      handleOpenInEditor();
-      return;
-    }
-    useRightPanelStore.getState().openFile(workspaceThreadRef, workspaceRelativePath, line);
-  }, [handleOpenInEditor, line, workspaceThreadRef, workspaceRelativePath]);
+    openMarkdownFilePrimaryAction({
+      threadRef: workspaceThreadRef ?? undefined,
+      workspaceRelativePath,
+      targetPath,
+      line,
+      openInEditor: handleOpenInEditor,
+    });
+  }, [handleOpenInEditor, line, targetPath, workspaceThreadRef, workspaceRelativePath]);
 
   const handleOpenInBrowser = useCallback(() => {
     if (!onOpenInBrowser) {
@@ -1253,10 +1255,6 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
-              if (onOpenInBrowser) {
-                handleOpenInBrowser();
-                return;
-              }
               handleOpenInFilePreview();
             }}
             onContextMenu={handleContextMenu}
