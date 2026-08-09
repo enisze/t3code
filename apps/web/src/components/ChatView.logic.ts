@@ -36,6 +36,20 @@ export function canCreateEmptyWorktreeThread(input: {
   return !input.hasSendableContent && input.isLocalDraftThread && input.envMode === "worktree";
 }
 
+export function shouldAutoCreateWorktreeThread(input: {
+  isLocalDraftThread: boolean;
+  envMode: DraftThreadEnvMode;
+  hasProject: boolean;
+  branch: string | null;
+}): boolean {
+  return (
+    input.isLocalDraftThread &&
+    input.envMode === "worktree" &&
+    input.hasProject &&
+    input.branch !== null
+  );
+}
+
 export function startNewThreadForProject(
   projectRef: ScopedProjectRef | null,
   handleNewThread: (projectRef: ScopedProjectRef) => Promise<void>,

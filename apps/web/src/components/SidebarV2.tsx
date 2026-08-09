@@ -138,6 +138,7 @@ import {
   mergeWorktreeSiblingRunningStatus,
   orderItemsByPreferredIds,
   resolveAdjacentThreadId,
+  resolveSidebarThreadBranch,
   resolveSidebarV2Status,
   resolveWorkingStartedAt,
   resolveWorktreeActiveThread,
@@ -236,6 +237,7 @@ function WorkingDuration(props: { startedAt: string | null }) {
 
 function SidebarV2ThreadTooltip({
   thread,
+  displayedBranch,
   projectTitle,
   projectCwd,
   environmentLabel,
@@ -245,6 +247,7 @@ function SidebarV2ThreadTooltip({
   branchMismatch,
 }: {
   thread: SidebarThreadSummary;
+  displayedBranch: string | null;
   projectTitle: string | null;
   projectCwd: string | null;
   environmentLabel: string | null;
@@ -285,10 +288,10 @@ function SidebarV2ThreadTooltip({
               <div className="min-w-0 truncate text-foreground/75">{environmentLabel}</div>
             </div>
           ) : null}
-          {thread.branch ? (
+          {displayedBranch ? (
             <div className="flex min-w-0 items-center gap-2">
               <GitBranchIcon className="size-3 shrink-0 stroke-muted-foreground" />
-              <div className="min-w-0 truncate text-foreground/75">{thread.branch}</div>
+              <div className="min-w-0 truncate text-foreground/75">{displayedBranch}</div>
             </div>
           ) : null}
           {branchMismatch ? (
@@ -523,8 +526,13 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     activeThreadBranch: thread.branch,
     currentGitBranch: gitStatus.data?.refName ?? null,
   });
-  const pr = resolveThreadPr({
+  const displayedBranch = resolveSidebarThreadBranch({
+    worktreePath: thread.worktreePath,
     threadBranch: thread.branch,
+    currentGitBranch: gitStatus.data?.refName ?? null,
+  });
+  const pr = resolveThreadPr({
+    threadBranch: displayedBranch,
     gitStatus: gitStatus.data,
   });
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
@@ -551,6 +559,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   const detailsTooltip = (
     <SidebarV2ThreadTooltip
       thread={thread}
+      displayedBranch={displayedBranch}
       projectTitle={props.projectTitle}
       projectCwd={props.projectCwd}
       environmentLabel={props.environmentLabel}
@@ -940,8 +949,8 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
             </div>
             <div className="mt-1 flex min-w-0">{title}</div>
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground/75">
-              {thread.branch ? (
-                <span className="min-w-0 flex-1 truncate whitespace-nowrap">{thread.branch}</span>
+              {displayedBranch ? (
+                <span className="min-w-0 flex-1 truncate whitespace-nowrap">{displayedBranch}</span>
               ) : (
                 <span className="flex-1" />
               )}
