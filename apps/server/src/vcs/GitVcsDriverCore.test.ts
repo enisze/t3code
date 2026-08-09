@@ -703,6 +703,30 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("review diff previews", () => {
+    it.effect("includes omitted source lines only when expandable context is requested", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const original = Array.from({ length: 40 }, (_, index) => `line ${index + 1}`).join("\n");
+        yield* writeTextFile(cwd, "context.txt", `${original}\n`);
+        yield* git(cwd, ["add", "context.txt"]);
+        yield* git(cwd, ["commit", "-m", "add context fixture"]);
+        const changed = original.replace("line 2", "line two changed");
+        yield* writeTextFile(cwd, "context.txt", `${changed}\n`);
+
+        const compact = yield* driver.getReviewDiffPreview({ cwd });
+        const expandable = yield* driver.getReviewDiffPreview({ cwd, fullContext: true });
+        const compactDiff = compact.sources.find((source) => source.kind === "working-tree")?.diff;
+        const expandableDiff = expandable.sources.find(
+          (source) => source.kind === "working-tree",
+        )?.diff;
+
+        assert.notInclude(compactDiff ?? "", "line 40");
+        assert.include(expandableDiff ?? "", "line 40");
+      }),
+    );
+
     it.effect("drops an unterminated path from truncated NUL-separated git output", () =>
       Effect.sync(() => {
         const paths = splitNullSeparatedGitStdoutPaths({

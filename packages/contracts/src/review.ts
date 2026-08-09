@@ -9,6 +9,8 @@ export const ReviewDiffPreviewInput = Schema.Struct({
   /** Prefer the primary remote's copy when `baseRef` is an unqualified branch name. */
   preferRemoteBaseRef: Schema.optionalKey(Schema.Boolean),
   ignoreWhitespace: Schema.optionalKey(Schema.Boolean),
+  /** Include complete changed-file contents so omitted regions can be expanded client-side. */
+  fullContext: Schema.optionalKey(Schema.Boolean),
 });
 export type ReviewDiffPreviewInput = typeof ReviewDiffPreviewInput.Type;
 

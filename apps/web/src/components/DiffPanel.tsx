@@ -452,6 +452,9 @@ export default function DiffPanel({
               ? { preferRemoteBaseRef: true }
               : {}),
             ignoreWhitespace: diffIgnoreWhitespace,
+            ...(focusedFilePath !== null || expandedDiffFilePaths.size > 0
+              ? { fullContext: true }
+              : {}),
           },
         })
       : null,
@@ -472,6 +475,9 @@ export default function DiffPanel({
               ? { preferRemoteBaseRef: true }
               : {}),
             ignoreWhitespace: diffIgnoreWhitespace,
+            ...(focusedFilePath !== null || expandedDiffFilePaths.size > 0
+              ? { fullContext: true }
+              : {}),
           },
         })
       : null,
@@ -564,8 +570,10 @@ export default function DiffPanel({
     () =>
       getRenderablePatch(selectedPatch, `diff-panel:${resolvedTheme}`, {
         compactPartialHunkOffsets: selectedTurnId === null,
+        expandableFullContext:
+          selectedTurnId === null && (focusedFilePath !== null || expandedDiffFilePaths.size > 0),
       }),
-    [resolvedTheme, selectedPatch, selectedTurnId],
+    [expandedDiffFilePaths.size, focusedFilePath, resolvedTheme, selectedPatch, selectedTurnId],
   );
   const renderableFiles = useMemo(() => {
     if (!renderablePatch || renderablePatch.kind !== "files") {
@@ -1308,6 +1316,7 @@ export default function DiffPanel({
                       themeType: resolvedTheme as DiffThemeType,
                       unsafeCSS: DIFF_PANEL_UNSAFE_CSS,
                       stickyHeaders: true,
+                      hunkSeparators: "line-info",
                       // Keep Pierre's virtual window fine-grained even for wrapped rows.
                       // Larger chunks leave the rendered content stationary until scrolling
                       // crosses a chunk boundary, then visibly jump to catch up.

@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
+import { parseDiffFromFile } from "@pierre/diffs";
 import {
   buildFileDiffContentSignature,
   buildFileDiffRenderKey,
   buildPatchCacheKey,
   getDiffLineStat,
   getRenderablePatch,
+  makeFullContextPatchExpandable,
 } from "./diffRendering";
 
 describe("buildPatchCacheKey", () => {
@@ -37,6 +39,25 @@ describe("buildPatchCacheKey", () => {
 });
 
 describe("getRenderablePatch", () => {
+  it("rebuilds full-context patches with independently expandable gaps", () => {
+    const lines = Array.from({ length: 30 }, (_, index) => `line ${index + 1}\n`);
+    const before = lines.join("");
+    const afterLines = [...lines];
+    afterLines[2] = "changed near top\n";
+    afterLines[26] = "changed near bottom\n";
+    const full = makeFullContextPatchExpandable(
+      parseDiffFromFile(
+        { name: "example.ts", contents: before },
+        { name: "example.ts", contents: afterLines.join("") },
+        { context: Number.MAX_SAFE_INTEGER },
+      ),
+    );
+
+    expect(full.isPartial).toBe(false);
+    expect(full.hunks).toHaveLength(2);
+    expect(full.hunks[1]?.collapsedBefore).toBeGreaterThan(0);
+  });
+
   it("compacts partial hunk render offsets for virtualized review diffs", () => {
     const patch = [
       "diff --git a/example.ts b/example.ts",
