@@ -17,6 +17,7 @@ import {
   type EnvironmentId,
   type FilesystemBrowseResult,
   type ProjectId,
+  type ProjectEntry,
   type SourceControlDiscoveryResult,
   type SourceControlProviderKind,
   type SourceControlRepositoryInfo,
@@ -31,6 +32,7 @@ import {
   ArchiveRestoreIcon,
   CornerLeftUpIcon,
   FolderIcon,
+  FileIcon,
   FolderPlusIcon,
   LinkIcon,
   MessageSquareIcon,
@@ -82,6 +84,8 @@ import {
 import { onOpenCommandPalette } from "../commandPaletteBus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { useWorkspaceThreadRef } from "../lib/workspaceThreadRef";
+import { useWorkspaceContentTabsStore, worktreeContentTabsKey } from "../workspaceContentTabsStore";
+import { useRightPanelStore } from "../rightPanelStore";
 import { getLatestThreadForProject, sortThreads } from "../lib/threadSort";
 import { cn, isMacPlatform, isWindowsPlatform, newProjectId } from "../lib/utils";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -345,7 +349,7 @@ function errorMessage(error: unknown): string {
 }
 
 interface CommandPaletteOpenIntent {
-  readonly kind: "add-project" | "new-thread-in";
+  readonly kind: "add-project" | "new-thread-in" | "file";
 }
 
 interface CommandPaletteUiState {
@@ -358,6 +362,7 @@ type CommandPaletteUiAction =
   | { readonly _tag: "Toggle" }
   | { readonly _tag: "OpenAddProject" }
   | { readonly _tag: "OpenNewThreadIn" }
+  | { readonly _tag: "OpenFile" }
   | { readonly _tag: "ClearOpenIntent" };
 
 function reduceCommandPaletteUiState(
@@ -376,6 +381,8 @@ function reduceCommandPaletteUiState(
       return { open: true, openIntent: { kind: "add-project" } };
     case "OpenNewThreadIn":
       return { open: true, openIntent: { kind: "new-thread-in" } };
+    case "OpenFile":
+      return { open: true, openIntent: { kind: "file" } };
     case "ClearOpenIntent":
       return state.openIntent ? { ...state, openIntent: null } : state;
   }
@@ -390,6 +397,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   const toggleOpen = useCallback(() => dispatch({ _tag: "Toggle" }), []);
   const openAddProject = useCallback(() => dispatch({ _tag: "OpenAddProject" }), []);
   const openNewThreadIn = useCallback(() => dispatch({ _tag: "OpenNewThreadIn" }), []);
+  const openFile = useCallback(() => dispatch({ _tag: "OpenFile" }), []);
   const clearOpenIntent = useCallback(() => dispatch({ _tag: "ClearOpenIntent" }), []);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const composerHandleRef = useRef<ChatComposerHandle | null>(null);
@@ -415,16 +423,15 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           terminalOpen,
         },
       });
-      if (command !== "commandPalette.toggle") {
-        return;
-      }
+      if (command !== "commandPalette.toggle" && command !== "file.open") return;
       event.preventDefault();
       event.stopPropagation();
-      toggleOpen();
+      if (command === "file.open") openFile();
+      else toggleOpen();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [keybindings, terminalOpen, toggleOpen]);
+  }, [keybindings, openFile, terminalOpen, toggleOpen]);
 
   useEffect(
     () =>
@@ -433,11 +440,13 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           openNewThreadIn();
         } else if (detail.open === "add-project") {
           openAddProject();
+        } else if (detail.open === "file") {
+          openFile();
         } else {
           setOpen(true);
         }
       }),
-    [openAddProject, openNewThreadIn, setOpen],
+    [openAddProject, openFile, openNewThreadIn, setOpen],
   );
 
   return (
@@ -735,6 +744,53 @@ function OpenCommandPaletteDialog(props: {
   const currentProjectCwd = currentProjectId
     ? (projectCwdById.get(currentProjectId) ?? null)
     : null;
+  const activeWorkspaceThreadRef = useWorkspaceThreadRef(
+    activeThread
+      ? scopeThreadRef(activeThread.environmentId, activeThread.id)
+      : activeDraftThread
+        ? scopeThreadRef(activeDraftThread.environmentId, activeDraftThread.threadId)
+        : null,
+  );
+  const activeWorktreePath = activeThread?.worktreePath ?? activeDraftThread?.worktreePath ?? null;
+  const projectEntriesQuery = useEnvironmentQuery(
+    currentProjectEnvironmentId && currentProjectCwd
+      ? projectEnvironment.listEntries({
+          environmentId: currentProjectEnvironmentId,
+          input: { cwd: activeWorktreePath ?? currentProjectCwd },
+        })
+      : null,
+  );
+  const searchableProjectFiles = useMemo(
+    () =>
+      (projectEntriesQuery.data?.entries ?? []).filter(
+        (entry): entry is ProjectEntry & { readonly kind: "file" } => entry.kind === "file",
+      ),
+    [projectEntriesQuery.data?.entries],
+  );
+  const quickOpenFileItems = useMemo<CommandPaletteActionItem[]>(() => {
+    if (!currentProjectEnvironmentId || !activeWorkspaceThreadRef) return [];
+    const worktreeKey = worktreeContentTabsKey(currentProjectEnvironmentId, activeWorktreePath);
+    return searchableProjectFiles.map((entry) => ({
+      kind: "action",
+      value: `file:${entry.path}`,
+      title: entry.path.split("/").at(-1) ?? entry.path,
+      description: entry.path,
+      searchTerms: [entry.path],
+      icon: <FileIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        if (worktreeKey) {
+          useWorkspaceContentTabsStore.getState().openFile(worktreeKey, entry.path);
+        } else {
+          useRightPanelStore.getState().openFile(activeWorkspaceThreadRef, entry.path);
+        }
+      },
+    }));
+  }, [
+    activeWorkspaceThreadRef,
+    activeWorktreePath,
+    currentProjectEnvironmentId,
+    searchableProjectFiles,
+  ]);
   const currentProjectCwdForBrowse =
     browseEnvironmentId && currentProjectEnvironmentId === browseEnvironmentId
       ? currentProjectCwd
@@ -1341,7 +1397,51 @@ function OpenCommandPaletteDialog(props: {
     pushPaletteView,
   ]);
 
+  useLayoutEffect(() => {
+    if (openIntent?.kind !== "file" || projectEntriesQuery.isPending) return;
+    clearOpenIntent();
+    browseNavigation.invalidate();
+    setViewStack([]);
+    setQuery("");
+    pushPaletteView({
+      addonIcon: <FileIcon className={ADDON_ICON_CLASS} />,
+      groups: [
+        {
+          value: "files",
+          label: "Files",
+          items: quickOpenFileItems,
+        },
+      ],
+    });
+  }, [
+    browseNavigation,
+    clearOpenIntent,
+    openIntent,
+    projectEntriesQuery.isPending,
+    pushPaletteView,
+    quickOpenFileItems,
+  ]);
+
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
+
+  if (currentProjectId && activeWorkspaceThreadRef) {
+    actionItems.push({
+      kind: "submenu",
+      value: "action:open-file",
+      searchTerms: ["open file", "quick open", "search files"],
+      title: "Open file",
+      icon: <FileIcon className={ITEM_ICON_CLASS} />,
+      addonIcon: <FileIcon className={ADDON_ICON_CLASS} />,
+      shortcutCommand: "file.open",
+      groups: [
+        {
+          value: "files",
+          label: "Files",
+          items: quickOpenFileItems,
+        },
+      ],
+    });
+  }
 
   if (projects.length > 0) {
     const activeProjectTitle =

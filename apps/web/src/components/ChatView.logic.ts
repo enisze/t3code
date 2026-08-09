@@ -28,6 +28,19 @@ export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
+export function resolveTimelineComposerLayout(input: {
+  isDraftHeroState: boolean;
+  composerHeight: number;
+}): {
+  viewportPaddingBottom: number;
+  contentInsetEndAdjustment: number;
+} {
+  const composerHeight = Math.max(0, input.composerHeight);
+  return input.isDraftHeroState
+    ? { viewportPaddingBottom: 0, contentInsetEndAdjustment: composerHeight }
+    : { viewportPaddingBottom: composerHeight, contentInsetEndAdjustment: 0 };
+}
+
 export function canCreateEmptyWorktreeThread(input: {
   hasSendableContent: boolean;
   isLocalDraftThread: boolean;

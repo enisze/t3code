@@ -25,6 +25,7 @@ import {
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  resolveTimelineComposerLayout,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   shouldAutoCreateWorktreeThread,
@@ -37,6 +38,28 @@ const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+
+describe("resolveTimelineComposerLayout", () => {
+  it("reserves viewport space for the docked composer", () => {
+    expect(resolveTimelineComposerLayout({ isDraftHeroState: false, composerHeight: 144 })).toEqual(
+      { viewportPaddingBottom: 144, contentInsetEndAdjustment: 0 },
+    );
+  });
+
+  it("keeps the draft hero overlaid and accounts for it in scroll calculations", () => {
+    expect(resolveTimelineComposerLayout({ isDraftHeroState: true, composerHeight: 144 })).toEqual({
+      viewportPaddingBottom: 0,
+      contentInsetEndAdjustment: 144,
+    });
+  });
+
+  it("clamps an unmeasured negative height", () => {
+    expect(resolveTimelineComposerLayout({ isDraftHeroState: false, composerHeight: -1 })).toEqual({
+      viewportPaddingBottom: 0,
+      contentInsetEndAdjustment: 0,
+    });
+  });
+});
 
 describe("canCreateEmptyWorktreeThread", () => {
   it("allows an empty local draft in worktree mode", () => {
