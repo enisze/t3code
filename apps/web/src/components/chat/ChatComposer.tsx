@@ -431,6 +431,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   isConnecting: boolean;
   isEnvironmentUnavailable: boolean;
   hasSendableContent: boolean;
+  createsEmptyWorktree: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
@@ -459,6 +460,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         isEnvironmentUnavailable={props.isEnvironmentUnavailable}
         isPreparingWorktree={props.isPreparingWorktree}
         hasSendableContent={props.hasSendableContent}
+        createsEmptyWorktree={props.createsEmptyWorktree}
         preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
@@ -529,6 +531,7 @@ export interface ChatComposerProps {
   activeThread: Thread | undefined;
   isServerThread: boolean;
   isLocalDraftThread: boolean;
+  canCreateEmptyWorktreeThread: boolean;
   forceExpandedOnMobile: boolean;
   projectSelectionRequired: boolean;
 
@@ -643,6 +646,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThread,
     isServerThread: _isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
+    canCreateEmptyWorktreeThread,
     forceExpandedOnMobile,
     projectSelectionRequired,
     phase,
@@ -1259,11 +1263,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isSendBusy ||
     isSendDisabled ||
     isConnecting ||
-    noProviderAvailable ||
+    (noProviderAvailable && !canCreateEmptyWorktreeThread) ||
     projectSelectionRequired ||
     environmentUnavailable !== null ||
-    !composerSendState.hasSendableContent;
-  const collapsedComposerPrimaryActionLabel = "Send message";
+    (!composerSendState.hasSendableContent && !canCreateEmptyWorktreeThread);
+  const collapsedComposerPrimaryActionLabel = composerSendState.hasSendableContent
+    ? "Send message"
+    : "Create worktree";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -1818,7 +1824,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       isSendBusy ||
       isSendDisabled ||
       isConnecting ||
-      noProviderAvailable ||
+      (noProviderAvailable && !canCreateEmptyWorktreeThread) ||
       environmentUnavailable !== null ||
       phase === "running"
     ) {
@@ -1827,10 +1833,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (activePendingProgress) {
       return activePendingProgress.isLastQuestion && Boolean(activePendingResolvedAnswers);
     }
-    return showPlanFollowUpPrompt || composerSendState.hasSendableContent;
+    return (
+      showPlanFollowUpPrompt || composerSendState.hasSendableContent || canCreateEmptyWorktreeThread
+    );
   }, [
     activePendingProgress,
     activePendingResolvedAnswers,
+    canCreateEmptyWorktreeThread,
     composerSendState.hasSendableContent,
     environmentUnavailable,
     isConnecting,
@@ -1844,7 +1853,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }) => {
-      if (noProviderAvailable || isSendDisabled) {
+      if ((noProviderAvailable && !canCreateEmptyWorktreeThread) || isSendDisabled) {
         event?.preventDefault();
         return;
       }
@@ -1855,6 +1864,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
     [
       blurMobileComposerAfterSend,
+      canCreateEmptyWorktreeThread,
       isSendDisabled,
       noProviderAvailable,
       onSend,
@@ -2847,6 +2857,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       }
                       isPreparingWorktree={false}
                       hasSendableContent={false}
+                      createsEmptyWorktree={false}
                       preserveComposerFocusOnPointerDown
                       onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                       onInterrupt={handleInterruptPrimaryAction}
@@ -3158,6 +3169,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     }
                     isPreparingWorktree={false}
                     hasSendableContent={false}
+                    createsEmptyWorktree={false}
                     preserveComposerFocusOnPointerDown
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryAction}
@@ -3312,11 +3324,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   isConnecting={isConnecting}
                   isEnvironmentUnavailable={
                     environmentUnavailable !== null ||
-                    noProviderAvailable ||
+                    (noProviderAvailable &&
+                      (composerSendState.hasSendableContent || !canCreateEmptyWorktreeThread)) ||
                     projectSelectionRequired
                   }
                   isPreparingWorktree={isPreparingWorktree}
-                  hasSendableContent={composerSendState.hasSendableContent}
+                  hasSendableContent={
+                    composerSendState.hasSendableContent || canCreateEmptyWorktreeThread
+                  }
+                  createsEmptyWorktree={
+                    canCreateEmptyWorktreeThread && !composerSendState.hasSendableContent
+                  }
                   preserveComposerFocusOnPointerDown={isMobileViewport}
                   onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                   onInterrupt={handleInterruptPrimaryAction}

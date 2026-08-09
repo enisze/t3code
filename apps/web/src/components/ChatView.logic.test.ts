@@ -16,6 +16,7 @@ import {
   buildExpiredTerminalContextToastCopy,
   buildLoadingThreadFromShell,
   buildThreadTurnInterruptInput,
+  canCreateEmptyWorktreeThread,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   dismissBranchMismatchForSession,
@@ -35,6 +36,26 @@ const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+
+describe("canCreateEmptyWorktreeThread", () => {
+  it("allows an empty local draft in worktree mode", () => {
+    expect(
+      canCreateEmptyWorktreeThread({
+        hasSendableContent: false,
+        isLocalDraftThread: true,
+        envMode: "worktree",
+      }),
+    ).toBe(true);
+  });
+
+  it.each([
+    { hasSendableContent: true, isLocalDraftThread: true, envMode: "worktree" as const },
+    { hasSendableContent: false, isLocalDraftThread: false, envMode: "worktree" as const },
+    { hasSendableContent: false, isLocalDraftThread: true, envMode: "local" as const },
+  ])("rejects non-empty, server, and local-mode submissions", (input) => {
+    expect(canCreateEmptyWorktreeThread(input)).toBe(false);
+  });
+});
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
