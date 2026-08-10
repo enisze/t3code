@@ -70,6 +70,26 @@ function trimOptionalString(value: string | null | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+/**
+ * Map GitHub's `mergeable` / `mergeStateStatus` pair to a single mergeability
+ * verdict. Shared between PR normalization and the merge path so a blocked
+ * merge can report the concrete reason (conflicts vs. checks/protection).
+ */
+export function classifyMergeability(input: {
+  readonly mergeable?: string | null | undefined;
+  readonly mergeStateStatus?: string | null | undefined;
+}): "clean" | "conflicting" | "blocked" | "unknown" {
+  const mergeable = input.mergeable?.toUpperCase();
+  const mergeStateStatus = input.mergeStateStatus?.toUpperCase();
+  return mergeable === "CONFLICTING" || mergeStateStatus === "DIRTY"
+    ? "conflicting"
+    : mergeable === "MERGEABLE" && mergeStateStatus === "CLEAN"
+      ? "clean"
+      : mergeStateStatus === "BLOCKED" || mergeStateStatus === "UNSTABLE"
+        ? "blocked"
+        : "unknown";
+}
+
 function normalizeGitHubPullRequestState(input: {
   state?: string | null | undefined;
   mergedAt?: string | null | undefined;
@@ -100,16 +120,10 @@ function normalizeGitHubPullRequestRecord(
     (headRepositoryOwnerLogin && headRepositoryName
       ? `${headRepositoryOwnerLogin}/${headRepositoryName}`
       : null);
-  const mergeable = raw.mergeable?.toUpperCase();
-  const mergeStateStatus = raw.mergeStateStatus?.toUpperCase();
-  const mergeability =
-    mergeable === "CONFLICTING" || mergeStateStatus === "DIRTY"
-      ? "conflicting"
-      : mergeable === "MERGEABLE" && mergeStateStatus === "CLEAN"
-        ? "clean"
-        : mergeStateStatus === "BLOCKED" || mergeStateStatus === "UNSTABLE"
-          ? "blocked"
-          : "unknown";
+  const mergeability = classifyMergeability({
+    mergeable: raw.mergeable,
+    mergeStateStatus: raw.mergeStateStatus,
+  });
   const failingConclusions = new Set([
     "FAILURE",
     "CANCELLED",

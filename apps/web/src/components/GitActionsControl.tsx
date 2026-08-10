@@ -30,6 +30,8 @@ import {
   InfoIcon,
   LockIcon,
   GlobeIcon,
+  MessageSquareWarningIcon,
+  TriangleAlertIcon,
   WandSparklesIcon,
   XIcon,
 } from "lucide-react";
@@ -1171,6 +1173,16 @@ export default function GitActionsControl({
     return gitStatusForActions?.isDefaultRef ?? false;
   }, [gitStatusForActions?.isDefaultRef]);
 
+  const hasPrConflicts =
+    gitStatusForActions?.pr?.state === "open" &&
+    !gitStatusForActions.hasWorkingTreeChanges &&
+    gitStatusForActions.pr.mergeability === "conflicting";
+  const unresolvedReviewThreadCount =
+    gitStatusForActions?.pr?.state === "open"
+      ? (gitStatusForActions.pr.unresolvedReviewThreadCount ?? 0)
+      : 0;
+  const unresolvedReviewCommentsLabel = `${unresolvedReviewThreadCount} unresolved review ${unresolvedReviewThreadCount === 1 ? "comment" : "comments"} on this ${changeRequestTerminology.singular}.`;
+
   const gitActionMenuItems = useMemo(
     () => buildMenuItems(gitStatusForActions, isGitActionRunning, hasPrimaryRemote),
     [gitStatusForActions, hasPrimaryRemote, isGitActionRunning],
@@ -1811,8 +1823,32 @@ export default function GitActionsControl({
           gitStatusForActions.hasWorkingTreeChanges ? (
             <span className="whitespace-nowrap text-foreground/85">Uncommitted changes</span>
           ) : null}
+          {unresolvedReviewThreadCount > 0 ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span
+                    className="flex items-center gap-1 whitespace-nowrap text-warning"
+                    aria-label={unresolvedReviewCommentsLabel}
+                  >
+                    <MessageSquareWarningIcon className="size-3.5" aria-hidden />
+                    <span>{unresolvedReviewThreadCount}</span>
+                  </span>
+                }
+              />
+              <TooltipPopup side="top" align="end" className="max-w-72">
+                {unresolvedReviewCommentsLabel}
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
           <Button
-            variant={gitStatusForActions?.pr?.state === "open" ? "default" : "outline"}
+            // Conflicts are a normal next step, not a failure, so this stays a
+            // prompt to act (warning) rather than the destructive/red styling
+            // that reads as an error.
+            variant={
+              hasPrConflicts || gitStatusForActions?.pr?.state !== "open" ? "outline" : "default"
+            }
+            className={hasPrConflicts ? "text-warning" : undefined}
             size="xs"
             disabled={!gitStatusForActions || isGitActionRunning}
             onClick={() => {
@@ -1832,10 +1868,13 @@ export default function GitActionsControl({
               });
             }}
           >
+            {hasPrConflicts ? (
+              <TriangleAlertIcon className="size-3.5 text-warning" aria-hidden />
+            ) : null}
             {gitStatusForActions?.pr?.state === "open"
               ? gitStatusForActions.hasWorkingTreeChanges
                 ? "Commit and push"
-                : gitStatusForActions.pr.mergeability === "conflicting"
+                : hasPrConflicts
                   ? "Resolve conflicts"
                   : gitStatusForActions.pr.checks === "failing"
                     ? `Merge · ${gitStatusForActions.pr.failedCheckCount ?? 1} ${gitStatusForActions.pr.failedCheckCount === 1 ? "check" : "checks"} failing`

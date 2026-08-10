@@ -507,6 +507,9 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
   return {
     service: {
       execute,
+      // The fake gh transcripts don't model GitHub's lazily-computed merge state,
+      // so leave the listed summaries untouched.
+      readPullRequestReviewState: () => Effect.succeed(null),
       listOpenPullRequests: (input) =>
         execute({
           cwd: input.cwd,
@@ -1073,7 +1076,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           state: "open",
         });
         expect(ghCalls).toContain(
-          "pr list --head jasonLaster:statemachine --state all --limit 20 --json number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          "pr list --head jasonLaster:statemachine --state all --limit 20 --json number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner,mergeable,mergeStateStatus,statusCheckRollup",
         );
       }),
     20_000,

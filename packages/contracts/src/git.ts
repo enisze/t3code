@@ -203,6 +203,8 @@ const VcsStatusChangeRequest = Schema.Struct({
   mergeability: Schema.optional(Schema.Literals(["clean", "conflicting", "blocked", "unknown"])),
   checks: Schema.optional(Schema.Literals(["passing", "failing", "pending", "unknown"])),
   failedCheckCount: Schema.optional(NonNegativeInt),
+  /** Open review threads awaiting resolution; absent when the provider can't report it. */
+  unresolvedReviewThreadCount: Schema.optional(NonNegativeInt),
 });
 
 const VcsStatusLocalShape = {
