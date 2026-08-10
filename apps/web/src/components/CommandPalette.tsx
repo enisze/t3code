@@ -98,6 +98,7 @@ import {
 } from "../wslPaths";
 import {
   ADDON_ICON_CLASS,
+  buildArchivedThreadActionItems,
   buildBrowseGroups,
   buildProjectActionItems,
   buildRootGroups,
@@ -1077,9 +1078,57 @@ function OpenCommandPaletteDialog(props: {
       };
     });
   }, [archivedSnapshots, navigate, refreshArchivedThreads, threads, unarchiveThread]);
+  const archivedThreadItems = useMemo(() => {
+    const projectTitleByKey = new Map(
+      archivedSnapshots.flatMap(({ environmentId, snapshot }) =>
+        snapshot.projects.map(
+          (project) => [`${environmentId}:${project.id}`, project.title] as const,
+        ),
+      ),
+    );
+    const archivedThreads = archivedSnapshots.flatMap(({ environmentId, snapshot }) =>
+      snapshot.threads.map((thread) => ({ ...thread, environmentId })),
+    );
+
+    return buildArchivedThreadActionItems({
+      threads: archivedThreads,
+      projectTitleByKey,
+      sortOrder: clientSettings.sidebarThreadSortOrder,
+      icon: <ArchiveRestoreIcon className={ITEM_ICON_CLASS} />,
+      runThread: async (thread) => {
+        const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+        const result = await unarchiveThread(threadRef);
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to unarchive thread",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
+          refreshArchivedThreads();
+          return;
+        }
+        refreshArchivedThreads();
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(threadRef),
+        });
+      },
+    });
+  }, [
+    archivedSnapshots,
+    clientSettings.sidebarThreadSortOrder,
+    navigate,
+    refreshArchivedThreads,
+    unarchiveThread,
+  ]);
   const searchableThreadItems = useMemo(
-    () => [...allThreadItems, ...archivedWorktreeItems],
-    [allThreadItems, archivedWorktreeItems],
+    () => [...allThreadItems, ...archivedThreadItems, ...archivedWorktreeItems],
+    [allThreadItems, archivedThreadItems, archivedWorktreeItems],
   );
   const recentThreadItems = allThreadItems.slice(0, RECENT_THREAD_LIMIT);
 

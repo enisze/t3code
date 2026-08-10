@@ -10,14 +10,16 @@ import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useRouter } from "@tanstack/react-router";
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useMemo } from "react";
 
-import { getFallbackThreadIdAfterDelete } from "../components/Sidebar.logic";
+import {
+  getFallbackThreadAfterArchive,
+  getFallbackThreadIdAfterDelete,
+} from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
-import { useNewThreadHandler } from "./useHandleNewThread";
 import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsState";
 import { readLocalApi } from "../localApi";
 import {
@@ -26,6 +28,7 @@ import {
   readEnvironmentThreadRefs,
   readProject,
   readThreadShell,
+  readThreadRefs,
 } from "../state/entities";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
@@ -132,14 +135,6 @@ export function useThreadActions() {
   );
   const clearTerminalUiState = useTerminalUiStateStore((state) => state.clearTerminalUiState);
   const router = useRouter();
-  const handleNewThread = useNewThreadHandler();
-  // Keep a ref so archiveThread can call handleNewThread without appearing in
-  // its dependency array — handleNewThread is inherently unstable (depends on
-  // the projects list) and would otherwise cascade new references into every
-  // sidebar row via archiveThread → attemptArchiveThread.
-  const handleNewThreadRef = useRef(handleNewThread);
-  handleNewThreadRef.current = handleNewThread;
-
   const resolveThreadTarget = useCallback((target: ScopedThreadRef) => {
     const thread = readThreadShell(target);
     if (!thread) {
@@ -192,9 +187,19 @@ export function useThreadActions() {
       }
 
       const currentRouteThreadRef = getCurrentRouteThreadRef();
-      const shouldNavigateToDraft =
+      const shouldNavigateAfterArchive =
         currentRouteThreadRef?.threadId === threadRef.threadId &&
         currentRouteThreadRef.environmentId === threadRef.environmentId;
+      const activeThreads = readThreadRefs().flatMap((ref) => {
+        const shell = readThreadShell(ref);
+        return shell === null || shell.archivedAt !== null ? [] : [shell];
+      });
+      const fallbackThread = getFallbackThreadAfterArchive({
+        threads: activeThreads,
+        archivedThreadId: threadRef.threadId,
+        archivedThreadEnvironmentId: threadRef.environmentId,
+        sortOrder: sidebarThreadSortOrder,
+      });
       const archiveResult = await archiveThreadMutation({
         environmentId: threadRef.environmentId,
         input: { threadId: threadRef.threadId },
@@ -205,7 +210,7 @@ export function useThreadActions() {
       refreshArchivedThreadsForEnvironment(threadRef.environmentId);
       opts.onArchived?.();
 
-      if (shouldNavigateToDraft) {
+      if (shouldNavigateAfterArchive) {
         const navigationResult = await settlePromise(() => {
           if (opts.navigateToThreadRef) {
             return router.navigate({
@@ -213,9 +218,16 @@ export function useThreadActions() {
               params: buildThreadRouteParams(opts.navigateToThreadRef),
             });
           }
-          return handleNewThreadRef.current(
-            scopeProjectRef(thread.environmentId, thread.projectId),
-          );
+          if (fallbackThread) {
+            return router.navigate({
+              to: "/$environmentId/$threadId",
+              params: buildThreadRouteParams(
+                scopeThreadRef(fallbackThread.environmentId, fallbackThread.id),
+              ),
+              replace: true,
+            });
+          }
+          return router.navigate({ to: "/", search: { empty: true }, replace: true });
         });
         if (navigationResult._tag === "Failure") {
           return navigationResult;
@@ -230,6 +242,7 @@ export function useThreadActions() {
       getCurrentRouteThreadRef,
       resolveThreadTarget,
       router,
+      sidebarThreadSortOrder,
       stopThreadSession,
     ],
   );

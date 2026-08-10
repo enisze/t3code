@@ -4,6 +4,7 @@ import { LinkIcon, PlusIcon, RotateCcwIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { openCommandPalette } from "../commandPaletteBus";
+import { NoActiveThreadState } from "../components/NoActiveThreadState";
 import { sortScopedProjectsForSidebar } from "../components/Sidebar.logic";
 import { Button } from "../components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
@@ -22,10 +23,14 @@ import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
 function ChatIndexRouteView() {
   const { authGateState } = Route.useRouteContext();
+  const { empty } = Route.useSearch();
   const { environments } = useEnvironments();
 
   if (authGateState.status === "hosted-static" && environments.length === 0) {
     return <HostedStaticOnboardingState />;
+  }
+  if (empty) {
+    return <NoActiveThreadState />;
   }
 
   return <IndexDraftLanding />;
@@ -134,6 +139,8 @@ function NoProjectsHero() {
 }
 
 export const Route = createFileRoute("/_chat/")({
+  validateSearch: (search: Record<string, unknown>): { empty?: true } =>
+    search.empty === true || search.empty === "true" ? { empty: true } : {},
   component: ChatIndexRouteView,
 });
 

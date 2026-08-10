@@ -164,6 +164,39 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
   });
 }
 
+export function buildArchivedThreadActionItems<
+  TThread extends BuildThreadActionItemsThread,
+>(input: {
+  threads: ReadonlyArray<TThread>;
+  projectTitleByKey: ReadonlyMap<string, string>;
+  sortOrder: SidebarThreadSortOrder;
+  icon: ReactNode;
+  runThread: (thread: TThread) => Promise<void>;
+}): CommandPaletteActionItem[] {
+  return sortThreads(
+    input.threads.filter((thread) => thread.archivedAt !== null),
+    input.sortOrder,
+  ).map((thread) => {
+    const projectTitle = input.projectTitleByKey.get(`${thread.environmentId}:${thread.projectId}`);
+    const description = [projectTitle, thread.branch ? `#${thread.branch}` : null, "Archived"]
+      .filter((part): part is string => part !== undefined && part !== null)
+      .join(" · ");
+
+    return {
+      kind: "action",
+      value: `archived-thread:${thread.environmentId}:${thread.id}`,
+      searchTerms: [thread.title, projectTitle ?? "", thread.branch ?? "", "archived"],
+      title: thread.title,
+      description,
+      timestamp: formatRelativeTimeLabel(thread.archivedAt ?? thread.updatedAt ?? thread.createdAt),
+      icon: input.icon,
+      run: async () => {
+        await input.runThread(thread);
+      },
+    };
+  });
+}
+
 function rankSearchFieldMatch(field: string, normalizedQuery: string): number {
   const normalizedField = normalizeSearchText(field);
   if (normalizedField.length === 0 || !normalizedField.includes(normalizedQuery)) {
