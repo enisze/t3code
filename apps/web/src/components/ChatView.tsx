@@ -290,7 +290,6 @@ import {
   resolveTimelineComposerLayout,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
-  shouldAutoCreateWorktreeThread,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   shouldWriteThreadErrorToCurrentServerThread,
@@ -4723,107 +4722,6 @@ function ChatViewContent(props: ChatViewProps) {
       setThreadError,
     ],
   );
-
-  const autoCreateWorktreeDraftKeyRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (
-      !activeThread ||
-      !activeProject ||
-      !shouldAutoCreateWorktreeThread({
-        isLocalDraftThread,
-        envMode: sendEnvMode,
-        hasProject: true,
-        branch: activeThreadBranch,
-      })
-    ) {
-      return;
-    }
-
-    const branch = activeThreadBranch;
-    if (!branch) return;
-    const draftKey = `${environmentId}:${activeThread.id}:${branch}:${activeThread.worktreePath ?? "new"}`;
-    if (autoCreateWorktreeDraftKeyRef.current === draftKey || sendInFlightRef.current) return;
-    autoCreateWorktreeDraftKeyRef.current = draftKey;
-
-    void (async () => {
-      sendInFlightRef.current = true;
-      beginLocalDispatch({ preparingWorktree: !activeThread.worktreePath });
-      setThreadError(activeThread.id, null);
-
-      let worktreePath = activeThread.worktreePath;
-      let threadBranch = branch;
-      let failure: AtomCommandResult<unknown, unknown> | null = null;
-      if (!worktreePath) {
-        const worktreeResult = await createWorktree({
-          environmentId,
-          input: {
-            cwd: activeProject.workspaceRoot,
-            refName: branch,
-            newRefName: buildTemporaryWorktreeBranchName(
-              randomHex,
-              activeProject.worktreeBranchPrefix ?? settings.worktreeBranchPrefix,
-            ),
-            baseRefName: branch,
-            path: null,
-          },
-        });
-        if (worktreeResult._tag === "Failure") {
-          failure = worktreeResult;
-        } else {
-          worktreePath = worktreeResult.value.worktree.path;
-          threadBranch = worktreeResult.value.worktree.refName;
-        }
-      }
-
-      if (failure === null && worktreePath) {
-        const createResult = await createThread({
-          environmentId,
-          input: {
-            threadId: activeThread.id,
-            projectId: activeProject.id,
-            title: "New thread",
-            modelSelection: activeThread.modelSelection,
-            runtimeMode,
-            interactionMode,
-            branch: threadBranch,
-            worktreePath,
-            createdAt: activeThread.createdAt,
-          },
-        });
-        if (createResult._tag === "Failure") failure = createResult;
-      }
-
-      if (failure === null) {
-        useRightPanelStore.getState().open(routeThreadRef, "diff");
-        onDiffPanelOpen?.();
-      } else if (!isAtomCommandInterrupted(failure)) {
-        const error = squashAtomCommandFailure(failure);
-        setThreadError(
-          activeThread.id,
-          error instanceof Error ? error.message : "Failed to create worktree thread.",
-        );
-      }
-      sendInFlightRef.current = false;
-      resetLocalDispatch();
-    })();
-  }, [
-    activeProject,
-    activeThread,
-    activeThreadBranch,
-    beginLocalDispatch,
-    createThread,
-    createWorktree,
-    environmentId,
-    interactionMode,
-    isLocalDraftThread,
-    onDiffPanelOpen,
-    resetLocalDispatch,
-    routeThreadRef,
-    runtimeMode,
-    sendEnvMode,
-    setThreadError,
-    settings.worktreeBranchPrefix,
-  ]);
 
   const onSend = async (e?: { preventDefault: () => void }) => {
     e?.preventDefault();

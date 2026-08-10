@@ -28,7 +28,6 @@ import {
   resolveTimelineComposerLayout,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
-  shouldAutoCreateWorktreeThread,
   startNewThreadForProject,
   shouldShowBranchMismatchBanner,
   shouldWriteThreadErrorToCurrentServerThread,
@@ -78,28 +77,6 @@ describe("canCreateEmptyWorktreeThread", () => {
     { hasSendableContent: false, isLocalDraftThread: true, envMode: "local" as const },
   ])("rejects non-empty, server, and local-mode submissions", (input) => {
     expect(canCreateEmptyWorktreeThread(input)).toBe(false);
-  });
-});
-
-describe("shouldAutoCreateWorktreeThread", () => {
-  it("promotes a configured worktree draft without waiting for a message", () => {
-    expect(
-      shouldAutoCreateWorktreeThread({
-        isLocalDraftThread: true,
-        envMode: "worktree",
-        hasProject: true,
-        branch: "main",
-      }),
-    ).toBe(true);
-  });
-
-  it.each([
-    { isLocalDraftThread: false, envMode: "worktree" as const, hasProject: true, branch: "main" },
-    { isLocalDraftThread: true, envMode: "local" as const, hasProject: true, branch: "main" },
-    { isLocalDraftThread: true, envMode: "worktree" as const, hasProject: false, branch: "main" },
-    { isLocalDraftThread: true, envMode: "worktree" as const, hasProject: true, branch: null },
-  ])("waits until the draft has a complete worktree context", (input) => {
-    expect(shouldAutoCreateWorktreeThread(input)).toBe(false);
   });
 });
 
