@@ -490,6 +490,32 @@ export default function DiffPanel({
     : null;
   const refreshBranchDiffPreview = branchDiffPreview.refresh;
   const refreshGitStatus = gitStatusQuery.refresh;
+  const workingTreeDiffMarker = gitStatusQuery.data
+    ? JSON.stringify({
+        refName: gitStatusQuery.data.refName,
+        aheadCount: gitStatusQuery.data.aheadCount,
+        files: gitStatusQuery.data.workingTree.files.map((file) => [
+          file.path,
+          file.insertions,
+          file.deletions,
+        ]),
+      })
+    : null;
+  const workingTreeDiffMarkerRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (selectedTurnId !== null || workingTreeDiffMarker === null) return;
+    if (workingTreeDiffMarkerRef.current === null) {
+      workingTreeDiffMarkerRef.current = workingTreeDiffMarker;
+      return;
+    }
+    if (workingTreeDiffMarkerRef.current === workingTreeDiffMarker) return;
+    workingTreeDiffMarkerRef.current = workingTreeDiffMarker;
+    // VCS status streams exact numstat updates while files are edited. Refresh
+    // the patch snapshot as those stats change so navigator line counters and
+    // viewed signatures do not wait for the current turn to finish.
+    const refreshTimer = setTimeout(refreshBranchDiffPreview, 100);
+    return () => clearTimeout(refreshTimer);
+  }, [refreshBranchDiffPreview, selectedTurnId, workingTreeDiffMarker]);
   const refreshedTurnMarkerRef = useRef<string | null>(null);
   useEffect(() => {
     if (
@@ -750,19 +776,18 @@ export default function DiffPanel({
     [collapseScopeKey],
   );
 
-  const toggleFileViewed = useCallback(
-    (filePath: string) => {
+  const setFileViewed = useCallback(
+    (filePath: string, viewed: boolean) => {
       if (!viewedScopeKey) return;
       const signature = signatureByFilePath.get(filePath);
       if (signature === undefined) return;
-      const nowViewed = viewedSignatures[filePath] !== signature;
-      useDiffViewedStore.getState().setFileViewed(viewedScopeKey, filePath, signature, nowViewed);
+      useDiffViewedStore.getState().setFileViewed(viewedScopeKey, filePath, signature, viewed);
       // Collapse a file when it is marked viewed, and expand it when unmarked.
-      setDiffFileExpanded(filePath, !nowViewed);
+      setDiffFileExpanded(filePath, !viewed);
       // After marking a file viewed, jump to the next still-unviewed file so a
       // review flows file-to-file without hunting the list. Wraps around, and
       // stops (stays put) once everything is viewed.
-      if (nowViewed && onOpenFileDiff) {
+      if (viewed && onOpenFileDiff) {
         const order = codeViewFiles.map((file) => file.filePath);
         const currentIndex = order.indexOf(filePath);
         if (currentIndex >= 0) {
@@ -1048,7 +1073,7 @@ export default function DiffPanel({
                       checked={focusedFile.viewed}
                       className="size-3.5"
                       aria-label={focusedFile.viewed ? "Mark as not viewed" : "Mark as viewed"}
-                      onCheckedChange={() => toggleFileViewed(focusedFile.filePath)}
+                      onCheckedChange={(checked) => setFileViewed(focusedFile.filePath, checked)}
                     />
                     Viewed
                   </label>
@@ -1221,7 +1246,7 @@ export default function DiffPanel({
                   resolvedTheme={resolvedTheme}
                   activeFilePath={navigatorActiveFilePath}
                   onOpenFile={(filePath) => onOpenFileDiff?.(filePath)}
-                  onToggleViewed={toggleFileViewed}
+                  onToggleViewed={setFileViewed}
                 />
               </div>
             ) : (
@@ -1294,7 +1319,7 @@ export default function DiffPanel({
                                       : `Mark ${filePath} as viewed`
                                   }
                                   onClick={(event) => event.stopPropagation()}
-                                  onCheckedChange={() => toggleFileViewed(filePath)}
+                                  onCheckedChange={(checked) => setFileViewed(filePath, checked)}
                                 />
                               }
                             />
