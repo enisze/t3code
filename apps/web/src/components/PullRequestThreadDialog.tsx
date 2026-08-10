@@ -14,6 +14,7 @@ import { getSourceControlPresentation } from "~/sourceControlPresentation";
 import { useEnvironmentQuery } from "~/state/query";
 import { vcsEnvironment } from "~/state/vcs";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { canAutoSubmitResolvedReference } from "./PullRequestThreadDialog.logic";
 import { Button } from "./ui/button";
 import {
   Dialog,
@@ -26,6 +27,13 @@ import {
 } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Spinner } from "./ui/spinner";
+
+/**
+ * How long a headless auto-submit may stay invisible before the dialog is shown.
+ * Long enough for a normal resolve + prepare, short enough that a dead end never
+ * looks like a frozen UI.
+ */
+const HEADLESS_REVEAL_TIMEOUT_MS = 10_000;
 
 interface PullRequestThreadDialogProps {
   open: boolean;
@@ -55,6 +63,10 @@ export function PullRequestThreadDialog({
   const [reference, setReference] = useState(initialReference ?? "");
   const [referenceDirty, setReferenceDirty] = useState(false);
   const [isPreparing, setIsPreparing] = useState(false);
+  // A headless auto-submit renders nothing, so a failure there would leave an
+  // invisible dialog with an error the user can never see or dismiss. Revealing
+  // it turns any dead end back into something clickable.
+  const [revealed, setRevealed] = useState(false);
   const [debouncedReference, referenceDebouncer] = useDebouncedValue(
     reference,
     { wait: 450 },
@@ -150,11 +162,18 @@ export function PullRequestThreadDialog({
   const handleConfirm = useCallback(async () => {
     if (!resolvedPullRequest && !resolvedBranch) {
       setReferenceDirty(true);
+      setRevealed(true);
       return;
     }
-    if (!cwd) return;
+    if (!cwd) {
+      setRevealed(true);
+      return;
+    }
     const targetBranch = resolvedPullRequest?.headBranch ?? resolvedBranch?.name;
-    if (!targetBranch) return;
+    if (!targetBranch) {
+      setRevealed(true);
+      return;
+    }
     if (
       await onPrepared({ branch: targetBranch, worktreePath: resolvedBranch?.worktreePath ?? null })
     ) {
@@ -162,9 +181,13 @@ export function PullRequestThreadDialog({
       return;
     }
     setIsPreparing(true);
-    if (resolvedPullRequest) {
+    // Prefer the server's pull-request path whenever the input names one: it
+    // fetches the PR head, configures its upstream, and runs the project setup
+    // script. Creating a worktree straight from the typed reference skips all of
+    // that and lands the user in an empty worktree.
+    if (resolvedPullRequest && parsedReference !== null) {
       const result = await preparePullRequestThreadAction.run({
-        reference: parsedReference!,
+        reference: parsedReference,
         mode: "worktree",
         threadId,
       });
@@ -173,6 +196,7 @@ export function PullRequestThreadDialog({
         if (isAtomCommandInterrupted(result)) {
           preparePullRequestThreadAction.resetError();
         }
+        setRevealed(true);
         return;
       }
       await onPrepared({ branch: result.value.branch, worktreePath: result.value.worktreePath });
@@ -182,7 +206,10 @@ export function PullRequestThreadDialog({
         input: { cwd, refName: reference.trim(), path: null },
       });
       setIsPreparing(false);
-      if (result._tag === "Failure") return;
+      if (result._tag === "Failure") {
+        setRevealed(true);
+        return;
+      }
       await onPrepared({
         branch: result.value.worktree.refName,
         worktreePath: result.value.worktree.path,
@@ -195,24 +222,47 @@ export function PullRequestThreadDialog({
     onPrepared,
     createWorktree,
     environmentId,
+    parsedReference,
     preparePullRequestThreadAction,
+    reference,
     resolvedBranch,
     resolvedPullRequest,
     threadId,
   ]);
 
+  const canAutoSubmit = canAutoSubmitResolvedReference({
+    isPullRequestReference: parsedReference !== null,
+    hasResolvedPullRequest: resolvedPullRequest !== null,
+    hasResolvedBranch: Boolean(resolvedBranch),
+  });
+
   useEffect(() => {
-    if (
-      !autoSubmitInitialReference ||
-      autoSubmittedRef.current ||
-      isPreparing ||
-      (!resolvedPullRequest && !resolvedBranch)
-    ) {
+    if (!autoSubmitInitialReference || autoSubmittedRef.current || isPreparing || !canAutoSubmit) {
       return;
     }
     autoSubmittedRef.current = true;
     void handleConfirm();
-  }, [autoSubmitInitialReference, handleConfirm, isPreparing, resolvedBranch, resolvedPullRequest]);
+  }, [autoSubmitInitialReference, canAutoSubmit, handleConfirm, isPreparing]);
+
+  // A headless auto-submit that can never fire (unresolvable reference, failed
+  // lookup, no cwd) would otherwise hang invisibly forever. Surface the dialog so
+  // the error is readable and the user can retry or cancel.
+  useEffect(() => {
+    if (!headless || revealed || autoSubmittedRef.current || isPreparing) return;
+    if (pullRequestResolution.error) {
+      setRevealed(true);
+      return;
+    }
+    if (isResolving) return;
+    const timer = window.setTimeout(() => {
+      if (!autoSubmittedRef.current) {
+        setRevealed(true);
+      }
+    }, HEADLESS_REVEAL_TIMEOUT_MS);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [headless, isPreparing, isResolving, pullRequestResolution.error, revealed]);
 
   const validationMessage = !referenceDirty
     ? null
@@ -229,7 +279,7 @@ export function PullRequestThreadDialog({
           ? `Failed to prepare ${terminology.singular} thread.`
           : null);
 
-  if (headless) return null;
+  if (headless && !revealed) return null;
 
   return (
     <Dialog
