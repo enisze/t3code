@@ -407,6 +407,42 @@ function appendGitOutputToDetail(baseDetail: string, stdout: string, stderr: str
   return gitOutput.length > 0 ? `${baseDetail}\n${gitOutput}` : baseDetail;
 }
 
+/**
+ * Explain the remote rejections whose raw git output doesn't tell the user what
+ * to actually do. These all hinge on *which account* the command authenticated
+ * as, which is invisible in git's output — so the caller pairs this with
+ * {@link describeAuthAccountForCwd}.
+ *
+ * Returns null when git's own output is already the clearest explanation.
+ */
+export function describeGitRemoteRejection(output: string): string | null {
+  const normalized = output.toLowerCase();
+
+  // GitHub refuses to accept a push that adds/changes anything under
+  // .github/workflows/ unless the token carries the `workflow` OAuth scope. The
+  // `repo` scope alone is not enough, so this bites accounts that otherwise
+  // have full push access.
+  if (
+    normalized.includes("without `workflow` scope") ||
+    normalized.includes("without 'workflow' scope") ||
+    (normalized.includes("workflow") &&
+      normalized.includes("scope") &&
+      normalized.includes("refusing to allow"))
+  ) {
+    return "GitHub rejected the push because the account it authenticated as is missing the `workflow` OAuth scope, which is required to add or change files under `.github/workflows/`. Run `gh auth refresh -s workflow` for that account, then push again.";
+  }
+
+  if (normalized.includes("protected branch") || normalized.includes("refusing to allow")) {
+    return "GitHub rejected the push because a branch protection rule or a missing permission on the authenticated account blocks it.";
+  }
+
+  if (normalized.includes("non-fast-forward") || normalized.includes("fetch first")) {
+    return "The remote branch has commits this branch doesn't. Pull or rebase onto the remote branch, then push again.";
+  }
+
+  return null;
+}
+
 function parseDefaultBranchFromRemoteHeadRef(value: string, remoteName: string): string | null {
   const trimmed = value.trim();
   const prefix = `refs/remotes/${remoteName}/`;
@@ -1013,6 +1049,27 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.map((authEnv) => ({ ...STATUS_UPSTREAM_REFRESH_ENV, ...authEnv })),
     );
 
+  /**
+   * Name the identity a remote git command acted as, for error messages. Git
+   * never reports this, so a rejection caused by acting as the wrong account is
+   * otherwise undiagnosable. Crucially it calls out the ambient fallback: with
+   * no account attached to the project, git silently uses whichever `gh` account
+   * happens to be active, which is the usual cause of "it pushed as the wrong
+   * user (sometimes)".
+   */
+  const describeAuthAccountForCwd = (cwd: string): Effect.Effect<string | null> =>
+    Effect.gen(function* () {
+      const resolverOption = yield* Effect.serviceOption(GitHubAccountResolver);
+      if (Option.isNone(resolverOption)) {
+        return null;
+      }
+      const resolution = yield* resolverOption.value.resolveForCwd(cwd);
+      if (resolution._tag === "ambient") {
+        return "No GitHub account is attached to this project, so the command ran as whichever account is currently active in the GitHub CLI. Attach the intended account in the project's settings to stop this depending on the machine's active account.";
+      }
+      return `The command ran as the GitHub account "${resolution.account.login}" selected for this project.`;
+    }).pipe(Effect.orElseSucceed(() => null));
+
   // Remote-touching git commands (push/fetch) whose args are built internally.
   // On failure the git stderr IS the actionable reason (auth denied, no remote,
   // wrong account), so — unlike the redacted general executeGit path — surface
@@ -1030,19 +1087,25 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         if (allowNonZeroExit || result.exitCode === 0) {
           return Effect.void;
         }
-        return Effect.fail(
-          new GitCommandError({
-            ...gitCommandContext({ operation, cwd, args }),
-            detail: appendGitOutputToDetail(
-              "Git command exited with a non-zero status.",
-              result.stdout,
-              result.stderr,
-            ),
-            ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
-            stdoutLength: result.stdout.length,
-            stderrLength: result.stderr.length,
-          }),
-        );
+        return Effect.gen(function* () {
+          // Only on the failure path, so the happy path stays a single spawn.
+          const rejection = describeGitRemoteRejection(result.stderr || result.stdout);
+          const account = rejection === null ? null : yield* describeAuthAccountForCwd(cwd);
+          const baseDetail = [
+            "Git command exited with a non-zero status.",
+            ...(rejection ? [rejection] : []),
+            ...(account ? [account] : []),
+          ].join("\n");
+          return yield* Effect.fail(
+            new GitCommandError({
+              ...gitCommandContext({ operation, cwd, args }),
+              detail: appendGitOutputToDetail(baseDetail, result.stdout, result.stderr),
+              ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+              stdoutLength: result.stdout.length,
+              stderrLength: result.stderr.length,
+            }),
+          );
+        });
       }),
     );
 
