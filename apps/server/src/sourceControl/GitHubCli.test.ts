@@ -695,6 +695,82 @@ describe("GitHubCli.layer", () => {
       });
     }).pipe(Effect.provide(layer)),
   );
+
+  it.effect("names merge conflicts when GitHub refuses a conflicting PR", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              mergeCommitAllowed: true,
+              squashMergeAllowed: true,
+              rebaseMergeAllowed: true,
+            }),
+          ),
+        ),
+      );
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({ mergeable: "CONFLICTING", mergeStateStatus: "DIRTY" }),
+          ),
+        ),
+      );
+      // Every merge attempt is refused because the PR conflicts.
+      mockRun.mockReturnValue(
+        Effect.fail(
+          new VcsProcessExitError({
+            operation: "GitHubCli.execute",
+            command: "gh",
+            cwd: "/repo",
+            exitCode: 1,
+            detail: "blocked",
+            failureKind: "merge-blocked",
+          }),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const merge = yield* gh
+        .mergePullRequest({ cwd: "/repo", reference: "#42" })
+        .pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+      // Let the retry backoffs elapse so every attempt runs and the final
+      // failure is returned.
+      yield* TestClock.adjust("5 seconds");
+      const error = yield* Fiber.join(merge);
+
+      assert.strictEqual(error._tag, "GitHubMergeBlockedError");
+      if (error._tag !== "GitHubMergeBlockedError") throw error;
+      assert.strictEqual(error.mergeability, "conflicting");
+      assert.equal(error.detail.includes("merge conflicts"), true);
+    }).pipe(Effect.provide(layer)),
+  );
+});
+
+describe("parseRepositoryFromPullRequestUrl", () => {
+  it("reads owner and repo from a pull request URL", () => {
+    assert.deepStrictEqual(
+      GitHubCli.parseRepositoryFromPullRequestUrl("https://github.com/enisze/t3code/pull/30"),
+      { owner: "enisze", repo: "t3code" },
+    );
+  });
+
+  it("supports GitHub Enterprise hosts and trailing URL segments", () => {
+    assert.deepStrictEqual(
+      GitHubCli.parseRepositoryFromPullRequestUrl("https://gh.corp.example/team/app/pull/7/files"),
+      { owner: "team", repo: "app" },
+    );
+  });
+
+  it("returns null for URLs that are not pull requests", () => {
+    assert.strictEqual(
+      GitHubCli.parseRepositoryFromPullRequestUrl("https://github.com/enisze/t3code/issues/30"),
+      null,
+    );
+    assert.strictEqual(GitHubCli.parseRepositoryFromPullRequestUrl("not a url"), null);
+  });
 });
 
 describe("GitHubCli account scoping", () => {

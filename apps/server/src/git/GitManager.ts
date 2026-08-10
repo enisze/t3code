@@ -145,6 +145,7 @@ interface PullRequestInfo extends OpenPrInfo, PullRequestHeadRemoteInfo {
   mergeability?: "clean" | "conflicting" | "blocked" | "unknown";
   checks?: "passing" | "failing" | "pending" | "unknown";
   failedCheckCount?: number;
+  unresolvedReviewThreadCount?: number;
   updatedAt: Option.Option<DateTime.Utc>;
 }
 
@@ -379,6 +380,16 @@ function toPullRequestInfo(summary: ChangeRequest): PullRequestInfo {
     headRefName: summary.headRefName,
     state: summary.state ?? "open",
     updatedAt: summary.updatedAt,
+    // Merge/review state drives the merge button, so it has to survive the hop
+    // from the provider's change request into the status payload.
+    ...(summary.mergeability ? { mergeability: summary.mergeability } : {}),
+    ...(summary.checks ? { checks: summary.checks } : {}),
+    ...(summary.failedCheckCount !== undefined
+      ? { failedCheckCount: summary.failedCheckCount }
+      : {}),
+    ...(summary.unresolvedReviewThreadCount !== undefined
+      ? { unresolvedReviewThreadCount: summary.unresolvedReviewThreadCount }
+      : {}),
     ...(summary.isCrossRepository !== undefined
       ? { isCrossRepository: summary.isCrossRepository }
       : {}),
@@ -535,6 +546,7 @@ function toStatusPr(pr: PullRequestInfo): {
   mergeability?: "clean" | "conflicting" | "blocked" | "unknown";
   checks?: "passing" | "failing" | "pending" | "unknown";
   failedCheckCount?: number;
+  unresolvedReviewThreadCount?: number;
 } {
   return {
     number: pr.number,
@@ -546,6 +558,9 @@ function toStatusPr(pr: PullRequestInfo): {
     ...(pr.mergeability ? { mergeability: pr.mergeability } : {}),
     ...(pr.checks ? { checks: pr.checks } : {}),
     ...(pr.failedCheckCount !== undefined ? { failedCheckCount: pr.failedCheckCount } : {}),
+    ...(pr.unresolvedReviewThreadCount !== undefined
+      ? { unresolvedReviewThreadCount: pr.unresolvedReviewThreadCount }
+      : {}),
   };
 }
 
@@ -1215,11 +1230,7 @@ export const make = Effect.gen(function* () {
       );
       if (firstPullRequest) {
         return {
-          number: firstPullRequest.number,
-          title: firstPullRequest.title,
-          url: firstPullRequest.url,
-          baseRefName: firstPullRequest.baseRefName,
-          headRefName: firstPullRequest.headRefName,
+          ...firstPullRequest,
           state: "open",
           updatedAt: Option.none(),
         } satisfies PullRequestInfo;

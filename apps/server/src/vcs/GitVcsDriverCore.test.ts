@@ -17,7 +17,11 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { GitCommandError } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
 import { GitHubAccountResolver } from "../sourceControl/GitHubAccountResolver.ts";
-import { makeGitVcsDriverCore, splitNullSeparatedGitStdoutPaths } from "./GitVcsDriverCore.ts";
+import {
+  describeGitRemoteRejection,
+  makeGitVcsDriverCore,
+  splitNullSeparatedGitStdoutPaths,
+} from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
@@ -746,6 +750,34 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         });
 
         assert.deepStrictEqual(paths, ["complete.txt", "final.txt"]);
+      }),
+    );
+
+    it.effect("explains a workflow-scope push rejection", () =>
+      Effect.sync(() => {
+        const hint = describeGitRemoteRejection(
+          "To https://github.com/LOBECOStudio/corporate-gpt.git\n" +
+            " ! [remote rejected]   HEAD -> feature/fix-user-invite-error (refusing to allow an OAuth App to create or update workflow `.github/workflows/preview.yaml` without `workflow` scope)\n",
+        );
+
+        assert.include(hint ?? "", "`workflow` OAuth scope");
+        assert.include(hint ?? "", "gh auth refresh -s workflow");
+      }),
+    );
+
+    it.effect("explains a non-fast-forward push rejection", () =>
+      Effect.sync(() => {
+        const hint = describeGitRemoteRejection(
+          "! [rejected]  main -> main (non-fast-forward)\nhint: Updates were rejected",
+        );
+
+        assert.include(hint ?? "", "Pull or rebase");
+      }),
+    );
+
+    it.effect("leaves unrecognized git failures to git's own output", () =>
+      Effect.sync(() => {
+        assert.strictEqual(describeGitRemoteRejection("fatal: could not read from remote"), null);
       }),
     );
 
