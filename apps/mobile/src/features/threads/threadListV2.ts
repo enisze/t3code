@@ -1,4 +1,5 @@
 import { effectiveSettled, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import { sortThreads, type ThreadSortInput } from "@t3tools/client-runtime/state/thread-sort";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
@@ -76,22 +77,12 @@ function firstValidTimestampMs(...candidates: ReadonlyArray<string | null | unde
   return 0;
 }
 
-/**
- * v2 sort: static creation order, newest thread on top. Activity NEVER
- * reorders the list — a row holds its position from open until settled, so
- * the screen only moves at lifecycle transitions. Mirrors web's
- * sortThreadsForSidebarV2.
- */
-export function sortThreadsForListV2<T extends { readonly id: string; readonly createdAt: string }>(
+/** Keep the chats users touched most recently at the top, matching web's
+    sortThreadsForSidebarV2. */
+export function sortThreadsForListV2<T extends { readonly id: string } & ThreadSortInput>(
   threads: readonly T[],
 ): T[] {
-  // .sort() on a copy, not .toSorted(): Hermes doesn't ship the ES2023
-  // change-by-copy array methods.
-  return [...threads].sort(
-    (left, right) =>
-      parseTimestampMs(right.createdAt) - parseTimestampMs(left.createdAt) ||
-      left.id.localeCompare(right.id),
-  );
+  return sortThreads(threads, "updated_at");
 }
 
 export interface ThreadListV2Item {
