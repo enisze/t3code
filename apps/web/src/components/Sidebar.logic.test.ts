@@ -1960,7 +1960,7 @@ describe("sortProjectsForSidebar", () => {
     ]);
   });
 
-  it("ignores archived threads when sorting projects", () => {
+  it("keeps a project's position when its most recent thread is archived", () => {
     const sorted = sortProjectsForSidebar(
       [
         makeProject({
@@ -1970,7 +1970,7 @@ describe("sortProjectsForSidebar", () => {
         }),
         makeProject({
           id: ProjectId.make("project-2"),
-          title: "Archived-only project",
+          title: "Recently archived project",
           updatedAt: "2026-03-09T10:00:00.000Z",
         }),
       ],
@@ -1981,19 +1981,21 @@ describe("sortProjectsForSidebar", () => {
           updatedAt: "2026-03-09T10:02:00.000Z",
           archivedAt: null,
         }),
+        // Archived, but its activity is still the most recent, so archiving it
+        // must not push project-2 below project-1.
         makeThread({
           id: ThreadId.make("thread-archived"),
           projectId: ProjectId.make("project-2"),
           updatedAt: "2026-03-09T10:10:00.000Z",
           archivedAt: "2026-03-09T10:11:00.000Z",
         }),
-      ].filter((thread) => thread.archivedAt === null),
+      ],
       "updated_at",
     );
 
     expect(sorted.map((project) => project.id)).toEqual([
-      ProjectId.make("project-1"),
       ProjectId.make("project-2"),
+      ProjectId.make("project-1"),
     ]);
   });
 
@@ -2042,7 +2044,7 @@ describe("sortScopedProjectsForSidebar", () => {
     expect(sorted.map((project) => project.title)).toEqual(["Remote project", "Local project"]);
   });
 
-  it("does not use archived threads as project activity", () => {
+  it("keeps a project's position when its most recent thread is archived", () => {
     const projects = [
       makeProject({
         id: ProjectId.make("project-visible"),
@@ -2051,7 +2053,7 @@ describe("sortScopedProjectsForSidebar", () => {
       }),
       makeProject({
         id: ProjectId.make("project-archived"),
-        title: "Archived-only project",
+        title: "Recently archived project",
         updatedAt: "2026-03-09T10:00:00.000Z",
       }),
     ];
@@ -2061,6 +2063,8 @@ describe("sortScopedProjectsForSidebar", () => {
         projectId: ProjectId.make("project-visible"),
         updatedAt: "2026-03-09T10:02:00.000Z",
       }),
+      // Archiving this thread must not reorder the projects: its activity is
+      // still the most recent, so its project stays on top.
       makeThread({
         id: ThreadId.make("thread-archived"),
         projectId: ProjectId.make("project-archived"),
@@ -2072,8 +2076,8 @@ describe("sortScopedProjectsForSidebar", () => {
     const sorted = sortScopedProjectsForSidebar(projects, threads, "updated_at");
 
     expect(sorted.map((project) => project.title)).toEqual([
+      "Recently archived project",
       "Visible project",
-      "Archived-only project",
     ]);
   });
 });

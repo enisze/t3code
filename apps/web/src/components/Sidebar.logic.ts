@@ -1098,7 +1098,10 @@ export function sortLogicalProjectsForSidebar<
   );
   const threadsByProjectKey = new Map<string, TThread[]>();
   for (const thread of threads) {
-    if (thread.archivedAt !== null) continue;
+    // Archived threads still count toward a project's activity timestamp so
+    // archiving a chat never moves its project in the list. Archiving doesn't
+    // change a thread's sort timestamp (it's derived from message activity, not
+    // the archive event), so keeping it here holds the project's position.
     const projectKey = groupKeyByProjectRef.get(`${thread.environmentId}\0${thread.projectId}`);
     if (!projectKey) continue;
     const existing = threadsByProjectKey.get(projectKey);
@@ -1120,8 +1123,8 @@ export function sortLogicalProjectsForSidebar<
 
 /**
  * Sorts the cross-environment project collection used by landing surfaces.
- * Project ids are only unique within an environment, and archived threads
- * must not make a project appear recently active.
+ * Project ids are only unique within an environment. Archived threads still
+ * count toward project activity so archiving a chat never reorders projects.
  */
 export function sortScopedProjectsForSidebar<
   TProject extends ScopedSidebarProject,
@@ -1135,9 +1138,6 @@ export function sortScopedProjectsForSidebar<
     `${environmentId}\u0000${projectId}`;
   const threadsByProject = new Map<string, TThread[]>();
   for (const thread of threads) {
-    if (thread.archivedAt !== null) {
-      continue;
-    }
     const key = scopedKey(thread.environmentId, thread.projectId);
     const existing = threadsByProject.get(key) ?? [];
     existing.push(thread);

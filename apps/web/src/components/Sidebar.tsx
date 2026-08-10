@@ -3441,7 +3441,9 @@ export default function Sidebar() {
       ...project,
       id: project.projectKey,
     }));
-    const sortableThreads = visibleThreads.map((thread) => {
+    // Include archived threads here (unlike the rendered list, which uses
+    // visibleThreads) so archiving a chat never changes a project's position.
+    const sortableThreads = sidebarThreads.map((thread) => {
       const physicalKey =
         projectPhysicalKeyByScopedRef.get(
           scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
@@ -3465,7 +3467,7 @@ export default function Sidebar() {
     projectPhysicalKeyByScopedRef,
     sidebarProjectByKey,
     sidebarProjects,
-    visibleThreads,
+    sidebarThreads,
   ]);
   const isManualProjectSorting = sidebarProjectSortOrder === "manual";
   const visibleSidebarThreadKeys = useMemo(
