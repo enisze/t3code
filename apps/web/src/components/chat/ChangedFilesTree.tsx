@@ -338,7 +338,7 @@ export const DiffNavigatorFileList = memo(function DiffNavigatorFileList(props: 
   /** The file whose diff is currently open — highlighted in the list. */
   activeFilePath?: string | null | undefined;
   onOpenFile: (filePath: string) => void;
-  onToggleViewed: (filePath: string) => void;
+  onToggleViewed: (filePath: string, viewed: boolean) => void;
 }) {
   const { files, resolvedTheme, activeFilePath, onOpenFile, onToggleViewed } = props;
   const fileGroups = useMemo(() => {
@@ -406,7 +406,7 @@ export const DiffNavigatorFileList = memo(function DiffNavigatorFileList(props: 
                         : `Mark ${file.path} as viewed`
                     }
                     onClick={(event) => event.stopPropagation()}
-                    onCheckedChange={() => onToggleViewed(file.path)}
+                    onCheckedChange={(checked) => onToggleViewed(file.path, checked)}
                   />
                   <button
                     type="button"
