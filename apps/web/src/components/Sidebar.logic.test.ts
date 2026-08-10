@@ -1102,7 +1102,7 @@ describe("collapseWorktreeSiblings", () => {
     environmentId = "env-1",
   ): CollapsibleThread => ({ id, environmentId, worktreePath, createdAt });
 
-  it("keeps only the earliest-created chat per worktree, preserving input order", () => {
+  it("keeps the earliest-created representative at the newest sibling's position", () => {
     const threads = [
       make("newer", "/wt/a", "2026-03-09T12:00:00.000Z"),
       make("standalone", null, "2026-03-09T11:00:00.000Z"),
@@ -1111,8 +1111,24 @@ describe("collapseWorktreeSiblings", () => {
 
     const { threads: collapsed } = collapseWorktreeSiblings(threads, keyOf);
 
-    // "older" survives (earliest in its worktree) and stays where it sat.
-    expect(collapsed.map((thread) => thread.id)).toEqual(["standalone", "older"]);
+    // "older" survives as the stable route, but the group occupies "newer"'s
+    // first-place position so recent activity in any sibling promotes it.
+    expect(collapsed.map((thread) => thread.id)).toEqual(["older", "standalone"]);
+  });
+
+  it("promotes a worktree when a collapsed sibling is newer than another chat", () => {
+    const sortedByActivity = [
+      make("new-worktree-chat", "/wt/a", "2026-03-09T12:00:00.000Z"),
+      make("other-worktree", "/wt/b", "2026-03-09T11:00:00.000Z"),
+      make("worktree-representative", "/wt/a", "2026-03-09T10:00:00.000Z"),
+    ];
+
+    const { threads: collapsed } = collapseWorktreeSiblings(sortedByActivity, keyOf);
+
+    expect(collapsed.map((thread) => thread.id)).toEqual([
+      "worktree-representative",
+      "other-worktree",
+    ]);
   });
 
   it("never collapses threads without a worktree", () => {
