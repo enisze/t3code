@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { Thread } from "../types";
 import {
+  buildArchivedThreadActionItems,
   buildBrowseGroups,
   buildThreadActionItems,
   enumerateCommandPaletteItems,
@@ -192,6 +193,67 @@ describe("buildThreadActionItems", () => {
     });
 
     expect(items.map((item) => item.value)).toEqual(["thread:thread-active"]);
+  });
+});
+
+describe("buildArchivedThreadActionItems", () => {
+  it("builds environment-scoped restore results for archived threads", async () => {
+    const archivedThread = makeThread({
+      id: ThreadId.make("thread-archived"),
+      title: "Restore search indexing",
+      branch: "fix/archive-search",
+      archivedAt: "2026-03-20T00:00:00.000Z",
+      updatedAt: "2026-03-20T00:00:00.000Z",
+    });
+    const runThread = vi.fn(async (_thread: Thread) => undefined);
+
+    const items = buildArchivedThreadActionItems({
+      threads: [archivedThread, makeThread({ id: ThreadId.make("thread-active") })],
+      projectTitleByKey: new Map([[`${LOCAL_ENVIRONMENT_ID}:${PROJECT_ID}`, "T3 Code"]]),
+      sortOrder: "updated_at",
+      icon: null,
+      runThread,
+    });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      value: `archived-thread:${LOCAL_ENVIRONMENT_ID}:thread-archived`,
+      searchTerms: ["Restore search indexing", "T3 Code", "fix/archive-search", "archived"],
+      description: "T3 Code · #fix/archive-search · Archived",
+    });
+
+    await items[0]?.run();
+    expect(runThread).toHaveBeenCalledWith(archivedThread);
+  });
+
+  it("makes archived threads discoverable through the root thread search group", () => {
+    const archivedItems = buildArchivedThreadActionItems({
+      threads: [
+        makeThread({
+          id: ThreadId.make("thread-archived"),
+          title: "Recover websocket notes",
+          archivedAt: "2026-03-20T00:00:00.000Z",
+        }),
+      ],
+      projectTitleByKey: new Map([[`${LOCAL_ENVIRONMENT_ID}:${PROJECT_ID}`, "T3 Code"]]),
+      sortOrder: "updated_at",
+      icon: null,
+      runThread: async (_thread) => undefined,
+    });
+
+    const groups = filterCommandPaletteGroups({
+      activeGroups: [],
+      query: "websocket",
+      isInSubmenu: false,
+      projectSearchItems: [],
+      threadSearchItems: archivedItems,
+    });
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.value).toBe("threads-search");
+    expect(groups[0]?.items.map((item) => item.value)).toEqual([
+      `archived-thread:${LOCAL_ENVIRONMENT_ID}:thread-archived`,
+    ]);
   });
 });
 

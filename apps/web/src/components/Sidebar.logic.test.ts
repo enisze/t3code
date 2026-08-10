@@ -11,6 +11,7 @@ import {
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
   getFallbackThreadIdAfterDelete,
+  getFallbackThreadAfterArchive,
   groupSidebarThreadsByProject,
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
@@ -1698,6 +1699,81 @@ describe("getFallbackThreadIdAfterDelete", () => {
     });
 
     expect(fallbackThreadId).toBe(ThreadId.make("thread-next"));
+  });
+});
+
+describe("getFallbackThreadAfterArchive", () => {
+  it("prefers another active thread in the archived thread's project", () => {
+    const fallback = getFallbackThreadAfterArchive({
+      threads: [
+        makeThread({
+          id: ThreadId.make("thread-active"),
+          projectId: ProjectId.make("project-1"),
+          createdAt: "2026-03-09T10:05:00.000Z",
+          messages: [],
+        }),
+        makeThread({
+          id: ThreadId.make("thread-same-project"),
+          projectId: ProjectId.make("project-1"),
+          createdAt: "2026-03-09T10:10:00.000Z",
+          messages: [],
+        }),
+        makeThread({
+          id: ThreadId.make("thread-other-project"),
+          projectId: ProjectId.make("project-2"),
+          createdAt: "2026-03-09T10:20:00.000Z",
+          messages: [],
+        }),
+      ],
+      archivedThreadId: ThreadId.make("thread-active"),
+      archivedThreadEnvironmentId: localEnvironmentId,
+      sortOrder: "created_at",
+    });
+
+    expect(fallback?.id).toBe(ThreadId.make("thread-same-project"));
+  });
+
+  it("falls back across projects instead of creating an empty draft", () => {
+    const fallback = getFallbackThreadAfterArchive({
+      threads: [
+        makeThread({
+          id: ThreadId.make("thread-active"),
+          projectId: ProjectId.make("project-1"),
+          createdAt: "2026-03-09T10:05:00.000Z",
+          messages: [],
+        }),
+        makeThread({
+          id: ThreadId.make("thread-existing"),
+          environmentId: EnvironmentId.make("environment-remote"),
+          projectId: ProjectId.make("project-2"),
+          createdAt: "2026-03-09T10:20:00.000Z",
+          messages: [],
+        }),
+      ],
+      archivedThreadId: ThreadId.make("thread-active"),
+      archivedThreadEnvironmentId: localEnvironmentId,
+      sortOrder: "created_at",
+    });
+
+    expect(fallback?.id).toBe(ThreadId.make("thread-existing"));
+  });
+
+  it("returns null when archiving the last active thread", () => {
+    const fallback = getFallbackThreadAfterArchive({
+      threads: [
+        makeThread({
+          id: ThreadId.make("thread-active"),
+          projectId: ProjectId.make("project-1"),
+          createdAt: "2026-03-09T10:05:00.000Z",
+          messages: [],
+        }),
+      ],
+      archivedThreadId: ThreadId.make("thread-active"),
+      archivedThreadEnvironmentId: localEnvironmentId,
+      sortOrder: "created_at",
+    });
+
+    expect(fallback).toBeNull();
   });
 });
 describe("groupSidebarThreadsByProject", () => {

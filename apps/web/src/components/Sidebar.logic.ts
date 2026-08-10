@@ -987,6 +987,39 @@ export function getFallbackThreadIdAfterDelete<
     )[0]?.id ?? null
   );
 }
+
+export function getFallbackThreadAfterArchive<
+  T extends Pick<Thread, "id" | "environmentId" | "projectId" | "createdAt" | "updatedAt"> &
+    ThreadSortInput & { archivedAt: string | null },
+>(input: {
+  threads: readonly T[];
+  archivedThreadId: T["id"];
+  archivedThreadEnvironmentId: T["environmentId"];
+  sortOrder: SidebarThreadSortOrder;
+}): T | null {
+  const archivedThread = input.threads.find(
+    (thread) =>
+      thread.id === input.archivedThreadId &&
+      thread.environmentId === input.archivedThreadEnvironmentId,
+  );
+  if (!archivedThread) return null;
+  const activeThreads = input.threads.filter(
+    (thread) =>
+      thread.archivedAt === null &&
+      (thread.id !== input.archivedThreadId ||
+        thread.environmentId !== input.archivedThreadEnvironmentId),
+  );
+  const sameProjectThreads = activeThreads.filter(
+    (thread) =>
+      thread.environmentId === archivedThread.environmentId &&
+      thread.projectId === archivedThread.projectId,
+  );
+  return (
+    sortThreads(sameProjectThreads, input.sortOrder)[0] ??
+    sortThreads(activeThreads, input.sortOrder)[0] ??
+    null
+  );
+}
 export function getProjectSortTimestamp(
   project: SidebarProject,
   projectThreads: readonly ThreadSortInput[],
