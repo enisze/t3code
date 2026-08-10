@@ -1705,11 +1705,13 @@ export default function SidebarV2() {
     // snoozeWakeTick re-runs this memo exactly at the next wake boundary.
     void snoozeWakeTick;
     const preciseNow = new Date().toISOString();
-    const visibleBeforeCollapse = threads.filter(
-      (thread) =>
-        thread.archivedAt === null &&
-        (scopedProjectKeys === null ||
-          scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
+    const visibleBeforeCollapse = sortThreadsForSidebarV2(
+      threads.filter(
+        (thread) =>
+          thread.archivedAt === null &&
+          (scopedProjectKeys === null ||
+            scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
+      ),
     );
     // Chats sharing one worktree collapse to a single row (the earliest chat),
     // classified and shown by that representative; the rest live only in the
@@ -1731,7 +1733,10 @@ export default function SidebarV2() {
       }
     }
     return {
-      activeThreads: sortThreadsForSidebarV2(active),
+      // visibleBeforeCollapse is activity-sorted and collapsing keeps each
+      // worktree at its newest sibling's position. Re-sorting representatives
+      // here would use the oldest chat's timestamp and undo that group order.
+      activeThreads: active,
       // Soonest wake first: "what comes back next" is the shelf's question.
       snoozedThreads: snoozed.toSorted(
         (left, right) =>

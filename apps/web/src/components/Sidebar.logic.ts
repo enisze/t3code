@@ -705,12 +705,16 @@ function isEarlierCreatedThread<T extends WorktreeCollapsibleThread>(
  * through the tab strip. Threads with no worktree (worktreePath === null)
  * never collapse — each keeps its own row.
  *
- * Survivors keep their input order (each stays at its own position), so the
- * caller's sort is preserved. `representativeKeyByThreadKey` maps every input
- * thread's key to its representative's key so the caller can highlight the
- * representative row when the active route is a collapsed sibling. Callers
- * can provide `mergeGroup` to project group-level presentation state onto the
- * representative without changing its identity or route.
+ * A group occupies the position of its first input member, while still using
+ * the earliest-created chat as its representative. This preserves a caller's
+ * activity sort at the worktree level: when any sibling is the newest chat,
+ * the collapsed worktree row stays in that sibling's position. Otherwise the
+ * older representative's own timestamp could incorrectly sink the whole
+ * worktree below less-active rows. `representativeKeyByThreadKey` maps every
+ * input thread's key to its representative's key so the caller can highlight
+ * the representative row when the active route is a collapsed sibling.
+ * Callers can provide `mergeGroup` to project group-level presentation state
+ * onto the representative without changing its identity or route.
  */
 export function collapseWorktreeSiblings<T extends WorktreeCollapsibleThread>(
   threads: readonly T[],
@@ -741,6 +745,7 @@ export function collapseWorktreeSiblings<T extends WorktreeCollapsibleThread>(
 
   const representativeKeyByThreadKey = new Map<string, string>();
   const survivors: T[] = [];
+  const emittedGroupKeys = new Set<string>();
   for (const thread of threads) {
     const key = keyOf(thread);
     if (thread.worktreePath === null) {
@@ -751,9 +756,13 @@ export function collapseWorktreeSiblings<T extends WorktreeCollapsibleThread>(
     const groupKey = `${thread.environmentId}\0${thread.worktreePath}`;
     const representativeKey = representativeKeyByGroupKey.get(groupKey) ?? key;
     representativeKeyByThreadKey.set(key, representativeKey);
-    if (representativeKey === key) {
-      survivors.push(mergeGroup?.(thread, membersByGroupKey.get(groupKey) ?? [thread]) ?? thread);
-    }
+    if (emittedGroupKeys.has(groupKey)) continue;
+    emittedGroupKeys.add(groupKey);
+    const representative = representativeByGroupKey.get(groupKey) ?? thread;
+    survivors.push(
+      mergeGroup?.(representative, membersByGroupKey.get(groupKey) ?? [representative]) ??
+        representative,
+    );
   }
 
   return { threads: survivors, representativeKeyByThreadKey };
