@@ -68,7 +68,7 @@ export function ProjectDefaultWorktreeBranchField(props: {
 
   return (
     <label className="grid min-w-0 gap-1.5" htmlFor={`${idPrefix}-branch`}>
-      <span className="font-medium text-foreground">Default worktree branch</span>
+      <span className="font-medium text-foreground">Default base branch</span>
       <Select
         value={selectValue}
         onValueChange={(next: string | null) =>
@@ -96,7 +96,8 @@ export function ProjectDefaultWorktreeBranchField(props: {
         </SelectPopup>
       </Select>
       <span className="text-[11px] text-muted-foreground">
-        New worktrees branch from {value ? <code>{value}</code> : "the repository default branch"}.
+        New worktrees branch from {value ? <code>{value}</code> : "the repository default branch"},
+        and new pull or merge requests target it.
       </span>
     </label>
   );

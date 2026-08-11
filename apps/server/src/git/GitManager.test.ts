@@ -606,6 +606,7 @@ function runStackedAction(
     cwd: string;
     action: "commit" | "push" | "create_pr" | "commit_push" | "commit_push_pr";
     actionId?: string;
+    baseBranch?: string;
     commitMessage?: string;
     featureBranch?: boolean;
     filePaths?: readonly string[];
@@ -2732,6 +2733,57 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         ghCalls.some((call) => call.includes("pr create --base main --head feature-create-pr")),
       ).toBe(true);
       expect(ghCalls.some((call) => call.startsWith("pr view "))).toBe(false);
+    }),
+  );
+
+  it.effect("targets the project's preferred base branch when creating a PR", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "staging"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "staging.txt"), "staging\n");
+      yield* runGit(repoDir, ["add", "staging.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Staging commit"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/project-base"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "feature.txt"), "feature\n");
+      yield* runGit(repoDir, ["add", "feature.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/project-base"]);
+      // Prove the project preference wins over branch-local merge-base metadata.
+      yield* runGit(repoDir, ["config", "branch.feature/project-base.gh-merge-base", "main"]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            "[]",
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 89,
+                title: "Target staging",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/89",
+                baseRefName: "staging",
+                headRefName: "feature/project-base",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "create_pr",
+        baseBranch: "staging",
+      });
+
+      expect(result.pr.baseBranch).toBe("staging");
+      expect(
+        ghCalls.some((call) =>
+          call.includes("pr create --base staging --head feature/project-base"),
+        ),
+      ).toBe(true);
     }),
   );
 

@@ -32,6 +32,7 @@ T3 Code works with the platforms your team already uses:
 **Create pull requests while you work**
 
 - Push a branch and create a pull request from the Git panel
+- Set a project's **Default base branch** in project settings when work should branch from and merge back into a branch such as `staging` instead of the repository default
 - T3 Code can suggest titles and descriptions based on your commits
 - Supports GitHub Pull Requests, GitLab Merge Requests, and Bitbucket Pull Requests
 

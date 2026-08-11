@@ -6000,6 +6000,7 @@ function ChatViewContent(props: ChatViewProps) {
       <GitActionsControl
         gitCwd={gitCwd}
         activeThreadRef={activeThreadRef}
+        defaultBaseBranch={activeProject.defaultWorktreeBranch}
         previewUrl={configuredPreviewUrls[0] ?? null}
         onSolveConflicts={startConflictResolutionInNewChat}
         {...(routeKind === "draft" && draftId ? { draftId } : {})}
