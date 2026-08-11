@@ -217,6 +217,7 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
     async (input: {
       actionId: string;
       action: GitStackedAction;
+      baseBranch?: string;
       commitMessage?: string;
       featureBranch?: boolean;
       filePaths?: string[];
@@ -236,6 +237,7 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
       return runStackedAction({
         actionId: input.actionId,
         action: input.action,
+        ...(input.baseBranch ? { baseBranch: input.baseBranch } : {}),
         ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
         ...(input.featureBranch ? { featureBranch: true } : {}),
         ...(input.filePaths?.length ? { filePaths: input.filePaths } : {}),

@@ -614,13 +614,21 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     // The default may only exist as origin/<default> (isRemote), which
     // availableBranches filters out — search the unfiltered refs for it.
     const preferredBranch =
+      allBranchRefs.find((branch) => branch.name === selectedProject?.defaultWorktreeBranch) ??
       allBranchRefs.find((branch) => branch.isDefault) ??
       availableBranches.find((branch) => branch.current) ??
       null;
     if (preferredBranch) {
       selectBranch(preferredBranch);
     }
-  }, [allBranchRefs, availableBranches, selectBranch, selectedBranchName, workspaceMode]);
+  }, [
+    allBranchRefs,
+    availableBranches,
+    selectBranch,
+    selectedBranchName,
+    selectedProject?.defaultWorktreeBranch,
+    workspaceMode,
+  ]);
 
   const setRuntimeMode = useCallback(
     (value: RuntimeMode) => {

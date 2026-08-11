@@ -101,6 +101,7 @@ import { openPullRequestLink } from "~/lib/openPullRequestLink";
 interface GitActionsControlProps {
   gitCwd: string | null;
   activeThreadRef: ScopedThreadRef | null;
+  defaultBaseBranch?: string | null;
   draftId?: DraftId;
   previewUrl?: string | null;
   onSolveConflicts?: () => void;
@@ -993,6 +994,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
 export default function GitActionsControl({
   gitCwd,
   activeThreadRef,
+  defaultBaseBranch = null,
   draftId,
   previewUrl = null,
   onSolveConflicts,
@@ -1471,6 +1473,7 @@ export default function GitActionsControl({
       const result = await runImmediateGitAction.run({
         actionId,
         action,
+        ...(defaultBaseBranch ? { baseBranch: defaultBaseBranch } : {}),
         ...(commitMessage ? { commitMessage } : {}),
         ...(featureBranch ? { featureBranch } : {}),
         ...(filePaths ? { filePaths } : {}),

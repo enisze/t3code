@@ -271,6 +271,7 @@ export function useSelectedThreadGitActions() {
               cwd: project.workspaceRoot,
               refName: nextWorktree.baseBranch,
               newRefName: sanitizeFeatureBranchName(nextWorktree.newBranch),
+              baseRefName: nextWorktree.baseBranch,
               path: null,
             },
           });
@@ -327,6 +328,9 @@ export function useSelectedThreadGitActions() {
           const result = await runStackedAction({
             actionId,
             action: input.action,
+            ...(selectedThreadProject?.defaultWorktreeBranch
+              ? { baseBranch: selectedThreadProject.defaultWorktreeBranch }
+              : {}),
             ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
             ...(input.featureBranch ? { featureBranch: input.featureBranch } : {}),
             ...(input.filePaths?.length ? { filePaths: [...input.filePaths] } : {}),
@@ -367,6 +371,7 @@ export function useSelectedThreadGitActions() {
       runStackedAction,
       refreshSelectedThreadGitStatus,
       runSelectedThreadGitMutation,
+      selectedThreadProject?.defaultWorktreeBranch,
       selectedThreadWorktreePath,
       syncSelectedThreadBranchState,
     ],
