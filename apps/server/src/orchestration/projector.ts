@@ -216,6 +216,7 @@ export function projectEvent(
             worktreeBranchPrefix: payload.worktreeBranchPrefix ?? null,
             defaultWorktreeBranch: payload.defaultWorktreeBranch ?? null,
             previewPort: payload.previewPort ?? null,
+            worktreeCopyFiles: payload.worktreeCopyFiles ?? [],
             scripts: payload.scripts,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -262,6 +263,9 @@ export function projectEvent(
                     : {}),
                   ...(payload.previewPort !== undefined
                     ? { previewPort: payload.previewPort }
+                    : {}),
+                  ...(payload.worktreeCopyFiles !== undefined
+                    ? { worktreeCopyFiles: payload.worktreeCopyFiles }
                     : {}),
                   ...(payload.scripts !== undefined ? { scripts: payload.scripts } : {}),
                   updatedAt: payload.updatedAt,

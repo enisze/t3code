@@ -8,6 +8,7 @@ import {
   Globe2Icon,
   LoaderIcon,
   SearchIcon,
+  SettingsIcon,
   SquarePenIcon,
   TerminalIcon,
   TriangleAlertIcon,
@@ -1107,6 +1108,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     isManualProjectSorting,
     dragHandleProps,
   } = props;
+  const navigate = useNavigate();
   const threadSortOrder = useClientSettings<SidebarThreadSortOrder>(
     (settings) => settings.sidebarThreadSortOrder,
   );
@@ -1934,6 +1936,22 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [handleNewThread, isMobile, setOpenMobile],
   );
 
+  // Opens the full per-project settings page. The rename/grouping/remove dialog
+  // stays on the project row's context menu.
+  const handleProjectSettingsClick = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const target = project.memberProjects[0] ?? null;
+      if (!target) return;
+      void navigate({
+        to: "/settings/projects/$environmentId/$projectId",
+        params: { environmentId: target.environmentId, projectId: target.id },
+      });
+    },
+    [navigate, project.memberProjects],
+  );
+
   const handleCreateThreadClick = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
       event.preventDefault();
@@ -2428,10 +2446,26 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             </TooltipPopup>
           </Tooltip>
         )}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <div className="pointer-events-none absolute top-[calc(50%+1px)] right-0.5 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100">
+        <div className="pointer-events-none absolute top-[calc(50%+1px)] right-0.5 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label={`Project settings for ${project.displayName}`}
+                  data-testid="sidebar-project-settings"
+                  className={SIDEBAR_ICON_ACTION_BUTTON_CLASS}
+                  onClick={handleProjectSettingsClick}
+                />
+              }
+            >
+              <SettingsIcon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="top">Project settings</TooltipPopup>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
                 <button
                   type="button"
                   aria-label={`Create new thread in ${project.displayName}`}
@@ -2441,13 +2475,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                 >
                   <SquarePenIcon className="size-3.5" />
                 </button>
-              </div>
-            }
-          />
-          <TooltipPopup side="top">
-            {newThreadShortcutLabel ? `New thread (${newThreadShortcutLabel})` : "New thread"}
-          </TooltipPopup>
-        </Tooltip>
+              }
+            />
+            <TooltipPopup side="top">
+              {newThreadShortcutLabel ? `New thread (${newThreadShortcutLabel})` : "New thread"}
+            </TooltipPopup>
+          </Tooltip>
+        </div>
       </div>
 
       <SidebarProjectThreadList

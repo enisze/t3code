@@ -1616,6 +1616,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     worktreeBranchPrefix: null,
     defaultWorktreeBranch: null,
     previewPort: null,
+    worktreeCopyFiles: [],
     ...rest,
   };
 }

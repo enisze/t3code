@@ -246,6 +246,25 @@ export const ProjectScript = Schema.Struct({
 });
 export type ProjectScript = typeof ProjectScript.Type;
 
+export const PROJECT_WORKTREE_COPY_FILES_MAX_ENTRIES = 50;
+export const PROJECT_WORKTREE_COPY_FILE_MAX_LENGTH = 512;
+
+/**
+ * Workspace-relative paths copied from the project root into every new
+ * worktree. Lets a project share untracked local files (e.g. `.env.local`)
+ * without hand-writing a setup script, and each worktree gets an independent
+ * copy rather than a symlink back to the project root — so editing the file in
+ * one worktree cannot change it in another.
+ */
+export const ProjectWorktreeCopyFiles = Schema.Array(
+  TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WORKTREE_COPY_FILE_MAX_LENGTH)),
+).check(Schema.isMaxLength(PROJECT_WORKTREE_COPY_FILES_MAX_ENTRIES));
+export type ProjectWorktreeCopyFiles = typeof ProjectWorktreeCopyFiles.Type;
+
+const ProjectWorktreeCopyFilesField = ProjectWorktreeCopyFiles.pipe(
+  Schema.withDecodingDefault(Effect.succeed([])),
+);
+
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
@@ -280,6 +299,7 @@ export const OrchestrationProject = Schema.Struct({
    * unset. Only honored on the desktop build.
    */
   previewPort: Schema.NullOr(PortSchema).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  worktreeCopyFiles: ProjectWorktreeCopyFilesField,
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -468,6 +488,7 @@ export const OrchestrationProjectShell = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   previewPort: Schema.NullOr(PortSchema).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  worktreeCopyFiles: ProjectWorktreeCopyFilesField,
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -602,6 +623,7 @@ export const ProjectCreateCommand = Schema.Struct({
   worktreeBranchPrefix: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   defaultWorktreeBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   previewPort: Schema.optional(Schema.NullOr(PortSchema)),
+  worktreeCopyFiles: Schema.optional(ProjectWorktreeCopyFiles),
   createdAt: IsoDateTime,
 });
 
@@ -617,6 +639,7 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   worktreeBranchPrefix: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   defaultWorktreeBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   previewPort: Schema.optional(Schema.NullOr(PortSchema)),
+  worktreeCopyFiles: Schema.optional(ProjectWorktreeCopyFiles),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
 });
 
@@ -1008,6 +1031,7 @@ export const ProjectCreatedPayload = Schema.Struct({
   worktreeBranchPrefix: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   defaultWorktreeBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   previewPort: Schema.optional(Schema.NullOr(PortSchema)),
+  worktreeCopyFiles: Schema.optional(ProjectWorktreeCopyFiles),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -1024,6 +1048,7 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   worktreeBranchPrefix: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   defaultWorktreeBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   previewPort: Schema.optional(Schema.NullOr(PortSchema)),
+  worktreeCopyFiles: Schema.optional(ProjectWorktreeCopyFiles),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
   updatedAt: IsoDateTime,
 });

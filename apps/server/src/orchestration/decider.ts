@@ -255,6 +255,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           worktreeBranchPrefix: command.worktreeBranchPrefix ?? null,
           defaultWorktreeBranch: command.defaultWorktreeBranch ?? null,
           previewPort: command.previewPort ?? null,
+          worktreeCopyFiles: command.worktreeCopyFiles ?? [],
           scripts: [],
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
@@ -303,6 +304,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             ? { defaultWorktreeBranch: command.defaultWorktreeBranch }
             : {}),
           ...(command.previewPort !== undefined ? { previewPort: command.previewPort } : {}),
+          ...(command.worktreeCopyFiles !== undefined
+            ? { worktreeCopyFiles: command.worktreeCopyFiles }
+            : {}),
           ...(command.scripts !== undefined ? { scripts: command.scripts } : {}),
           updatedAt: occurredAt,
         },

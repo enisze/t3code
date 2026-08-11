@@ -55,7 +55,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
-import { useParams, useRouter } from "@tanstack/react-router";
+import { useNavigate, useParams, useRouter } from "@tanstack/react-router";
 
 import {
   isAtomCommandInterrupted,
@@ -1167,6 +1167,7 @@ export default function SidebarV2() {
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   const router = useRouter();
+  const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
@@ -1694,6 +1695,23 @@ export default function SidebarV2() {
       window.requestAnimationFrame(() => setProjectActionsTarget(projectGroup));
     },
     [],
+  );
+
+  // The gear on a project row opens the full per-project settings page. The
+  // quick-actions dialog (grouping rule, remove/hide) stays reachable from the
+  // project scope menu and the thread context menu.
+  const handleOpenProjectSettings = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>, projectGroup: SidebarProjectSnapshot) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const target = projectGroup.memberProjects[0] ?? null;
+      if (!target) return;
+      void navigate({
+        to: "/settings/projects/$environmentId/$projectId",
+        params: { environmentId: target.environmentId, projectId: target.id },
+      });
+    },
+    [navigate],
   );
 
   // Archived threads leave the live shell stream entirely, so the sidebar only
@@ -3027,8 +3045,8 @@ export default function SidebarV2() {
                                     type="button"
                                     data-testid="sidebar-v2-project-settings"
                                     aria-label={`Project settings for ${group.displayName}`}
-                                    onClick={(event) => handleProjectActions(event, group)}
-                                    className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/55 outline-none transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:bg-sidebar-row-hover focus-visible:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                                    onClick={(event) => handleOpenProjectSettings(event, group)}
+                                    className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/55 opacity-0 outline-none transition-[color,background-color,opacity] hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:bg-sidebar-row-hover focus-visible:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:opacity-100 group-hover/project-header:opacity-100"
                                   />
                                 }
                               >

@@ -106,6 +106,7 @@ describe("add project shared logic", () => {
         worktreeBranchPrefix: null,
         defaultWorktreeBranch: null,
         previewPort: null,
+        worktreeCopyFiles: [],
         scripts: [],
       },
       {
@@ -121,6 +122,7 @@ describe("add project shared logic", () => {
         worktreeBranchPrefix: null,
         defaultWorktreeBranch: null,
         previewPort: null,
+        worktreeCopyFiles: [],
         scripts: [],
       },
     ];

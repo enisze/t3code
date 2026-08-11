@@ -75,6 +75,7 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
+import * as ProjectWorktreeFileCopier from "./project/ProjectWorktreeFileCopier.ts";
 import { ObservabilityLive } from "./observability/Layers/Observability.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./auth/http.ts";
@@ -249,6 +250,7 @@ const SourceControlProviderRegistryLayerLive = SourceControlProviderRegistry.lay
 
 const GitManagerLayerLive = GitManager.layer.pipe(
   Layer.provideMerge(ProjectSetupScriptRunner.layer),
+  Layer.provideMerge(ProjectWorktreeFileCopier.layer),
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
   Layer.provideMerge(TextGeneration.layer),

@@ -96,6 +96,7 @@ import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
+import * as ProjectWorktreeFileCopier from "./project/ProjectWorktreeFileCopier.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
@@ -412,6 +413,7 @@ const makeWsRpcLayer = (
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+      const projectWorktreeFileCopier = yield* ProjectWorktreeFileCopier.ProjectWorktreeFileCopier;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -924,6 +926,33 @@ const makeWsRpcLayer = (
                 );
             });
 
+          // Copy the project's configured local files (e.g. `.env.local`) into the
+          // fresh worktree before the setup script runs, so the script can rely on
+          // them. Copy problems are logged per file and never fail the bootstrap.
+          const runCopyProjectFilesProgram = () =>
+            Effect.gen(function* () {
+              if (!bootstrap?.runSetupScript || !targetWorktreePath) {
+                return;
+              }
+              yield* projectWorktreeFileCopier
+                .copyForThread({
+                  threadId: command.threadId,
+                  ...(targetProjectId ? { projectId: targetProjectId } : {}),
+                  ...(targetProjectCwd ? { projectCwd: targetProjectCwd } : {}),
+                  worktreePath: targetWorktreePath,
+                })
+                .pipe(
+                  Effect.tapError((error) =>
+                    Effect.logWarning("Failed to copy project files into worktree", {
+                      threadId: command.threadId,
+                      worktreePath: targetWorktreePath,
+                      detail: error.message,
+                    }),
+                  ),
+                  Effect.ignore,
+                );
+            });
+
           const bootstrapProgram = Effect.gen(function* () {
             if (bootstrap?.createThread) {
               // Bootstrapping a draft is a "create if absent" operation: the
@@ -1011,6 +1040,7 @@ const makeWsRpcLayer = (
               yield* refreshGitStatus(targetWorktreePath);
             }
 
+            yield* runCopyProjectFilesProgram();
             yield* runSetupProgram();
 
             return yield* orchestrationEngine.dispatch(finalTurnStartCommand);

@@ -34,6 +34,7 @@ import * as GitHubSourceControlProvider from "../sourceControl/GitHubSourceContr
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import * as ProjectWorktreeFileCopier from "../project/ProjectWorktreeFileCopier.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitManager from "./GitManager.ts";
@@ -641,6 +642,7 @@ function makeManager(input?: {
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
+  worktreeFileCopier?: ProjectWorktreeFileCopier.ProjectWorktreeFileCopier["Service"];
 }) {
   const { service: gitHubCli, ghCalls } = createGitHubCliWithFakeGh(input?.ghScenario);
   const textGeneration = createTextGeneration(input?.textGeneration);
@@ -679,6 +681,12 @@ function makeManager(input?: {
       ProjectSetupScriptRunner.ProjectSetupScriptRunner,
       input?.setupScriptRunner ?? {
         runForThread: () => Effect.succeed({ status: "no-script" as const }),
+      },
+    ),
+    Layer.succeed(
+      ProjectWorktreeFileCopier.ProjectWorktreeFileCopier,
+      input?.worktreeFileCopier ?? {
+        copyForThread: () => Effect.succeed({ entries: [], copiedCount: 0 }),
       },
     ),
     vcsDriverLayer,

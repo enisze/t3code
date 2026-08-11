@@ -272,6 +272,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           worktreeBranchPrefix: null,
           defaultWorktreeBranch: null,
           previewPort: null,
+          worktreeCopyFiles: [],
           scripts: [
             {
               id: "script-1",
@@ -392,6 +393,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           worktreeBranchPrefix: null,
           defaultWorktreeBranch: null,
           previewPort: null,
+          worktreeCopyFiles: [],
           scripts: [
             {
               id: "script-1",

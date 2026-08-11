@@ -13,6 +13,7 @@ import {
   PortSchema,
   ProjectId,
   ProjectScript,
+  ProjectWorktreeCopyFiles,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -31,6 +32,7 @@ export const ProjectionProject = Schema.Struct({
   worktreeBranchPrefix: Schema.NullOr(Schema.String),
   defaultWorktreeBranch: Schema.NullOr(Schema.String),
   previewPort: Schema.NullOr(PortSchema),
+  worktreeCopyFiles: ProjectWorktreeCopyFiles,
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

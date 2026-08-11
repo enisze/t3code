@@ -52,6 +52,7 @@ import {
   repositoryConventionsTextGenerationPolicy,
 } from "../textGeneration/TextGenerationPresets.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import * as ProjectWorktreeFileCopier from "../project/ProjectWorktreeFileCopier.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -616,6 +617,7 @@ export const make = Effect.gen(function* () {
   const textGeneration = yield* TextGeneration.TextGeneration;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+  const projectWorktreeFileCopier = yield* ProjectWorktreeFileCopier.ProjectWorktreeFileCopier;
   const crypto = yield* Crypto.Crypto;
 
   const sourceControlProvider = (cwd: string) => sourceControlProviders.resolve({ cwd });
@@ -1773,6 +1775,27 @@ export const make = Effect.gen(function* () {
   const preparePullRequestThread: GitManager["Service"]["preparePullRequestThread"] = Effect.fn(
     "preparePullRequestThread",
   )(function* (input) {
+    const maybeCopyProjectFiles = (worktreePath: string) => {
+      if (!input.threadId) {
+        return Effect.void;
+      }
+      return projectWorktreeFileCopier
+        .copyForThread({
+          threadId: input.threadId,
+          projectCwd: input.cwd,
+          worktreePath,
+        })
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("GitManager.preparePullRequestThread file copy failed", {
+              threadId: input.threadId,
+              worktreePath,
+              cause: error,
+            }).pipe(Effect.asVoid),
+          ),
+          Effect.asVoid,
+        );
+    };
     const maybeRunSetupScript = (worktreePath: string) => {
       if (!input.threadId) {
         return Effect.void;
@@ -1931,6 +1954,7 @@ export const make = Effect.gen(function* () {
         path: null,
       });
       yield* ensureExistingWorktreeUpstream(worktree.worktree.path);
+      yield* maybeCopyProjectFiles(worktree.worktree.path);
       yield* maybeRunSetupScript(worktree.worktree.path);
 
       return {
