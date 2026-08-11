@@ -375,7 +375,7 @@ export const DiffNavigatorFileList = memo(function DiffNavigatorFileList(props: 
               </span>
             </div>
           ) : null}
-          <div className="space-y-0.5">
+          <div className="space-y-1">
             {group.files.map((file) => {
               const slashIndex = file.path.lastIndexOf("/");
               const directory = slashIndex >= 0 ? file.path.slice(0, slashIndex + 1) : "";
@@ -386,7 +386,7 @@ export const DiffNavigatorFileList = memo(function DiffNavigatorFileList(props: 
                   key={`file:${file.path}`}
                   data-active={isActive || undefined}
                   className={cn(
-                    "group flex w-full items-center gap-1.5 rounded-xl py-1 pr-3 pl-2 transition-colors",
+                    "group flex w-full items-center gap-2 rounded-xl py-2 pr-3 pl-2.5 transition-colors",
                     isActive
                       ? file.conflicted
                         ? "bg-destructive/12"
@@ -410,29 +410,29 @@ export const DiffNavigatorFileList = memo(function DiffNavigatorFileList(props: 
                   />
                   <button
                     type="button"
-                    className="flex min-w-0 flex-1 items-center gap-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-md"
+                    className="flex min-w-0 flex-1 items-center gap-2 py-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-md"
                     onClick={() => onOpenFile(file.path)}
                   >
                     <PierreEntryIcon
                       pathValue={file.path}
                       kind="file"
                       theme={resolvedTheme}
-                      className="size-3.5 shrink-0 text-muted-foreground/70"
+                      className="size-4 shrink-0 text-muted-foreground/70"
                     />
                     {file.conflicted ? (
                       <TriangleAlertIcon
-                        className="size-3.5 shrink-0 text-destructive"
+                        className="size-4 shrink-0 text-destructive"
                         aria-label="Merge conflict"
                       />
                     ) : null}
-                    <span className="flex min-w-0 flex-1 items-baseline font-mono text-[11px]">
+                    <span className="flex min-w-0 flex-1 items-baseline font-mono text-xs">
                       {directory ? (
                         <span className="min-w-0 truncate text-foreground">{directory}</span>
                       ) : null}
                       <span className="shrink-0 text-foreground">{name}</span>
                     </span>
                     {hasNonZeroStat({ additions: file.additions, deletions: file.deletions }) ? (
-                      <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums">
+                      <span className="ml-auto shrink-0 font-mono text-[11px] tabular-nums">
                         <DiffStatLabel additions={file.additions} deletions={file.deletions} />
                       </span>
                     ) : null}
