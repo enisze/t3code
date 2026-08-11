@@ -26,7 +26,6 @@ import {
   CircleAlertIcon,
   CircleCheckIcon,
   CircleDashedIcon,
-  ClockIcon,
   CopyIcon,
   EyeIcon,
   EyeOffIcon,
@@ -181,7 +180,6 @@ import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./u
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
-import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { useComposerDraftStore } from "../composerDraftStore";
 
@@ -324,58 +322,6 @@ function SidebarV2ThreadTooltip({
   );
 }
 
-/**
- * Hover entry point for snooze: a clock button opening the preset menu.
- * Controlled by the row (which also uses the open state to pin its hover
- * actions while the menu is up).
- */
-function SnoozePopoverButton(props: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onSnooze: (preset: SnoozePreset) => void;
-}) {
-  const { open, onOpenChange, onSnooze } = props;
-  // Presets resolve at open time so "In 1 hour" is relative to the click,
-  // not to when the row mounted.
-  const presets = useMemo(() => (open ? resolveSnoozePresets(new Date()) : []), [open]);
-  return (
-    <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger
-        render={
-          <button
-            type="button"
-            aria-label="Snooze thread"
-            onClick={(event) => event.stopPropagation()}
-            onDoubleClick={(event) => event.stopPropagation()}
-            className="inline-flex h-full cursor-pointer items-center gap-0.5 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground hover:text-foreground"
-          />
-        }
-      >
-        <ClockIcon className="size-3" />
-      </PopoverTrigger>
-      <PopoverPopup side="bottom" align="end" className="w-56" viewportClassName="p-1">
-        {presets.map((preset) => (
-          <button
-            key={preset.id}
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              onOpenChange(false);
-              onSnooze(preset);
-            }}
-            className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground/90 hover:bg-accent hover:text-foreground"
-          >
-            <span className="flex-1">{preset.label}</span>
-            <span className="font-mono text-[10px] text-muted-foreground/60 tabular-nums">
-              {preset.whenLabel}
-            </span>
-          </button>
-        ))}
-      </PopoverPopup>
-    </Popover>
-  );
-}
-
 const SidebarV2Row = memo(function SidebarV2Row(props: {
   thread: SidebarThreadSummary;
   // Cards are active inbox threads; slim rows are the snoozed shelf. Archived
@@ -410,7 +356,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   renamingTitle: string;
   onContextMenu: (threadRef: ScopedThreadRef, position: { x: number; y: number }) => void;
   onArchive: (threadRef: ScopedThreadRef) => void;
-  onSnooze: (threadRef: ScopedThreadRef, preset: SnoozePreset) => void;
+  onOpenProjectSettings: (thread: SidebarThreadSummary) => void;
   onUnsnooze: (threadRef: ScopedThreadRef) => void;
   onChangeRequestState: (threadKey: string, state: "open" | "closed" | "merged" | null) => void;
 }) {
@@ -422,7 +368,6 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     onCommitRename,
     onContextMenu,
     onRenameTitleChange,
-    onSnooze,
     onStartRename,
     onThreadActivate,
     onThreadClick,
@@ -643,28 +588,6 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     },
     [onUnsnooze, threadRef],
   );
-  const handleSnoozePreset = useCallback(
-    (preset: SnoozePreset) => {
-      onSnooze(threadRef, preset);
-    },
-    [onSnooze, threadRef],
-  );
-  // While the snooze popover is open the pointer leaves the row, which
-  // would fade the hover actions out from under the open menu; pin them.
-  const [snoozeMenuOpenRaw, setSnoozeMenuOpen] = useState(false);
-  // Snooze is offered only where it can succeed: capability-gated and never
-  // on blocked-on-you work or queued turns (the server rejects both).
-  const showSnoozeButton =
-    props.snoozeSupported && canSnooze(thread, { now: new Date().toISOString() });
-  // If the thread becomes blocked while the popover is open, the button
-  // unmounts without firing onOpenChange(false). Deriving the flag keeps a
-  // stale true from permanently hiding the status label / pinning the
-  // hover actions, and the effect clears the raw state so the popover
-  // doesn't resurrect if the button later remounts.
-  const snoozeMenuOpen = snoozeMenuOpenRaw && showSnoozeButton;
-  useEffect(() => {
-    if (!showSnoozeButton) setSnoozeMenuOpen(false);
-  }, [showSnoozeButton]);
   const handlePrClick = useCallback(
     (event: ReactMouseEvent<HTMLElement>) => {
       if (pr?.url) openPrLink(event, pr.url);
@@ -881,16 +804,11 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 <span className="flex-1" />
               )}
               {/* The visible state owns this slot's width: status at rest,
-                  actions on hover/focus or while the popover is open. Keeping
-                  the hidden state out of flow lets the project label reclaim
-                  space without either state overlapping it. */}
+                  actions on hover/focus. Keeping the hidden state out of flow
+                  lets the project label reclaim space without either state
+                  overlapping it. */}
               <span className="group/v2-status-slot relative ml-auto flex h-5 min-w-8 shrink-0 items-stretch justify-end text-xs">
-                <span
-                  className={cn(
-                    "self-center justify-self-end tabular-nums text-muted-foreground/65 transition-opacity group-focus-within/v2-status-slot:absolute group-focus-within/v2-status-slot:right-0 group-hover/v2-row:absolute group-hover/v2-row:right-0 group-hover/v2-row:opacity-0",
-                    snoozeMenuOpen && "absolute right-0 opacity-0",
-                  )}
-                >
+                <span className="self-center justify-self-end tabular-nums text-muted-foreground/65 transition-opacity group-focus-within/v2-status-slot:absolute group-focus-within/v2-status-slot:right-0 group-hover/v2-row:absolute group-hover/v2-row:right-0 group-hover/v2-row:opacity-0">
                   {topStatus ? (
                     <span
                       className={cn(
@@ -922,19 +840,21 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                     threadTimeLabel(thread)
                   )}
                 </span>
-                <span
-                  className={cn(
-                    "absolute inset-y-0 right-0 flex items-stretch opacity-0 transition-opacity focus-within:static focus-within:opacity-100 group-hover/v2-row:static group-hover/v2-row:opacity-100",
-                    snoozeMenuOpen && "static opacity-100",
-                  )}
-                >
-                  {showSnoozeButton ? (
-                    <SnoozePopoverButton
-                      open={snoozeMenuOpen}
-                      onOpenChange={setSnoozeMenuOpen}
-                      onSnooze={handleSnoozePreset}
-                    />
-                  ) : null}
+                <span className="absolute inset-y-0 right-0 flex items-stretch opacity-0 transition-opacity focus-within:static focus-within:opacity-100 group-hover/v2-row:static group-hover/v2-row:opacity-100">
+                  <button
+                    type="button"
+                    aria-label={`Project settings for ${props.projectTitle ?? "project"}`}
+                    data-testid="sidebar-v2-row-project-settings"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      props.onOpenProjectSettings(thread);
+                    }}
+                    onDoubleClick={(event) => event.stopPropagation()}
+                    className="inline-flex h-full cursor-pointer items-center rounded-md bg-transparent px-1.5 text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    <SettingsIcon className="size-3.5" />
+                  </button>
                   <button
                     type="button"
                     aria-label="Archive thread"
@@ -1709,6 +1629,18 @@ export default function SidebarV2() {
       void navigate({
         to: "/settings/projects/$environmentId/$projectId",
         params: { environmentId: target.environmentId, projectId: target.id },
+      });
+    },
+    [navigate],
+  );
+
+  // The gear on a thread row opens the settings page for that thread's own
+  // project, so it works in the flat inbox where no project header is rendered.
+  const openProjectSettingsForThread = useCallback(
+    (thread: SidebarThreadSummary) => {
+      void navigate({
+        to: "/settings/projects/$environmentId/$projectId",
+        params: { environmentId: thread.environmentId, projectId: thread.projectId },
       });
     },
     [navigate],
@@ -2989,7 +2921,7 @@ export default function SidebarV2() {
                       renamingTitle={renamingThreadKey === threadKey ? renamingTitle : ""}
                       onContextMenu={handleThreadContextMenu}
                       onArchive={attemptArchive}
-                      onSnooze={attemptSnooze}
+                      onOpenProjectSettings={openProjectSettingsForThread}
                       onUnsnooze={attemptUnsnooze}
                       onChangeRequestState={handleChangeRequestState}
                     />
