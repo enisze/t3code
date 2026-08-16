@@ -4,6 +4,7 @@ import {
   ArrowLeftIcon,
   BotIcon,
   FlaskConicalIcon,
+  FolderGitIcon,
   GitBranchIcon,
   KeyboardIcon,
   Link2Icon,
@@ -16,12 +17,14 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
+  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
   useSidebar,
 } from "../ui/sidebar";
 import { T3ConnectSidebarAvatar, T3ConnectSidebarSignIn } from "../clerk/T3ConnectSidebarSignIn";
+import { useProjects } from "../../state/entities";
 
 export type SettingsSectionPath =
   | "/settings/general"
@@ -48,16 +51,35 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },
 ];
 
+/** Settings route for a single project, used by the nav and the sidebar gear. */
+export function projectSettingsPath(environmentId: string, projectId: string): string {
+  return `/settings/projects/${environmentId}/${projectId}`;
+}
+
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
   const canGoBack = useCanGoBack();
   const { isMobile, setOpenMobile } = useSidebar();
+  const projects = useProjects();
   const handleSectionClick = useCallback(
     (to: SettingsSectionPath) => {
       if (isMobile) {
         setOpenMobile(false);
       }
       void navigate({ to, replace: true });
+    },
+    [isMobile, navigate, setOpenMobile],
+  );
+  const handleProjectClick = useCallback(
+    (environmentId: string, projectId: string) => {
+      if (isMobile) {
+        setOpenMobile(false);
+      }
+      void navigate({
+        to: "/settings/projects/$environmentId/$projectId",
+        params: { environmentId, projectId },
+        replace: true,
+      });
     },
     [isMobile, navigate, setOpenMobile],
   );
@@ -94,6 +116,27 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
             })}
           </SidebarMenu>
         </SidebarGroup>
+        {projects.length > 0 ? (
+          <SidebarGroup className="px-2 pb-2">
+            <SidebarGroupLabel>Repositories</SidebarGroupLabel>
+            <SidebarMenu>
+              {projects.map((project) => {
+                const to = projectSettingsPath(project.environmentId, project.id);
+                return (
+                  <SidebarMenuItem key={to}>
+                    <SidebarMenuButton
+                      isActive={pathname === to}
+                      onClick={() => handleProjectClick(project.environmentId, project.id)}
+                    >
+                      <FolderGitIcon />
+                      <span className="truncate">{project.title}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </SidebarGroup>
+        ) : null}
       </SidebarContent>
       <SidebarFooter className="p-2">
         <T3ConnectSidebarSignIn />

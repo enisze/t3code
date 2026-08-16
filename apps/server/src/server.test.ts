@@ -98,6 +98,7 @@ import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
+import * as ProjectWorktreeFileCopier from "./project/ProjectWorktreeFileCopier.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
@@ -158,6 +159,7 @@ const makeDefaultOrchestrationReadModel = () => {
         worktreeBranchPrefix: null,
         defaultWorktreeBranch: null,
         previewPort: null,
+        worktreeCopyFiles: [],
         scripts: [],
         createdAt: now,
         updatedAt: now,
@@ -348,6 +350,9 @@ const buildAppUnderTest = (options?: {
     vcsStatusBroadcaster?: Partial<VcsStatusBroadcaster.VcsStatusBroadcaster["Service"]>;
     projectSetupScriptRunner?: Partial<
       ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]
+    >;
+    projectWorktreeFileCopier?: Partial<
+      ProjectWorktreeFileCopier.ProjectWorktreeFileCopier["Service"]
     >;
     terminalManager?: Partial<TerminalManager.TerminalManager["Service"]>;
     orchestrationEngine?: Partial<OrchestrationEngine.OrchestrationEngineService["Service"]>;
@@ -673,10 +678,16 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provideMerge(vcsStatusBroadcasterLayer),
       Layer.provide(
-        Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
-          runForThread: () => Effect.succeed({ status: "no-script" as const }),
-          ...options?.layers?.projectSetupScriptRunner,
-        }),
+        Layer.mergeAll(
+          Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
+            runForThread: () => Effect.succeed({ status: "no-script" as const }),
+            ...options?.layers?.projectSetupScriptRunner,
+          }),
+          Layer.mock(ProjectWorktreeFileCopier.ProjectWorktreeFileCopier)({
+            copyForThread: () => Effect.succeed({ entries: [], copiedCount: 0 }),
+            ...options?.layers?.projectWorktreeFileCopier,
+          }),
+        ),
       ),
       Layer.provide(
         Layer.mergeAll(
@@ -5701,6 +5712,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             worktreeBranchPrefix: null,
             defaultWorktreeBranch: null,
             previewPort: null,
+            worktreeCopyFiles: [],
             scripts: [],
             createdAt: now,
             updatedAt: now,

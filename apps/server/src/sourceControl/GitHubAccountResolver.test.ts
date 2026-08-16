@@ -36,6 +36,7 @@ const projectShell = (input: {
   worktreeBranchPrefix: null,
   defaultWorktreeBranch: null,
   previewPort: null,
+  worktreeCopyFiles: [],
   scripts: [],
   createdAt: NOW,
   updatedAt: NOW,

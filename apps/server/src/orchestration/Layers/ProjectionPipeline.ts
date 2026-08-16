@@ -500,6 +500,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             worktreeBranchPrefix: event.payload.worktreeBranchPrefix ?? null,
             defaultWorktreeBranch: event.payload.defaultWorktreeBranch ?? null,
             previewPort: event.payload.previewPort ?? null,
+            worktreeCopyFiles: event.payload.worktreeCopyFiles ?? [],
             scripts: event.payload.scripts,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
@@ -537,6 +538,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               : {}),
             ...(event.payload.previewPort !== undefined
               ? { previewPort: event.payload.previewPort }
+              : {}),
+            ...(event.payload.worktreeCopyFiles !== undefined
+              ? { worktreeCopyFiles: event.payload.worktreeCopyFiles }
               : {}),
             ...(event.payload.scripts !== undefined ? { scripts: event.payload.scripts } : {}),
             updatedAt: event.payload.updatedAt,
