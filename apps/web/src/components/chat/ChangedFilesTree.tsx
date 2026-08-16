@@ -269,11 +269,11 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
             ) : (
               <FolderClosedIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
             )}
-            <span className="truncate font-mono text-[11px] text-muted-foreground/90 group-hover:text-foreground/90">
+            <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground/90 group-hover:text-foreground/90">
               {node.name}
             </span>
             {hasNonZeroStat(node.stat) && (
-              <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums">
+              <span className="shrink-0 pl-2 font-mono text-[10px] tabular-nums">
                 <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
               </span>
             )}
@@ -304,11 +304,13 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
           theme={resolvedTheme}
           className="size-3.5 text-muted-foreground/70"
         />
-        <span className="truncate font-mono text-[11px] text-muted-foreground/80 group-hover:text-foreground/90">
+        {/* min-w-0 lets the name shrink below its intrinsic width, so it
+            ellipsizes instead of overflowing onto the diff stat. */}
+        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground/80 group-hover:text-foreground/90">
           {node.name}
         </span>
         {node.stat && (
-          <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums">
+          <span className="shrink-0 pl-2 font-mono text-[10px] tabular-nums">
             <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
           </span>
         )}
@@ -425,14 +427,20 @@ export const DiffNavigatorFileList = memo(function DiffNavigatorFileList(props: 
                         aria-label="Merge conflict"
                       />
                     ) : null}
-                    <span className="flex min-w-0 flex-1 items-baseline font-mono text-xs">
+                    {/* overflow-hidden is the hard guarantee that a long name can
+                        never paint over the diff stat; the directory collapses
+                        first so the file name stays readable as long as
+                        possible, then the name itself ellipsizes. */}
+                    <span className="flex min-w-0 flex-1 items-baseline overflow-hidden font-mono text-xs">
                       {directory ? (
-                        <span className="min-w-0 truncate text-foreground">{directory}</span>
+                        <span className="min-w-0 shrink-[9999] truncate text-foreground">
+                          {directory}
+                        </span>
                       ) : null}
-                      <span className="shrink-0 text-foreground">{name}</span>
+                      <span className="min-w-0 truncate text-foreground">{name}</span>
                     </span>
                     {hasNonZeroStat({ additions: file.additions, deletions: file.deletions }) ? (
-                      <span className="ml-auto shrink-0 font-mono text-[11px] tabular-nums">
+                      <span className="shrink-0 pl-2 font-mono text-[11px] tabular-nums">
                         <DiffStatLabel additions={file.additions} deletions={file.deletions} />
                       </span>
                     ) : null}
