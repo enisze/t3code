@@ -1893,7 +1893,11 @@ function ChatViewContent(props: ChatViewProps) {
   );
 
   const handlePreparedPullRequestThread = useCallback(
-    async (input: { branch: string; worktreePath: string | null }) => {
+    async (input: {
+      branch: string;
+      worktreePath: string | null;
+      reuseLocalCheckout?: boolean;
+    }) => {
       const existing = activeProjectThreadShells.find(
         (shell) =>
           activeProject !== null &&
@@ -1915,13 +1919,25 @@ function ChatViewContent(props: ChatViewProps) {
         });
         return true;
       }
-      if (input.worktreePath === null) return false;
-      await openOrReuseProjectDraftThread({
-        branch: input.branch,
-        worktreePath: input.worktreePath,
-        envMode: "worktree",
-      });
-      return true;
+      if (input.worktreePath !== null) {
+        await openOrReuseProjectDraftThread({
+          branch: input.branch,
+          worktreePath: input.worktreePath,
+          envMode: "worktree",
+        });
+        return true;
+      }
+      // The branch is the primary checkout — git can't give it a second
+      // worktree, so open a chat rooted at that checkout in local mode.
+      if (input.reuseLocalCheckout) {
+        await openOrReuseProjectDraftThread({
+          branch: input.branch,
+          worktreePath: null,
+          envMode: "local",
+        });
+        return true;
+      }
+      return false;
     },
     [activeProject, activeProjectThreadShells, navigate, openOrReuseProjectDraftThread],
   );

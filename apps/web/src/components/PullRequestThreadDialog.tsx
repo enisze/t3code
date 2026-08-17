@@ -1,5 +1,8 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -47,7 +50,11 @@ interface PullRequestThreadDialogProps {
   autoSubmitInitialReference?: boolean;
   headless?: boolean;
   onOpenChange: (open: boolean) => void;
-  onPrepared: (input: { branch: string; worktreePath: string | null }) => Promise<boolean>;
+  onPrepared: (input: {
+    branch: string;
+    worktreePath: string | null;
+    reuseLocalCheckout?: boolean;
+  }) => Promise<boolean>;
 }
 
 export function PullRequestThreadDialog({
@@ -66,6 +73,10 @@ export function PullRequestThreadDialog({
   const [reference, setReference] = useState(initialReference ?? "");
   const [referenceDirty, setReferenceDirty] = useState(false);
   const [isPreparing, setIsPreparing] = useState(false);
+  // Failures on the plain "create a worktree from this branch" path aren't
+  // reported through any action's `error`, so hold them here to keep a failed
+  // "Open worktree" click from looking like a no-op.
+  const [createWorktreeError, setCreateWorktreeError] = useState<string | null>(null);
   // A headless auto-submit renders nothing, so a failure there would leave an
   // invisible dialog with an error the user can never see or dismiss. Revealing
   // it turns any dead end back into something clickable.
@@ -182,10 +193,22 @@ export function PullRequestThreadDialog({
       setRevealed(true);
       return;
     }
+    setCreateWorktreeError(null);
+    const branchWorktreePath = resolvedPullRequest
+      ? null
+      : (resolvedBranchTarget?.worktreePath ?? null);
+    // A branch already checked out in the primary checkout can't get its own
+    // worktree; reuse that checkout as the local workspace instead of failing on
+    // `git worktree add`.
+    const reuseLocalCheckout =
+      !resolvedPullRequest &&
+      (resolvedBranchTarget?.reuseExisting ?? false) &&
+      branchWorktreePath === null;
     if (
       await onPrepared({
         branch: targetBranch,
-        worktreePath: resolvedPullRequest ? null : (resolvedBranchTarget?.worktreePath ?? null),
+        worktreePath: branchWorktreePath,
+        reuseLocalCheckout,
       })
     ) {
       onOpenChange(false);
@@ -223,6 +246,12 @@ export function PullRequestThreadDialog({
       });
       setIsPreparing(false);
       if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          const failure = squashAtomCommandFailure(result);
+          setCreateWorktreeError(
+            failure instanceof Error ? failure.message : "Failed to open branch in a worktree.",
+          );
+        }
         setRevealed(true);
         return;
       }
@@ -287,6 +316,7 @@ export function PullRequestThreadDialog({
       : null;
   const errorMessage =
     validationMessage ??
+    createWorktreeError ??
     (resolvedPullRequest === null && pullRequestResolution.error
       ? pullRequestResolution.error
       : preparePullRequestThreadAction.error instanceof Error
@@ -329,6 +359,7 @@ export function PullRequestThreadDialog({
               value={reference}
               onChange={(event) => {
                 setReferenceDirty(true);
+                setCreateWorktreeError(null);
                 setReference(event.target.value);
               }}
               onKeyDown={(event) => {

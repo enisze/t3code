@@ -1442,6 +1442,59 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(yield* fileSystem.exists(worktreePath), false);
       }),
     );
+
+    it.effect("checks out a branch a deleted worktree still claims", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const worktreePath = pathService.join(
+          yield* makeTmpDir("git-worktrees-"),
+          "stale-worktree",
+        );
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/stale",
+        });
+
+        // Deleting the directory behind git's back leaves the branch claimed by
+        // a prunable worktree, which is exactly what a hand-removed worktree
+        // looks like.
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.remove(worktreePath, { recursive: true });
+
+        const switched = yield* driver.switchRef({ cwd, refName: "feature/stale" });
+
+        assert.equal(switched.refName, "feature/stale");
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), "feature/stale");
+      }),
+    );
+
+    it.effect("names the worktree holding a branch that cannot be checked out", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "live-worktree");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/held",
+        });
+
+        const error = yield* driver.switchRef({ cwd, refName: "feature/held" }).pipe(Effect.flip);
+
+        assert.equal(error.operation, "GitVcsDriver.switchRef.checkout");
+        assert.include(error.detail, "feature/held");
+        assert.include(error.detail, worktreePath);
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), initialBranch);
+      }),
+    );
   });
 
   describe("remote operations", () => {
