@@ -207,7 +207,7 @@ import {
   formatElementContextLabel,
 } from "../lib/elementContext";
 import { appendPreviewAnnotationPrompt } from "../lib/previewAnnotation";
-import { useWorkspaceThreadRef } from "../lib/workspaceThreadRef";
+import { useWorkspaceThreadRef, useWorkspaceWorktreeKey } from "../lib/workspaceThreadRef";
 import { appendReviewCommentsToPrompt, type ReviewCommentContext } from "../reviewCommentContext";
 import { environmentCatalog } from "../connection/catalog";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -1660,11 +1660,12 @@ function ChatViewContent(props: ChatViewProps) {
   const newChatWorktreePath = activeThread?.worktreePath ?? null;
   const newChatWorktreeBranch = activeThread?.branch ?? null;
   // File-diff "content tabs" live in the chat-column tab strip and are scoped to
-  // the worktree, so they stay visible while switching between its chats.
-  const contentTabsWorktreeKey =
-    activeThread && newChatWorktreePath
-      ? `${activeThread.environmentId}:${newChatWorktreePath}`
-      : null;
+  // the worktree, so they stay visible while switching between its chats. Key
+  // them off the stable route ref (resolved via the shell/draft worktree) rather
+  // than `activeThread?.worktreePath`: `activeThread` swings between the server
+  // detail, shell, and draft sources whose worktree paths can transiently
+  // disagree, and any blink there would orphan the open tab and flicker it.
+  const contentTabsWorktreeKey = useWorkspaceWorktreeKey(routeThreadRef);
   const contentTabsState = useWorkspaceContentTabsStore((state) =>
     selectWorktreeContentTabs(state.byWorktree, contentTabsWorktreeKey),
   );

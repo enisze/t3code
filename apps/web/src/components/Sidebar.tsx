@@ -3209,7 +3209,30 @@ export default function Sidebar() {
     () => resolveActiveThreadRouteRef(routeTarget, routeDraftThread),
     [routeDraftThread, routeTarget],
   );
-  const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
+  // A brand-new chat opened inside a worktree stays an unpromoted draft (no
+  // `promotedTo`) until its first message, so `resolveActiveThreadRouteRef`
+  // returns null and the worktree row would lose its highlight. Resolve the
+  // draft to its worktree's representative sibling and treat that as the active
+  // row, so the worktree stays selected while the new chat is still empty. Only
+  // applies when a real server sibling exists (a worktree-less draft resolves to
+  // its own ref and stays unhighlighted, matching prior behaviour).
+  const routeDraftThreadRef = useMemo(
+    () =>
+      routeThreadRef === null && routeTarget?.kind === "draft" && routeDraftThread
+        ? scopeThreadRef(routeDraftThread.environmentId, routeDraftThread.threadId)
+        : null,
+    [routeThreadRef, routeTarget, routeDraftThread],
+  );
+  const routeDraftWorkspaceRef = useWorkspaceThreadRef(routeDraftThreadRef);
+  const routeDraftRepresentativeKey =
+    routeDraftThreadRef &&
+    routeDraftWorkspaceRef &&
+    routeDraftWorkspaceRef.threadId !== routeDraftThreadRef.threadId
+      ? scopedThreadKey(routeDraftWorkspaceRef)
+      : null;
+  const routeThreadKey = routeThreadRef
+    ? scopedThreadKey(routeThreadRef)
+    : routeDraftRepresentativeKey;
   const routeWorkspaceThreadRef = useWorkspaceThreadRef(routeThreadRef);
   const routeTerminalOpen = useTerminalUiStateStore((state) =>
     routeWorkspaceThreadRef

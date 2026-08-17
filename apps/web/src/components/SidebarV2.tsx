@@ -1157,6 +1157,22 @@ export default function SidebarV2() {
     [routeDraftThread, routeTarget],
   );
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
+  // A brand-new chat opened inside a worktree stays an unpromoted draft (no
+  // `promotedTo`) until its first message, so `resolveActiveThreadRouteRef`
+  // returns null and the worktree row would lose its highlight. Resolve the
+  // draft to its worktree's representative sibling so the row it belongs to
+  // stays selected while the new chat is still empty.
+  const routeDraftThreadRef = useMemo(
+    () =>
+      routeThreadRef === null && routeTarget?.kind === "draft" && routeDraftThread
+        ? scopeThreadRef(routeDraftThread.environmentId, routeDraftThread.threadId)
+        : null,
+    [routeThreadRef, routeTarget, routeDraftThread],
+  );
+  const routeDraftWorkspaceRef = useWorkspaceThreadRef(routeDraftThreadRef);
+  const routeDraftWorkspaceKey = routeDraftWorkspaceRef
+    ? scopedThreadKey(routeDraftWorkspaceRef)
+    : null;
   const routeTargetRef = useRef(routeTarget);
   routeTargetRef.current = routeTarget;
   // Post-park navigation validates against the CURRENT route, not the one
@@ -1700,9 +1716,11 @@ export default function SidebarV2() {
   // When the active route is a collapsed worktree sibling, its row is folded
   // into the earliest chat's; highlight and keep that representative visible.
   const effectiveRouteThreadKey =
-    routeThreadKey === null
-      ? null
-      : (representativeKeyByThreadKey.get(routeThreadKey) ?? routeThreadKey);
+    routeThreadKey !== null
+      ? (representativeKeyByThreadKey.get(routeThreadKey) ?? routeThreadKey)
+      : routeDraftWorkspaceKey !== null
+        ? (representativeKeyByThreadKey.get(routeDraftWorkspaceKey) ?? routeDraftWorkspaceKey)
+        : null;
 
   // Arm a timeout for the earliest upcoming wake so the shelf empties the
   // moment a snooze expires instead of on the next minute tick. Sorted

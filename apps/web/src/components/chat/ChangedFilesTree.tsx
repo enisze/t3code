@@ -387,8 +387,17 @@ export const DiffNavigatorFileList = memo(function DiffNavigatorFileList(props: 
                 <div
                   key={`file:${file.path}`}
                   data-active={isActive || undefined}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onOpenFile(file.path)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onOpenFile(file.path);
+                    }
+                  }}
                   className={cn(
-                    "group flex w-full items-center gap-2 rounded-xl py-2 pr-3 pl-2.5 transition-colors",
+                    "group flex w-full cursor-pointer items-center gap-2 rounded-xl py-2 pr-3 pl-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                     isActive
                       ? file.conflicted
                         ? "bg-destructive/12"
@@ -410,11 +419,7 @@ export const DiffNavigatorFileList = memo(function DiffNavigatorFileList(props: 
                     onClick={(event) => event.stopPropagation()}
                     onCheckedChange={(checked) => onToggleViewed(file.path, checked)}
                   />
-                  <button
-                    type="button"
-                    className="flex min-w-0 flex-1 items-center gap-2 py-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-md"
-                    onClick={() => onOpenFile(file.path)}
-                  >
+                  <div className="flex min-w-0 flex-1 items-center gap-2 py-0.5">
                     <PierreEntryIcon
                       pathValue={file.path}
                       kind="file"
@@ -444,7 +449,7 @@ export const DiffNavigatorFileList = memo(function DiffNavigatorFileList(props: 
                         <DiffStatLabel additions={file.additions} deletions={file.deletions} />
                       </span>
                     ) : null}
-                  </button>
+                  </div>
                 </div>
               );
             })}
