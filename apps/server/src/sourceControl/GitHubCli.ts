@@ -98,6 +98,19 @@ export class GitHubCliCommandError extends Schema.TaggedErrorClass<GitHubCliComm
   }
 }
 
+export class GitHubProviderUnavailableError extends Schema.TaggedErrorClass<GitHubProviderUnavailableError>()(
+  "GitHubProviderUnavailableError",
+  gitHubCliFailureFields,
+) {
+  get detail(): string {
+    return "GitHub is temporarily unavailable. Wait a moment and try again.";
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in execute: ${this.detail}`;
+  }
+}
+
 export class GitHubPermissionError extends Schema.TaggedErrorClass<GitHubPermissionError>()(
   "GitHubPermissionError",
   gitHubCliFailureFields,
@@ -228,6 +241,7 @@ export const GitHubCliError = Schema.Union([
   GitHubRepositoryNotFoundError,
   GitHubPermissionError,
   GitHubMergeBlockedError,
+  GitHubProviderUnavailableError,
   GitHubCliCommandError,
   GitHubPullRequestListDecodeError,
   GitHubChangeRequestListDecodeError,
@@ -270,6 +284,9 @@ export function fromVcsError(
     }
     if (error.failureKind === "merge-blocked") {
       return new GitHubMergeBlockedError({ ...context, cause: error });
+    }
+    if (error.failureKind === "provider-unavailable") {
+      return new GitHubProviderUnavailableError({ ...context, cause: error });
     }
   }
 
@@ -476,6 +493,8 @@ const MERGEABILITY_POLL_INTERVAL = Duration.seconds(1);
  */
 const MERGE_ATTEMPTS = 3;
 const MERGE_RETRY_INTERVAL = Duration.seconds(1);
+const TRANSIENT_ATTEMPTS = 3;
+const TRANSIENT_RETRY_INTERVAL = Duration.seconds(1);
 
 /**
  * `gh pr merge` requires an explicit merge method; without one it drops into an
@@ -593,11 +612,32 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const retryProviderUnavailable = <A>(
+    effect: () => Effect.Effect<A, GitHubCliError>,
+    attemptsLeft = TRANSIENT_ATTEMPTS,
+  ): Effect.Effect<A, GitHubCliError> =>
+    effect().pipe(
+      Effect.catchTag("GitHubProviderUnavailableError", (error) =>
+        attemptsLeft <= 1
+          ? Effect.fail(error)
+          : Effect.sleep(TRANSIENT_RETRY_INTERVAL).pipe(
+              Effect.flatMap(() => retryProviderUnavailable(effect, attemptsLeft - 1)),
+            ),
+      ),
+    );
+
   const resolveMergeMethodFlag = (cwd: string) =>
-    execute({
-      cwd,
-      args: ["repo", "view", "--json", "mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed"],
-    }).pipe(
+    retryProviderUnavailable(() =>
+      execute({
+        cwd,
+        args: [
+          "repo",
+          "view",
+          "--json",
+          "mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed",
+        ],
+      }),
+    ).pipe(
       Effect.flatMap((output) =>
         decodeRawGitHubMergeMethods(output.stdout).pipe(
           // If the settings can't be read, fall back to a plain merge commit
@@ -659,10 +699,12 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       let mergeability: "clean" | "conflicting" | "blocked" | "unknown" = "unknown";
       for (let attempt = 0; attempt < MERGEABILITY_POLL_ATTEMPTS; attempt++) {
-        const state = yield* execute({
-          cwd,
-          args: ["pr", "view", reference, "--json", "mergeable,mergeStateStatus"],
-        }).pipe(
+        const state = yield* retryProviderUnavailable(() =>
+          execute({
+            cwd,
+            args: ["pr", "view", reference, "--json", "mergeable,mergeStateStatus"],
+          }),
+        ).pipe(
           Effect.flatMap((output) =>
             decodeRawGitHubMergeability(output.stdout).pipe(
               Effect.orElseSucceed(() => UNKNOWN_MERGEABILITY),
@@ -688,7 +730,7 @@ export const make = Effect.gen(function* () {
     args: ReadonlyArray<string>,
     attemptsLeft: number,
   ): Effect.Effect<void, GitHubCliError> =>
-    execute({ cwd, args }).pipe(
+    retryProviderUnavailable(() => execute({ cwd, args })).pipe(
       Effect.asVoid,
       Effect.catchTag("GitHubMergeBlockedError", (error) =>
         attemptsLeft <= 1
@@ -742,16 +784,18 @@ export const make = Effect.gen(function* () {
       ),
     readPullRequestReviewState,
     getPullRequest: (input) =>
-      execute({
-        cwd: input.cwd,
-        args: [
-          "pr",
-          "view",
-          input.reference,
-          "--json",
-          "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner,mergeable,mergeStateStatus,statusCheckRollup",
-        ],
-      }).pipe(
+      retryProviderUnavailable(() =>
+        execute({
+          cwd: input.cwd,
+          args: [
+            "pr",
+            "view",
+            input.reference,
+            "--json",
+            "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner,mergeable,mergeStateStatus,statusCheckRollup",
+          ],
+        }),
+      ).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
           Effect.sync(() => decodeGitHubPullRequestJson(raw)).pipe(

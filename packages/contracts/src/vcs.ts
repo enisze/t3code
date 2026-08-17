@@ -87,6 +87,9 @@ export const VcsProcessExitFailureKind = Schema.Literals([
   // The change request exists but the platform refused to merge it — conflicts,
   // failing required checks, branch protection, or a disallowed merge method.
   "merge-blocked",
+  // The provider accepted the request but is temporarily unable to serve it,
+  // such as an HTTP 5xx response from GitHub or GitLab.
+  "provider-unavailable",
   "command-failed",
 ]);
 export type VcsProcessExitFailureKind = typeof VcsProcessExitFailureKind.Type;
@@ -160,7 +163,9 @@ export class VcsProcessExitError extends Schema.TaggedErrorClass<VcsProcessExitE
               ? "The authenticated account lacks permission for this operation."
               : failureKind === "merge-blocked"
                 ? "The change request can't be merged (conflicts, failing checks, branch protection, or a disallowed merge method)."
-                : "Process exited with a non-zero status.";
+                : failureKind === "provider-unavailable"
+                  ? "The source control provider is temporarily unavailable."
+                  : "Process exited with a non-zero status.";
 
     return new VcsProcessExitError({
       ...context,

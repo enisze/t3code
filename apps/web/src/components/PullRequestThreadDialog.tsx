@@ -14,7 +14,10 @@ import { getSourceControlPresentation } from "~/sourceControlPresentation";
 import { useEnvironmentQuery } from "~/state/query";
 import { vcsEnvironment } from "~/state/vcs";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { canAutoSubmitResolvedReference } from "./PullRequestThreadDialog.logic";
+import {
+  canAutoSubmitResolvedReference,
+  resolveBranchWorktreeTarget,
+} from "./PullRequestThreadDialog.logic";
 import { Button } from "./ui/button";
 import {
   Dialog,
@@ -132,6 +135,11 @@ export function PullRequestThreadDialog({
   const resolvedBranch = branchQuery.data?.refs.find(
     (ref) => ref.name === reference.trim() || `${ref.remoteName}/${ref.name}` === reference.trim(),
   );
+  const resolvedBranchTarget = useMemo(
+    () =>
+      cwd && resolvedBranch ? resolveBranchWorktreeTarget({ cwd, ref: resolvedBranch }) : null,
+    [cwd, resolvedBranch],
+  );
 
   const liveResolvedPullRequest =
     parsedReference !== null && parsedReference === parsedDebouncedReference
@@ -169,13 +177,16 @@ export function PullRequestThreadDialog({
       setRevealed(true);
       return;
     }
-    const targetBranch = resolvedPullRequest?.headBranch ?? resolvedBranch?.name;
+    const targetBranch = resolvedPullRequest?.headBranch ?? resolvedBranchTarget?.branch;
     if (!targetBranch) {
       setRevealed(true);
       return;
     }
     if (
-      await onPrepared({ branch: targetBranch, worktreePath: resolvedBranch?.worktreePath ?? null })
+      await onPrepared({
+        branch: targetBranch,
+        worktreePath: resolvedPullRequest ? null : (resolvedBranchTarget?.worktreePath ?? null),
+      })
     ) {
       onOpenChange(false);
       return;
@@ -201,9 +212,14 @@ export function PullRequestThreadDialog({
       }
       await onPrepared({ branch: result.value.branch, worktreePath: result.value.worktreePath });
     } else {
+      if (!resolvedBranchTarget?.createInput) {
+        setIsPreparing(false);
+        setRevealed(true);
+        return;
+      }
       const result = await createWorktree({
         environmentId,
-        input: { cwd, refName: reference.trim(), path: null },
+        input: resolvedBranchTarget.createInput,
       });
       setIsPreparing(false);
       if (result._tag === "Failure") {
@@ -224,8 +240,8 @@ export function PullRequestThreadDialog({
     environmentId,
     parsedReference,
     preparePullRequestThreadAction,
-    reference,
     resolvedBranch,
+    resolvedBranchTarget,
     resolvedPullRequest,
     threadId,
   ]);
@@ -347,7 +363,7 @@ export function PullRequestThreadDialog({
             <div className="rounded-xl border border-border/70 bg-muted/24 p-3">
               <p className="font-medium text-sm">{resolvedBranch.name}</p>
               <p className="text-muted-foreground text-xs">
-                {resolvedBranch.worktreePath ? "Existing worktree" : "Existing branch"}
+                {resolvedBranchTarget?.worktreePath ? "Existing worktree" : "Existing branch"}
               </p>
             </div>
           ) : null}

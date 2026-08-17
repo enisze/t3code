@@ -1,3 +1,43 @@
+import type { VcsCreateWorktreeInput, VcsRef } from "@t3tools/contracts";
+
+import { resolveExactBranchWorktreeInput } from "./BranchToolbar.logic";
+
+export type ResolvedBranchWorktreeTarget = {
+  branch: string;
+  worktreePath: string | null;
+  createInput: VcsCreateWorktreeInput | null;
+};
+
+/**
+ * Adapts a resolved branch to the dialog's reuse-or-create flow.
+ *
+ * Remote refs need a new local branch, while a branch checked out in a
+ * secondary worktree must be reused. The primary checkout is deliberately not
+ * treated as a dedicated worktree.
+ */
+export function resolveBranchWorktreeTarget(input: {
+  readonly cwd: string;
+  readonly ref: Pick<VcsRef, "name" | "isRemote" | "worktreePath">;
+}): ResolvedBranchWorktreeTarget {
+  const target = resolveExactBranchWorktreeInput({
+    activeProjectCwd: input.cwd,
+    ref: input.ref,
+  });
+  if (target.kind === "reuse") {
+    return {
+      branch: target.branch,
+      worktreePath: target.worktreePath,
+      createInput: null,
+    };
+  }
+  const { kind: _, ...createInput } = target;
+  return {
+    branch: target.newRefName ?? target.refName,
+    worktreePath: null,
+    createInput,
+  };
+}
+
 /**
  * Whether an auto-submitted reference has resolved into something safe to act on.
  *

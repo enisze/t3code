@@ -204,6 +204,28 @@ describe("VcsProcess.run", () => {
     }).pipe(provideLive),
   );
 
+  it.effect("classifies temporary provider failures without retaining stderr", () =>
+    Effect.gen(function* () {
+      const secretStderr =
+        "HTTP 503: No server is currently available to service your request super-secret-token";
+      const error = yield* run({
+        operation: "test.provider-unavailable",
+        command: "node",
+        args: ["-e", "process.stderr.write(process.argv[1]); process.exit(1)", secretStderr],
+        cwd: process.cwd(),
+      }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(VcsProcessExitError);
+      expect(error).toMatchObject({
+        detail: "The source control provider is temporarily unavailable.",
+        failureKind: "provider-unavailable",
+        stderrLength: secretStderr.length,
+      });
+      expect(error.message).not.toContain(secretStderr);
+      expect(error.message).not.toContain("super-secret-token");
+    }).pipe(provideLive),
+  );
+
   it.effect("retains spawn causes without exposing process arguments in the error message", () =>
     Effect.gen(function* () {
       const secretArgument = "--token=super-secret-token";
