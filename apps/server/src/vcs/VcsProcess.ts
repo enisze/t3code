@@ -135,6 +135,18 @@ const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFai
     return "merge-blocked";
   }
 
+  if (
+    /\bhttp (?:500|502|503|504)\b/.test(normalized) ||
+    normalized.includes("internal server error") ||
+    normalized.includes("server is currently unavailable") ||
+    normalized.includes("temporarily unavailable") ||
+    normalized.includes("service unavailable") ||
+    normalized.includes("bad gateway") ||
+    normalized.includes("gateway timeout")
+  ) {
+    return "provider-unavailable";
+  }
+
   return "command-failed";
 };
 

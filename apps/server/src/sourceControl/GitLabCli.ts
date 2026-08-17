@@ -130,6 +130,7 @@ export class GitLabCliCommandError extends Schema.TaggedErrorClass<GitLabCliComm
           case "repository-not-found":
           case "permission-denied":
           case "merge-blocked":
+          case "provider-unavailable":
           case "command-failed":
           case undefined:
             return new GitLabCliCommandError({ ...context, cause });

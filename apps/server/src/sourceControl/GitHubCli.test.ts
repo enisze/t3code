@@ -55,6 +55,64 @@ describe("GitHubCli.layer", () => {
     assert.notProperty(commandFailure, "operation");
   });
 
+  it("classifies temporary provider failures", () => {
+    const context = { command: "gh", cwd: "/repo" } as const;
+    const cause = new VcsProcessExitError({
+      operation: "GitHubCli.execute",
+      command: "gh",
+      cwd: context.cwd,
+      exitCode: 1,
+      detail: "The source control provider is temporarily unavailable.",
+      failureKind: "provider-unavailable",
+    });
+
+    const error = GitHubCli.fromVcsError(context, cause);
+
+    assert.equal(error._tag, "GitHubProviderUnavailableError");
+    assert.equal(error.detail, "GitHub is temporarily unavailable. Wait a moment and try again.");
+    assert.strictEqual(error.cause, cause);
+  });
+
+  it.effect("retries pull request reads while GitHub is temporarily unavailable", () =>
+    Effect.gen(function* () {
+      const unavailable = new VcsProcessExitError({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        cwd: "/repo",
+        exitCode: 1,
+        detail: "The source control provider is temporarily unavailable.",
+        failureKind: "provider-unavailable",
+      });
+      mockRun.mockReturnValueOnce(Effect.fail(unavailable));
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              number: 42,
+              title: "Recovered PR lookup",
+              url: "https://github.com/pingdotgg/codething-mvp/pull/42",
+              baseRefName: "main",
+              headRefName: "feature/retry",
+              state: "OPEN",
+              mergedAt: null,
+            }),
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const lookup = yield* gh
+        .getPullRequest({ cwd: "/repo", reference: "42" })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* TestClock.adjust("1 second");
+      const result = yield* Fiber.join(lookup);
+
+      assert.equal(result.number, 42);
+      expect(mockRun).toHaveBeenCalledTimes(2);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("parses pull request view output", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(
@@ -676,6 +734,66 @@ describe("GitHubCli.layer", () => {
         .mergePullRequest({ cwd: "/repo", reference: "#42" })
         .pipe(Effect.forkChild({ startImmediately: true }));
       // Let the one-second retry backoff elapse so the second attempt runs.
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(merge);
+
+      expect(mockRun).toHaveBeenNthCalledWith(3, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "merge", "#42", "--merge"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+      expect(mockRun).toHaveBeenNthCalledWith(4, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "merge", "#42", "--merge"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("retries a merge when GitHub is temporarily unavailable", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              mergeCommitAllowed: true,
+              squashMergeAllowed: true,
+              rebaseMergeAllowed: true,
+            }),
+          ),
+        ),
+      );
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({ mergeable: "MERGEABLE", mergeStateStatus: "CLEAN" }),
+          ),
+        ),
+      );
+      mockRun.mockReturnValueOnce(
+        Effect.fail(
+          new VcsProcessExitError({
+            operation: "GitHubCli.execute",
+            command: "gh",
+            cwd: "/repo",
+            exitCode: 1,
+            detail: "The source control provider is temporarily unavailable.",
+            failureKind: "provider-unavailable",
+          }),
+        ),
+      );
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const merge = yield* gh
+        .mergePullRequest({ cwd: "/repo", reference: "#42" })
+        .pipe(Effect.forkChild({ startImmediately: true }));
       yield* TestClock.adjust("1 second");
       yield* Fiber.join(merge);
 
