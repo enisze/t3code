@@ -1443,6 +1443,69 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("creates a worktree for a branch a deleted worktree still claims", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const worktreesRoot = yield* makeTmpDir("git-worktrees-");
+        const stalePath = pathService.join(worktreesRoot, "stale-worktree");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.createWorktree({
+          cwd,
+          path: stalePath,
+          refName: initialBranch,
+          newRefName: "feature/reopened",
+        });
+
+        // Deleting the directory behind git's back leaves the branch claimed by
+        // a prunable worktree, so `worktree add` keeps refusing the branch until
+        // that administrative entry is pruned.
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.remove(stalePath, { recursive: true });
+
+        const reopenedPath = pathService.join(worktreesRoot, "reopened-worktree");
+        const created = yield* driver.createWorktree({
+          cwd,
+          path: reopenedPath,
+          refName: "feature/reopened",
+        });
+
+        assert.equal(created.worktree.path, reopenedPath);
+        assert.equal(created.worktree.refName, "feature/reopened");
+        assert.equal(yield* git(reopenedPath, ["branch", "--show-current"]), "feature/reopened");
+      }),
+    );
+
+    it.effect("names the worktree holding a branch that cannot get a second worktree", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const worktreesRoot = yield* makeTmpDir("git-worktrees-");
+        const livePath = pathService.join(worktreesRoot, "live-worktree");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.createWorktree({
+          cwd,
+          path: livePath,
+          refName: initialBranch,
+          newRefName: "feature/held-worktree",
+        });
+
+        const error = yield* driver
+          .createWorktree({
+            cwd,
+            path: pathService.join(worktreesRoot, "second-worktree"),
+            refName: "feature/held-worktree",
+          })
+          .pipe(Effect.flip);
+
+        assert.equal(error.operation, "GitVcsDriver.createWorktree");
+        assert.include(error.detail, "feature/held-worktree");
+        assert.include(error.detail, livePath);
+      }),
+    );
+
     it.effect("checks out a branch a deleted worktree still claims", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

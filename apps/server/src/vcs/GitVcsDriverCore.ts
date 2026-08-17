@@ -408,6 +408,27 @@ function gitCommandContext(
   } as const;
 }
 
+/**
+ * Build the failure `executeGit` would have raised for a non-zero exit, for
+ * callers that ran with `allowNonZeroExit` to inspect the result before deciding
+ * whether — and with which detail — to fail.
+ */
+function gitCommandResultFailure(input: {
+  readonly operation: string;
+  readonly cwd: string;
+  readonly args: readonly string[];
+  readonly result: GitVcsDriver.ExecuteGitResult;
+  readonly detail: string;
+}): GitCommandError {
+  return new GitCommandError({
+    ...gitCommandContext(input),
+    detail: input.detail,
+    ...(input.result.exitCode === null ? {} : { exitCode: input.result.exitCode }),
+    stdoutLength: input.result.stdout.length,
+    stderrLength: input.result.stderr.length,
+  });
+}
+
 // Git writes the actionable reason for a failed remote op (push/fetch) to
 // stderr — "Permission denied", "403", "could not read Username", "remote:
 // Repository not found". Surfacing it turns the opaque "exited with a non-zero
@@ -2870,6 +2891,61 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  /**
+   * Git refuses to put a branch in a second worktree, and it keeps refusing for
+   * worktrees whose directory is gone until their administrative entry is
+   * pruned. Those stale claims are invisible to the caller — `listRefs` drops
+   * prunable worktrees, so the branch looks free right up to the point the
+   * command fails with an opaque "git checkout failed" / "git worktree add
+   * failed".
+   *
+   * So, on the failure path only: find what actually holds the branch. A stale
+   * holder is pruned so the caller can retry; a live one is named so the user
+   * knows where the branch already is. A successful command stays a single spawn.
+   *
+   * `git worktree prune` only drops entries whose working tree is already gone,
+   * so it never discards work.
+   */
+  const resolveWorktreeClaimRecovery = Effect.fn("resolveWorktreeClaimRecovery")(function* (
+    operation: string,
+    cwd: string,
+    claimBranch: string,
+  ) {
+    const worktreeListResult = yield* executeGit(
+      `${operation}.worktreeList`,
+      cwd,
+      ["worktree", "list", "--porcelain", "-z"],
+      {
+        timeoutMs: 10_000,
+        allowNonZeroExit: true,
+        maxOutputBytes: 16 * 1024 * 1024,
+      },
+    );
+    const claim =
+      worktreeListResult.exitCode === 0
+        ? (parseWorktreeBranchEntries(worktreeListResult.stdout).find(
+            (entry) => entry.branch === claimBranch,
+          ) ?? null)
+        : null;
+
+    if (claim === null) {
+      return { kind: "unclaimed" } as const;
+    }
+    if (!claim.prunable) {
+      return {
+        kind: "held",
+        detail: `Branch "${claim.branch}" is already checked out in the worktree at ${claim.path}. Open the branch there, or switch that worktree to another branch first.`,
+      } as const;
+    }
+
+    yield* executeGit(`${operation}.pruneWorktrees`, cwd, ["worktree", "prune"], {
+      timeoutMs: 10_000,
+      allowNonZeroExit: true,
+    });
+
+    return { kind: "pruned" } as const;
+  });
+
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input) {
@@ -2881,9 +2957,40 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
       : ["worktree", "add", worktreePath, input.refName];
 
-    yield* executeGit("GitVcsDriver.createWorktree", input.cwd, args, {
-      fallbackErrorDetail: "git worktree add failed",
-    });
+    const runWorktreeAdd = () =>
+      executeGit("GitVcsDriver.createWorktree", input.cwd, args, { allowNonZeroExit: true });
+    const failWorktreeAdd = (result: GitVcsDriver.ExecuteGitResult, detail: string) =>
+      Effect.fail(
+        gitCommandResultFailure({
+          operation: "GitVcsDriver.createWorktree",
+          cwd: input.cwd,
+          args,
+          result,
+          detail,
+        }),
+      );
+
+    const addResult = yield* runWorktreeAdd();
+    if (addResult.exitCode !== 0) {
+      // The branch a stale worktree still claims is the common failure here:
+      // hand-deleting a worktree directory leaves its claim behind, and then the
+      // branch can never be opened again until the entry is pruned.
+      const recovery = yield* resolveWorktreeClaimRecovery(
+        "GitVcsDriver.createWorktree",
+        input.cwd,
+        targetBranch,
+      );
+      if (recovery.kind === "held") {
+        return yield* failWorktreeAdd(addResult, recovery.detail);
+      }
+      if (recovery.kind === "unclaimed") {
+        return yield* failWorktreeAdd(addResult, "git worktree add failed");
+      }
+      const retryResult = yield* runWorktreeAdd();
+      if (retryResult.exitCode !== 0) {
+        return yield* failWorktreeAdd(retryResult, "git worktree add failed");
+      }
+    }
 
     if (input.newRefName && input.baseRefName) {
       const remoteNames = yield* listRemoteNames(input.cwd).pipe(Effect.orElseSucceed(() => []));
@@ -3049,20 +3156,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return { branch: targetBranch };
   });
 
-  /**
-   * Git refuses to check out a branch that another worktree holds, and it keeps
-   * refusing for worktrees whose directory is gone until their administrative
-   * entry is pruned. Those stale claims are invisible to the caller — `listRefs`
-   * drops prunable worktrees, so the branch looks free right up to the point the
-   * checkout fails with an opaque "git checkout failed".
-   *
-   * So: prune and retry once when the holder is stale, and otherwise name the
-   * worktree that actually holds the branch. Everything runs on the failure path
-   * only, keeping a successful checkout a single spawn.
-   *
-   * `git worktree prune` only drops entries whose working tree is already gone,
-   * so it never discards work.
-   */
+  /** Checkout, recovering from the stale claims {@link resolveWorktreeClaimRecovery} explains. */
   const checkoutWithWorktreeClaimRecovery = Effect.fn("checkoutWithWorktreeClaimRecovery")(
     function* (cwd: string, checkoutArgs: readonly string[], checkoutBranch: string | null) {
       // Stable diagnostics so the surfaced git output is the C-locale text
@@ -3077,16 +3171,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
       const failCheckout = (result: GitVcsDriver.ExecuteGitResult, baseDetail: string) =>
         Effect.fail(
-          new GitCommandError({
-            ...gitCommandContext({
-              operation: "GitVcsDriver.switchRef.checkout",
-              cwd,
-              args: checkoutArgs,
-            }),
+          gitCommandResultFailure({
+            operation: "GitVcsDriver.switchRef.checkout",
+            cwd,
+            args: checkoutArgs,
+            result,
             detail: appendGitOutputToDetail(baseDetail, result.stdout, result.stderr),
-            ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
-            stdoutLength: result.stdout.length,
-            stderrLength: result.stderr.length,
           }),
         );
 
@@ -3098,37 +3188,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         return yield* failCheckout(result, "git checkout failed");
       }
 
-      const worktreeListResult = yield* executeGit(
-        "GitVcsDriver.switchRef.worktreeList",
+      const recovery = yield* resolveWorktreeClaimRecovery(
+        "GitVcsDriver.switchRef",
         cwd,
-        ["worktree", "list", "--porcelain", "-z"],
-        {
-          timeoutMs: 10_000,
-          allowNonZeroExit: true,
-          maxOutputBytes: 16 * 1024 * 1024,
-        },
+        checkoutBranch,
       );
-      const claim =
-        worktreeListResult.exitCode === 0
-          ? (parseWorktreeBranchEntries(worktreeListResult.stdout).find(
-              (entry) => entry.branch === checkoutBranch,
-            ) ?? null)
-          : null;
-
-      if (claim === null) {
+      if (recovery.kind === "held") {
+        return yield* failCheckout(result, recovery.detail);
+      }
+      if (recovery.kind === "unclaimed") {
         return yield* failCheckout(result, "git checkout failed");
       }
-      if (!claim.prunable) {
-        return yield* failCheckout(
-          result,
-          `Branch "${claim.branch}" is already checked out in the worktree at ${claim.path}. Open the branch there, or switch that worktree to another branch first.`,
-        );
-      }
-
-      yield* executeGit("GitVcsDriver.switchRef.pruneWorktrees", cwd, ["worktree", "prune"], {
-        timeoutMs: 10_000,
-        allowNonZeroExit: true,
-      });
 
       const retryResult = yield* runCheckout();
       if (retryResult.exitCode !== 0) {
