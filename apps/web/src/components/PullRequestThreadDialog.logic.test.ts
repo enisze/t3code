@@ -15,6 +15,7 @@ describe("resolveBranchWorktreeTarget", () => {
     ).toEqual({
       branch: "feature/review",
       worktreePath: null,
+      reuseExisting: false,
       createInput: {
         cwd: "/repo",
         refName: "feature/review",
@@ -32,6 +33,7 @@ describe("resolveBranchWorktreeTarget", () => {
     ).toEqual({
       branch: "feature/review",
       worktreePath: null,
+      reuseExisting: false,
       createInput: {
         cwd: "/repo",
         refName: "origin/feature/review",
@@ -54,11 +56,14 @@ describe("resolveBranchWorktreeTarget", () => {
     ).toEqual({
       branch: "feature/review",
       worktreePath: "/worktrees/feature-review",
+      reuseExisting: true,
       createInput: null,
     });
   });
 
-  it("does not mistake the primary checkout for a dedicated worktree", () => {
+  it("reuses the primary checkout as the local workspace instead of creating a worktree", () => {
+    // git refuses a second worktree for a branch already checked out in the
+    // primary, so this must reuse the checkout rather than run `git worktree add`.
     expect(
       resolveBranchWorktreeTarget({
         cwd: "/repo",
@@ -67,11 +72,8 @@ describe("resolveBranchWorktreeTarget", () => {
     ).toEqual({
       branch: "feature/review",
       worktreePath: null,
-      createInput: {
-        cwd: "/repo",
-        refName: "feature/review",
-        path: null,
-      },
+      reuseExisting: true,
+      createInput: null,
     });
   });
 });

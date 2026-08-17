@@ -710,6 +710,19 @@ describe("resolveExactBranchWorktreeInput", () => {
       worktreePath: "/worktrees/feature-review",
     });
   });
+
+  it("reuses the primary checkout as the local workspace for an already-checked-out branch", () => {
+    expect(
+      resolveExactBranchWorktreeInput({
+        activeProjectCwd: "/repo",
+        ref: { name: "feature/review", isRemote: false, worktreePath: "/repo" },
+      }),
+    ).toEqual({
+      kind: "reuse",
+      branch: "feature/review",
+      worktreePath: null,
+    });
+  });
 });
 
 describe("shouldIncludeBranchPickerItem", () => {

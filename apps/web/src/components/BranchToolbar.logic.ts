@@ -238,7 +238,7 @@ export function resolveExactBranchWorktreeInput(input: {
   activeProjectCwd: string;
   ref: Pick<VcsRef, "name" | "isRemote" | "worktreePath">;
 }):
-  | { kind: "reuse"; branch: string; worktreePath: string }
+  | { kind: "reuse"; branch: string; worktreePath: string | null }
   | {
       kind: "create";
       cwd: string;
@@ -247,8 +247,16 @@ export function resolveExactBranchWorktreeInput(input: {
       path: null;
     } {
   const { activeProjectCwd, ref } = input;
-  if (ref.worktreePath && ref.worktreePath !== activeProjectCwd) {
-    return { kind: "reuse", branch: ref.name, worktreePath: ref.worktreePath };
+  // A branch already checked out somewhere can never get a second worktree —
+  // `git worktree add` aborts with "already checked out". Reuse the existing
+  // checkout instead: a secondary worktree as-is, the primary checkout as the
+  // local workspace (worktreePath null).
+  if (ref.worktreePath) {
+    return {
+      kind: "reuse",
+      branch: ref.name,
+      worktreePath: ref.worktreePath === activeProjectCwd ? null : ref.worktreePath,
+    };
   }
   if (ref.isRemote) {
     return {
