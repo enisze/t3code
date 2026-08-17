@@ -65,3 +65,29 @@ export function useWorkspaceThreadRef(
     return { environmentId: ref.environmentId, threadId: draftRepresentative.threadId };
   }, [ref, shells, draftThreadsByThreadKey]);
 }
+
+/**
+ * The worktree-scoped key that the chat-column content tabs (file/diff viewers)
+ * are stored under, resolved from the thread's server shell — or, for a
+ * not-yet-sent draft, the worktree it will join. Keying off the shell/draft
+ * rather than the volatile `activeThread` union (server detail ↔ shell ↔ draft,
+ * whose `worktreePath` can transiently disagree or blank out while those async
+ * sources settle) keeps the key stable, so the open file view stays mounted
+ * instead of flickering as the thread's data loads. Pass a route-derived ref so
+ * the input identity itself never blinks.
+ */
+export function useWorkspaceWorktreeKey(ref: ScopedThreadRef | null | undefined): string | null {
+  const shells = useThreadShells();
+  const draftThreadsByThreadKey = useComposerDraftStore((state) => state.draftThreadsByThreadKey);
+  return useMemo(() => {
+    if (!ref) return null;
+    const own = shells.find(
+      (shell) => shell.environmentId === ref.environmentId && shell.id === ref.threadId,
+    );
+    const currentDraft = Object.values(draftThreadsByThreadKey).find(
+      (draft) => draft.environmentId === ref.environmentId && draft.threadId === ref.threadId,
+    );
+    const worktreePath = own ? own.worktreePath : (currentDraft?.worktreePath ?? null);
+    return worktreePath === null ? null : `${ref.environmentId}:${worktreePath}`;
+  }, [ref, shells, draftThreadsByThreadKey]);
+}
