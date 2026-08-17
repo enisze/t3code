@@ -1,6 +1,80 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { canAutoSubmitResolvedReference } from "./PullRequestThreadDialog.logic";
+import {
+  canAutoSubmitResolvedReference,
+  resolveBranchWorktreeTarget,
+} from "./PullRequestThreadDialog.logic";
+
+describe("resolveBranchWorktreeTarget", () => {
+  it("creates a dedicated worktree for an existing local branch", () => {
+    expect(
+      resolveBranchWorktreeTarget({
+        cwd: "/repo",
+        ref: { name: "feature/review", isRemote: false, worktreePath: null },
+      }),
+    ).toEqual({
+      branch: "feature/review",
+      worktreePath: null,
+      createInput: {
+        cwd: "/repo",
+        refName: "feature/review",
+        path: null,
+      },
+    });
+  });
+
+  it("creates and reports a local branch when the resolved ref is remote", () => {
+    expect(
+      resolveBranchWorktreeTarget({
+        cwd: "/repo",
+        ref: { name: "origin/feature/review", isRemote: true, worktreePath: null },
+      }),
+    ).toEqual({
+      branch: "feature/review",
+      worktreePath: null,
+      createInput: {
+        cwd: "/repo",
+        refName: "origin/feature/review",
+        newRefName: "feature/review",
+        path: null,
+      },
+    });
+  });
+
+  it("reuses a secondary worktree", () => {
+    expect(
+      resolveBranchWorktreeTarget({
+        cwd: "/repo",
+        ref: {
+          name: "feature/review",
+          isRemote: false,
+          worktreePath: "/worktrees/feature-review",
+        },
+      }),
+    ).toEqual({
+      branch: "feature/review",
+      worktreePath: "/worktrees/feature-review",
+      createInput: null,
+    });
+  });
+
+  it("does not mistake the primary checkout for a dedicated worktree", () => {
+    expect(
+      resolveBranchWorktreeTarget({
+        cwd: "/repo",
+        ref: { name: "feature/review", isRemote: false, worktreePath: "/repo" },
+      }),
+    ).toEqual({
+      branch: "feature/review",
+      worktreePath: null,
+      createInput: {
+        cwd: "/repo",
+        refName: "feature/review",
+        path: null,
+      },
+    });
+  });
+});
 
 describe("canAutoSubmitResolvedReference", () => {
   it("waits for the pull request even when a same-named branch already resolved", () => {
