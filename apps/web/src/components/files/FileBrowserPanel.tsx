@@ -264,7 +264,21 @@ export default function FileBrowserPanel({
   };
 
   useEffect(() => {
-    if (previousTreePathsRef.current === treePaths) return;
+    // A refresh yields a new entries array even when the paths are unchanged;
+    // comparing by value (not reference) avoids re-running resetPaths, which
+    // would re-apply `initialExpansion` and blow away the user's current
+    // expand/collapse state on every reload.
+    const previous = previousTreePathsRef.current;
+    if (
+      previous.length === treePaths.length &&
+      previous.every((path, index) => path === treePaths[index])
+    ) {
+      // Paths are identical; keep the ref pointing at the fresh array so later
+      // reference checks stay cheap, but leave the tree state untouched.
+      entryKindsRef.current = entryKinds;
+      previousTreePathsRef.current = treePaths;
+      return;
+    }
     entryKindsRef.current = entryKinds;
     previousTreePathsRef.current = treePaths;
     model.resetPaths(treePaths);
