@@ -459,6 +459,16 @@ export function describeGitRemoteRejection(output: string): string | null {
   return null;
 }
 
+/**
+ * A push was rejected only because the remote moved ahead of us (the classic
+ * "non-fast-forward" / "fetch first" rejection). This is the recoverable case
+ * the push path auto-rebases and retries; auth/protection failures are not.
+ */
+export function isNonFastForwardRejection(error: GitCommandError): boolean {
+  const normalized = error.detail.toLowerCase();
+  return normalized.includes("non-fast-forward") || normalized.includes("fetch first");
+}
+
 function parseDefaultBranchFromRemoteHeadRef(value: string, remoteName: string): string | null {
   const trimmed = value.trim();
   const prefix = `refs/remotes/${remoteName}/`;
@@ -2065,6 +2075,63 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return { commitSha };
   });
 
+  /**
+   * Run a push and, if it is rejected solely because the remote moved ahead,
+   * fetch that remote branch, rebase our commits onto it, and retry the push
+   * once. This makes an ordinary push self-heal the common "remote branch has
+   * commits this branch doesn't" case instead of failing and asking the user to
+   * reconcile by hand. A rebase that hits conflicts is aborted so the working
+   * tree is never left mid-rebase, and the original non-fast-forward is
+   * surfaced with actionable detail. Only non-fast-forward rejections are
+   * retried; auth/protection failures still fail fast.
+   */
+  const runPushWithAutoRebase = (
+    operation: string,
+    cwd: string,
+    pushArgs: readonly string[],
+    authEnv: NodeJS.ProcessEnv,
+    remoteName: string,
+    remoteBranch: string,
+  ): Effect.Effect<void, GitCommandError> =>
+    runGitWithEnv(operation, cwd, pushArgs, authEnv).pipe(
+      Effect.catchIf(isNonFastForwardRejection, () =>
+        Effect.gen(function* () {
+          // Refresh the exact remote branch we are pushing to; FETCH_HEAD then
+          // points at its current tip regardless of local tracking config.
+          yield* runGitWithEnv(
+            `${operation}.autoRebaseFetch`,
+            cwd,
+            ["fetch", remoteName, remoteBranch],
+            authEnv,
+          );
+          const rebaseResult = yield* executeGit(
+            `${operation}.autoRebase`,
+            cwd,
+            ["rebase", "FETCH_HEAD"],
+            { allowNonZeroExit: true, env: authEnv, timeoutMs: 120_000 },
+          );
+          if (rebaseResult.exitCode !== 0) {
+            // Abort so the repo is left clean rather than mid-rebase; ignore the
+            // abort's own exit code (nothing more we can do if it fails).
+            yield* executeGit(`${operation}.autoRebaseAbort`, cwd, ["rebase", "--abort"], {
+              allowNonZeroExit: true,
+            });
+            return yield* new GitCommandError({
+              ...gitCommandContext({ operation, cwd, args: pushArgs }),
+              detail: appendGitOutputToDetail(
+                "The remote branch has commits this branch doesn't, and automatically rebasing onto it hit conflicts. Resolve the conflicts locally, then push again.",
+                rebaseResult.stdout,
+                rebaseResult.stderr,
+              ),
+            });
+          }
+          // History is now linear on top of the remote; retry once (no further
+          // auto-rebase, so a second rejection fails fast).
+          yield* runGitWithEnv(operation, cwd, pushArgs, authEnv);
+        }),
+      ),
+    );
+
   const pushCurrentBranch: GitVcsDriver.GitVcsDriver["Service"]["pushCurrentBranch"] = Effect.fn(
     "pushCurrentBranch",
   )(function* (cwd, fallbackBranch, options) {
@@ -2088,11 +2155,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const requestedRemoteName = options?.remoteName?.trim() || null;
     if (requestedRemoteName) {
       const publishBranch = yield* resolvePublishBranchName(cwd, branch);
-      yield* runGitWithEnv(
+      yield* runPushWithAutoRebase(
         "GitVcsDriver.pushCurrentBranch.pushWithRequestedRemote",
         cwd,
         ["push", "-u", requestedRemoteName, `HEAD:refs/heads/${publishBranch}`],
         authEnv,
+        requestedRemoteName,
+        publishBranch,
       );
       return {
         status: "pushed" as const,
@@ -2151,11 +2220,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         });
       }
       const publishBranch = yield* resolvePublishBranchName(cwd, branch);
-      yield* runGitWithEnv(
+      yield* runPushWithAutoRebase(
         "GitVcsDriver.pushCurrentBranch.pushWithUpstream",
         cwd,
         ["push", "-u", publishRemoteName, `HEAD:refs/heads/${publishBranch}`],
         authEnv,
+        publishRemoteName,
+        publishBranch,
       );
       return {
         status: "pushed" as const,
@@ -2169,11 +2240,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.orElseSucceed(() => null),
     );
     if (currentUpstream) {
-      yield* runGitWithEnv(
+      yield* runPushWithAutoRebase(
         "GitVcsDriver.pushCurrentBranch.pushUpstream",
         cwd,
         ["push", currentUpstream.remoteName, `HEAD:refs/heads/${currentUpstream.branchName}`],
         authEnv,
+        currentUpstream.remoteName,
+        currentUpstream.branchName,
       );
       return {
         status: "pushed" as const,
