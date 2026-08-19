@@ -1851,5 +1851,94 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.notEqual(originMain.exitCode, 0);
       }),
     );
+
+    it.effect("auto-rebases onto the remote and retries when the remote moved ahead", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["branch", "-M", "main"]);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", "main"]);
+        const base = yield* git(cwd, ["rev-parse", "HEAD"]);
+
+        // Advance the remote by one commit, then rewind our checkout to the base
+        // and commit something else — the branches now genuinely diverge, which
+        // is the classic non-fast-forward push rejection.
+        yield* writeTextFile(cwd, "remote.txt", "remote\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "Add remote update"]);
+        yield* git(cwd, ["push", "origin", "main"]);
+        yield* git(cwd, ["reset", "--hard", base]);
+        yield* writeTextFile(cwd, "local.txt", "local\n");
+        yield* driver.prepareCommitContext(cwd);
+        yield* driver.commit(cwd, "Add local update", "");
+
+        const pushed = yield* driver.pushCurrentBranch(cwd, null);
+
+        assert.deepInclude(pushed, {
+          status: "pushed",
+          branch: "main",
+          upstreamBranch: "origin/main",
+          setUpstream: false,
+        });
+        // The remote now carries both commits, with ours rebased on top.
+        const remoteLog = yield* git(remote, ["log", "--pretty=%s", "main"]);
+        assert.match(remoteLog, /Add local update/);
+        assert.match(remoteLog, /Add remote update/);
+        assert.equal(
+          remoteLog.indexOf("Add local update") < remoteLog.indexOf("Add remote update"),
+          true,
+        );
+        // History stayed linear — our commit sits directly on the remote one.
+        assert.equal(
+          yield* git(cwd, ["log", "--pretty=%s", "-2"]),
+          "Add local update\nAdd remote update",
+        );
+      }),
+    );
+
+    it.effect("aborts the auto-rebase and leaves a clean tree when it conflicts", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["branch", "-M", "main"]);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", "main"]);
+        const base = yield* git(cwd, ["rev-parse", "HEAD"]);
+
+        // Both the remote commit and our commit edit the SAME file, so rebasing
+        // our commit onto the remote can't apply cleanly.
+        yield* writeTextFile(cwd, "README.md", "# remote\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "Remote edits readme"]);
+        yield* git(cwd, ["push", "origin", "main"]);
+        yield* git(cwd, ["reset", "--hard", base]);
+        yield* writeTextFile(cwd, "README.md", "# local\n");
+        yield* driver.prepareCommitContext(cwd);
+        yield* driver.commit(cwd, "Local edits readme", "");
+
+        const error = yield* driver.pushCurrentBranch(cwd, null).pipe(Effect.flip);
+
+        assert.strictEqual(error._tag, "GitCommandError");
+        assert.match(error.detail, /rebasing onto it hit conflicts/i);
+        // The abort restored a clean checkout: not mid-rebase, our commit intact.
+        const rebaseInProgress = yield* driver.execute({
+          operation: "GitVcsDriver.test.rebaseState",
+          cwd,
+          args: ["rev-parse", "--verify", "--quiet", "REBASE_HEAD"],
+          allowNonZeroExit: true,
+          timeoutMs: 10_000,
+        });
+        assert.notEqual(rebaseInProgress.exitCode, 0);
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), "main");
+        assert.equal(yield* git(cwd, ["log", "-1", "--pretty=%s"]), "Local edits readme");
+      }),
+    );
   });
 });
