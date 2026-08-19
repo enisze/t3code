@@ -3206,6 +3206,12 @@ function ChatViewContent(props: ChatViewProps) {
       initialPrompt: primaryServerSettings.reviewPrompt,
       ...(reviewModelSelection ? { modelSelection: reviewModelSelection } : {}),
       autoSubmitInitialPrompt: true,
+      // A review opens another chat *beside* the current one, exactly like the
+      // tab strip's "New chat in this worktree". Without this the chat being
+      // viewed is dropped as the project's active draft, its route falls back
+      // to the index landing, and that landing resets this fresh review draft
+      // to the configured defaults — detaching it from the worktree.
+      preservePreviousDraft: true,
     });
   }, [
     activeProject,
