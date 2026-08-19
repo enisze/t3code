@@ -20,6 +20,7 @@
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
@@ -34,6 +35,9 @@ const GH_AUTH_TOKEN_TIMEOUT_MS = 10_000;
 // changes, so the commit identity can be cached far more generously than tokens.
 const IDENTITY_TTL_MS = 30 * 60_000;
 const GH_API_USER_TIMEOUT_MS = 10_000;
+// A directory's resolved real path effectively never changes either, but a path
+// that does not exist yet must not stay pinned to its unresolved form forever.
+const REAL_PATH_TTL_MS = 5 * 60_000;
 
 export interface ResolvedGitHubAccount {
   readonly account: GitHubAccountRef;
@@ -193,8 +197,39 @@ function isWithin(cwd: string, base: string): boolean {
   return cwd.startsWith(`${normalizedBase}/`) || cwd.startsWith(`${normalizedBase}\\`);
 }
 
+/** One path that resolves to an account: a project root or a thread worktree. */
+interface AccountRoute {
+  readonly path: string;
+  readonly account: GitHubAccountRef;
+}
+
+/**
+ * The account of the longest route containing `cwd`, so a worktree nested under
+ * another project's root resolves to the worktree's own project.
+ */
+function matchLongestRoute(
+  cwd: string,
+  routes: ReadonlyArray<AccountRoute>,
+): GitHubAccountRef | null {
+  let bestPathLength = -1;
+  let bestAccount: GitHubAccountRef | null = null;
+  for (const route of routes) {
+    if (!isWithin(cwd, route.path)) continue;
+    if (route.path.length > bestPathLength) {
+      bestPathLength = route.path.length;
+      bestAccount = route.account;
+    }
+  }
+  return bestAccount;
+}
+
 interface CachedToken {
   readonly token: string;
+  readonly expiresAtMs: number;
+}
+
+interface CachedRealPath {
+  readonly realPath: string;
   readonly expiresAtMs: number;
 }
 
@@ -267,8 +302,32 @@ function parseCommitIdentity(
 export const make = Effect.gen(function* () {
   const snapshotQuery = yield* ProjectionSnapshotQuery;
   const process = yield* VcsProcess.VcsProcess;
+  const fileSystem = yield* FileSystem.FileSystem;
   const tokenCache = yield* Ref.make(new Map<string, CachedToken>());
   const identityCache = yield* Ref.make(new Map<string, CachedIdentity>());
+  const realPathCache = yield* Ref.make(new Map<string, CachedRealPath>());
+
+  /**
+   * `target` with its symlinks resolved, or `target` itself when it can't be
+   * resolved (the directory is gone, or unreadable). Cached so the extra
+   * syscalls are paid once per path rather than once per command.
+   */
+  const resolveRealPath = (target: string): Effect.Effect<string> =>
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      const cache = yield* Ref.get(realPathCache);
+      const cached = cache.get(target);
+      if (cached !== undefined && cached.expiresAtMs > now) {
+        return cached.realPath;
+      }
+      const realPath = yield* fileSystem.realPath(target).pipe(Effect.orElseSucceed(() => target));
+      yield* Ref.update(realPathCache, (current) => {
+        const next = new Map(current);
+        next.set(target, { realPath, expiresAtMs: now + REAL_PATH_TTL_MS });
+        return next;
+      });
+      return realPath;
+    });
 
   /**
    * Find the account attached to the project owning `cwd`. Matches the longest
@@ -278,21 +337,41 @@ export const make = Effect.gen(function* () {
    */
   const findAccountForCwd = (cwd: string): Effect.Effect<GitHubAccountRef | null> =>
     snapshotQuery.listAccountRoutes().pipe(
-      Effect.map((routes) => {
-        let bestPathLength = -1;
-        let bestAccount: GitHubAccountRef | null = null;
-        for (const route of routes) {
-          if (!isWithin(cwd, route.path)) continue;
-          if (route.path.length > bestPathLength) {
-            bestPathLength = route.path.length;
-            bestAccount = route.account;
-          }
-        }
-        return bestAccount;
-      }),
       // A projection read failure must not break the underlying git/gh command;
       // fall back to the ambient account.
-      Effect.catch(() => Effect.succeed(null)),
+      Effect.orElseSucceed((): ReadonlyArray<AccountRoute> => []),
+      Effect.flatMap((routes) =>
+        Effect.gen(function* () {
+          if (routes.length === 0) {
+            return null;
+          }
+          const literalMatch = matchLongestRoute(cwd, routes);
+          if (literalMatch !== null) {
+            return literalMatch;
+          }
+          // No literal match, which is not the same as no account: a cwd and the
+          // stored root routinely name one directory through different symlinks
+          // (/tmp vs /private/tmp on macOS, a symlinked home or worktree dir).
+          // Missing that match silently runs the command as the machine's
+          // ambient account, so resolving both sides is worth the syscalls —
+          // paid only on the miss, and cached.
+          const [realCwd, realRoutes] = yield* Effect.all(
+            [
+              resolveRealPath(cwd),
+              Effect.forEach(
+                routes,
+                (route) =>
+                  resolveRealPath(route.path).pipe(
+                    Effect.map((path): AccountRoute => ({ ...route, path })),
+                  ),
+                { concurrency: 8 },
+              ),
+            ],
+            { concurrency: 2 },
+          );
+          return matchLongestRoute(realCwd, realRoutes);
+        }),
+      ),
     );
 
   const resolveToken = (cwd: string, account: GitHubAccountRef): Effect.Effect<string | null> =>
@@ -314,11 +393,13 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.option);
 
-      // Falling back to the ambient account is the difference between "acts as
-      // the wrong user" and "fails loudly", so leave a breadcrumb either way.
+      // git and gh commands for this project refuse rather than act as the
+      // machine's ambient account, so this warning is the only place the reason
+      // is recorded — leave a breadcrumb either way. (A commit identity still
+      // resolves, via the account's login-based no-reply email.)
       if (result._tag === "None") {
         yield* Effect.logWarning(
-          "Could not mint a token for the project's GitHub account; falling back to the active gh account",
+          "Could not mint a token for the project's GitHub account; git and gh commands for this project will fail until it is logged in to the GitHub CLI",
           { host: account.host, login: account.login, cwd },
         );
         return null;
@@ -326,7 +407,7 @@ export const make = Effect.gen(function* () {
       const token = result.value.stdout.trim();
       if (token.length === 0) {
         yield* Effect.logWarning(
-          "gh returned an empty token for the project's GitHub account; falling back to the active gh account",
+          "gh returned an empty token for the project's GitHub account; git and gh commands for this project will fail until it is logged in to the GitHub CLI",
           { host: account.host, login: account.login, cwd },
         );
         return null;

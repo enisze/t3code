@@ -245,7 +245,8 @@ function paginateBranches(input: {
 
 interface WorktreeBranchEntry {
   readonly path: string;
-  readonly branch: string;
+  /** null for a detached worktree, which still owns its directory. */
+  readonly branch: string | null;
   readonly prunable: boolean;
 }
 
@@ -256,7 +257,7 @@ function parseWorktreeBranchEntries(stdout: string): ReadonlyArray<WorktreeBranc
   let currentPrunable = false;
 
   const flush = () => {
-    if (currentPath !== null && currentBranch !== null) {
+    if (currentPath !== null) {
       entries.push({ path: currentPath, branch: currentBranch, prunable: currentPrunable });
     }
     currentPath = null;
@@ -283,7 +284,7 @@ function parseWorktreeBranchEntries(stdout: string): ReadonlyArray<WorktreeBranc
 function parseWorktreeBranchPaths(stdout: string): ReadonlyMap<string, string> {
   const worktreePaths = new Map<string, string>();
   for (const entry of parseWorktreeBranchEntries(stdout)) {
-    if (entry.prunable) continue;
+    if (entry.prunable || entry.branch === null) continue;
     worktreePaths.set(entry.branch, entry.path);
   }
 
@@ -2943,41 +2944,188 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  const listWorktreeEntries = Effect.fn("listWorktreeEntries")(function* (
+    operation: string,
+    cwd: string,
+  ) {
+    const result = yield* executeGit(operation, cwd, ["worktree", "list", "--porcelain", "-z"], {
+      timeoutMs: 10_000,
+      allowNonZeroExit: true,
+      maxOutputBytes: 16 * 1024 * 1024,
+    });
+    return result.exitCode === 0 ? parseWorktreeBranchEntries(result.stdout) : [];
+  });
+
+  const normalizeWorktreePath = (worktreePath: string) =>
+    path.normalize(path.resolve(worktreePath));
+
+  /**
+   * `git worktree add` refuses two situations the caller can neither see nor fix
+   * by hand, and both surface as an opaque "git worktree add failed":
+   *
+   * - the branch is already checked out in another worktree. That worktree — and
+   *   the threads rooted at it — is what the user asked for, so hand it back
+   *   instead of failing.
+   * - the derived directory is taken. Directory names come from the branch, but a
+   *   worktree keeps its directory when its branch is switched, so reopening the
+   *   original branch collides with a directory that now holds something else.
+   *   A sibling `<name>-2` keeps the request working.
+   *
+   * A worktree whose directory is gone still claims its branch until its
+   * administrative entry is pruned, so a stale claim is pruned and retried once.
+   * `git worktree prune` only drops entries whose working tree is already gone,
+   * so it never discards work. All of this runs on the failure path only, keeping
+   * a successful add a single spawn.
+   */
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input) {
     const targetBranch = input.newRefName ?? input.refName;
     const sanitizedBranch = targetBranch.replace(/\//g, "-");
     const repoName = path.basename(input.cwd);
-    const worktreePath = input.path ?? path.join(worktreesDir, repoName, sanitizedBranch);
-    const args = input.newRefName
-      ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
-      : ["worktree", "add", worktreePath, input.refName];
+    const requestedPath = input.path ?? path.join(worktreesDir, repoName, sanitizedBranch);
 
-    yield* executeGit("GitVcsDriver.createWorktree", input.cwd, args, {
-      fallbackErrorDetail: "git worktree add failed",
+    const buildArgs = (worktreePath: string) =>
+      input.newRefName
+        ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
+        : ["worktree", "add", worktreePath, input.refName];
+
+    // Stable diagnostics so the surfaced git output is the C-locale text
+    // regardless of the machine's language. The args are worktree paths and
+    // branch names built here, so there is no argument secret to leak by
+    // including git's own output.
+    const runAdd = (worktreePath: string) =>
+      executeGitWithStableDiagnostics(
+        "GitVcsDriver.createWorktree",
+        input.cwd,
+        buildArgs(worktreePath),
+        { allowNonZeroExit: true },
+      );
+
+    const failAdd = (
+      worktreePath: string,
+      result: GitVcsDriver.ExecuteGitResult,
+      detail = appendGitOutputToDetail("git worktree add failed", result.stdout, result.stderr),
+    ) =>
+      Effect.fail(
+        new GitCommandError({
+          ...gitCommandContext({
+            operation: "GitVcsDriver.createWorktree",
+            cwd: input.cwd,
+            args: buildArgs(worktreePath),
+          }),
+          detail,
+          ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+          stdoutLength: result.stdout.length,
+          stderrLength: result.stderr.length,
+        }),
+      );
+
+    const finish = Effect.fn("createWorktree.finish")(function* (worktreePath: string) {
+      if (input.newRefName && input.baseRefName) {
+        const remoteNames = yield* listRemoteNames(input.cwd).pipe(Effect.orElseSucceed(() => []));
+        const parsedBaseRef = parseRemoteRefWithRemoteNames(
+          input.baseRefName,
+          remoteNames.toSorted((left, right) => right.length - left.length),
+        );
+        const baseBranch = parsedBaseRef?.branchName ?? input.baseRefName;
+        yield* runGit("GitVcsDriver.createWorktree.configureBaseRef", input.cwd, [
+          "config",
+          `branch.${input.newRefName}.gh-merge-base`,
+          baseBranch,
+        ]);
+      }
+
+      return {
+        worktree: {
+          path: worktreePath,
+          refName: targetBranch,
+        },
+      };
     });
 
-    if (input.newRefName && input.baseRefName) {
-      const remoteNames = yield* listRemoteNames(input.cwd).pipe(Effect.orElseSucceed(() => []));
-      const parsedBaseRef = parseRemoteRefWithRemoteNames(
-        input.baseRefName,
-        remoteNames.toSorted((left, right) => right.length - left.length),
-      );
-      const baseBranch = parsedBaseRef?.branchName ?? input.baseRefName;
-      yield* runGit("GitVcsDriver.createWorktree.configureBaseRef", input.cwd, [
-        "config",
-        `branch.${input.newRefName}.gh-merge-base`,
-        baseBranch,
-      ]);
+    let lastResult = yield* runAdd(requestedPath);
+    if (lastResult.exitCode === 0) {
+      return yield* finish(requestedPath);
     }
 
-    return {
-      worktree: {
-        path: worktreePath,
-        refName: targetBranch,
-      },
-    };
+    const entries = yield* listWorktreeEntries(
+      "GitVcsDriver.createWorktree.worktreeList",
+      input.cwd,
+    );
+    // Only a plain checkout can land on an existing worktree: `-b` demands a
+    // branch that does not exist yet, so a claim on that name is a failure the
+    // caller has to see.
+    const claim = input.newRefName
+      ? null
+      : (entries.find((entry) => entry.branch === targetBranch) ?? null);
+
+    if (claim !== null && !claim.prunable) {
+      // git lists the main worktree first, and that checkout is the project
+      // itself rather than something a worktree thread can open.
+      if (claim === entries[0]) {
+        return yield* failAdd(
+          requestedPath,
+          lastResult,
+          `Branch "${targetBranch}" is already checked out in the main repo at ${claim.path}, which cannot also become a worktree. Open the branch there, or switch that checkout to another branch first.`,
+        );
+      }
+      return { worktree: { path: claim.path, refName: targetBranch } };
+    }
+
+    if (claim !== null) {
+      yield* executeGit(
+        "GitVcsDriver.createWorktree.pruneWorktrees",
+        input.cwd,
+        ["worktree", "prune"],
+        { timeoutMs: 10_000, allowNonZeroExit: true },
+      );
+      lastResult = yield* runAdd(requestedPath);
+      if (lastResult.exitCode === 0) {
+        return yield* finish(requestedPath);
+      }
+    }
+
+    // Only a path this driver derived may move; an explicitly requested path is
+    // the caller's choice to keep.
+    if (input.path !== null) {
+      return yield* failAdd(requestedPath, lastResult);
+    }
+
+    const occupiedPaths = new Set(
+      entries.filter((entry) => !entry.prunable).map((entry) => normalizeWorktreePath(entry.path)),
+    );
+    const isPathTaken = Effect.fn("createWorktree.isPathTaken")(function* (
+      worktreePath: string,
+      unknownIsTaken: boolean,
+    ) {
+      if (occupiedPaths.has(normalizeWorktreePath(worktreePath))) {
+        return true;
+      }
+      return yield* fileSystem
+        .exists(worktreePath)
+        .pipe(Effect.orElseSucceed(() => unknownIsTaken));
+    });
+
+    // Retrying elsewhere only makes sense for a directory collision; any other
+    // failure repeats at the next path and buries git's real complaint.
+    if (!(yield* isPathTaken(requestedPath, false))) {
+      return yield* failAdd(requestedPath, lastResult);
+    }
+
+    for (let suffix = 2; suffix <= 100; suffix += 1) {
+      const candidatePath = `${requestedPath}-${suffix}`;
+      if (yield* isPathTaken(candidatePath, true)) {
+        continue;
+      }
+      const candidateResult = yield* runAdd(candidatePath);
+      if (candidateResult.exitCode === 0) {
+        return yield* finish(candidatePath);
+      }
+      return yield* failAdd(candidatePath, candidateResult);
+    }
+
+    return yield* failAdd(requestedPath, lastResult);
   });
 
   const fetchPullRequestBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchPullRequestBranch"] =
@@ -3171,22 +3319,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         return yield* failCheckout(result, "git checkout failed");
       }
 
-      const worktreeListResult = yield* executeGit(
+      const worktreeEntries = yield* listWorktreeEntries(
         "GitVcsDriver.switchRef.worktreeList",
         cwd,
-        ["worktree", "list", "--porcelain", "-z"],
-        {
-          timeoutMs: 10_000,
-          allowNonZeroExit: true,
-          maxOutputBytes: 16 * 1024 * 1024,
-        },
       );
-      const claim =
-        worktreeListResult.exitCode === 0
-          ? (parseWorktreeBranchEntries(worktreeListResult.stdout).find(
-              (entry) => entry.branch === checkoutBranch,
-            ) ?? null)
-          : null;
+      const claim = worktreeEntries.find((entry) => entry.branch === checkoutBranch) ?? null;
 
       if (claim === null) {
         return yield* failCheckout(result, "git checkout failed");

@@ -1,6 +1,9 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, afterEach, describe, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -118,6 +121,20 @@ const layerFor = (snapshot: OrchestrationShellSnapshot) => {
     Layer.provide(
       Layer.mock(ProjectionSnapshotQuery)({ listAccountRoutes: mockListAccountRoutes }),
     ),
+    // Real filesystem: the resolver resolves symlinks when no route matches
+    // literally, and the fixtures' fake paths must survive that lookup failing.
+    Layer.provide(NodeServices.layer),
+  );
+};
+
+const routesLayerFor = (routes: ReadonlyArray<{ path: string; account: GitHubAccountRef }>) => {
+  mockListAccountRoutes.mockReturnValue(Effect.succeed(routes));
+  return resolverLayer.pipe(
+    Layer.provide(Layer.mock(VcsProcess.VcsProcess)({ run: mockRun })),
+    Layer.provide(
+      Layer.mock(ProjectionSnapshotQuery)({ listAccountRoutes: mockListAccountRoutes }),
+    ),
+    Layer.provide(NodeServices.layer),
   );
 };
 
@@ -291,6 +308,37 @@ describe("GitHubAccountResolver.resolveForCwd", () => {
         ),
       ),
     ),
+  );
+
+  it.effect("resolves a cwd that reaches the workspace root through a symlink", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "gh-account-resolver-test-",
+      });
+      const workspaceRoot = pathService.join(baseDir, "repo");
+      const linkedRoot = pathService.join(baseDir, "linked-repo");
+      yield* fileSystem.makeDirectory(pathService.join(workspaceRoot, "src"), { recursive: true });
+      yield* fileSystem.symlink(workspaceRoot, linkedRoot);
+      mockRun.mockReturnValue(Effect.succeed(processOutput("gho_link\n")));
+
+      // The project stored the real root; the command runs under the symlink.
+      const resolved = yield* Effect.gen(function* () {
+        const resolver = yield* GitHubAccountResolver;
+        return yield* resolver.resolveForCwd(pathService.join(linkedRoot, "src"));
+      }).pipe(
+        Effect.provide(
+          routesLayerFor([{ path: workspaceRoot, account: { host: "github.com", login: "octo" } }]),
+        ),
+      );
+
+      assert.deepEqual(resolved, {
+        _tag: "resolved",
+        account: { host: "github.com", login: "octo" },
+        token: "gho_link",
+      });
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("does not match a sibling path with a shared prefix", () =>

@@ -1443,6 +1443,111 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("reuses the worktree that already holds the branch", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "held-worktree");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/held",
+        });
+
+        const reused = yield* driver.createWorktree({
+          cwd,
+          path: null,
+          refName: "feature/held",
+        });
+
+        assert.equal(reused.worktree.refName, "feature/held");
+        assert.equal(
+          yield* fileSystem.realPath(reused.worktree.path),
+          yield* fileSystem.realPath(worktreePath),
+        );
+      }),
+    );
+
+    it.effect("explains a branch that only the requesting checkout holds", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const error = yield* driver
+          .createWorktree({ cwd, path: null, refName: initialBranch })
+          .pipe(Effect.flip);
+
+        assert.equal(error.operation, "GitVcsDriver.createWorktree");
+        assert.include(error.detail, initialBranch);
+        assert.include(error.detail, "already checked out");
+      }),
+    );
+
+    it.effect("creates a sibling worktree when the derived directory is taken", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const created = yield* driver.createWorktree({
+          cwd,
+          path: null,
+          refName: initialBranch,
+          newRefName: "feature/shop",
+        });
+        // Switching the worktree off its branch frees the branch but keeps the
+        // directory named after it, which is what collides on the next open.
+        yield* git(created.worktree.path, ["switch", "-c", "feature/other"]);
+
+        const reopened = yield* driver.createWorktree({
+          cwd,
+          path: null,
+          refName: "feature/shop",
+        });
+
+        assert.equal(reopened.worktree.refName, "feature/shop");
+        assert.equal(reopened.worktree.path, `${created.worktree.path}-2`);
+        assert.equal(
+          yield* git(reopened.worktree.path, ["branch", "--show-current"]),
+          "feature/shop",
+        );
+      }),
+    );
+
+    it.effect("reopens a branch whose worktree directory was deleted", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const created = yield* driver.createWorktree({
+          cwd,
+          path: null,
+          refName: initialBranch,
+          newRefName: "feature/deleted",
+        });
+        // Removing the directory behind git's back leaves the branch claimed by
+        // a prunable worktree, which is what a hand-removed worktree looks like.
+        yield* fileSystem.remove(created.worktree.path, { recursive: true });
+
+        const reopened = yield* driver.createWorktree({
+          cwd,
+          path: null,
+          refName: "feature/deleted",
+        });
+
+        assert.equal(reopened.worktree.path, created.worktree.path);
+        assert.equal(
+          yield* git(reopened.worktree.path, ["branch", "--show-current"]),
+          "feature/deleted",
+        );
+      }),
+    );
+
     it.effect("checks out a branch a deleted worktree still claims", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
