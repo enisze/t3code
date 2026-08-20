@@ -12,6 +12,7 @@ import type { ThreadRouteTarget } from "../threadRoutes";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
+import { worktreeActivityKey } from "../uiStateStore";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
@@ -475,10 +476,45 @@ export function firstValidTimestamp(
 
 // Keep the chats users touched most recently at the top of each project. The
 // project grouping step preserves this incoming order within every section.
-export function sortThreadsForSidebarV2<T extends { readonly id: string } & ThreadSortInput>(
-  threads: readonly T[],
-): T[] {
-  return sortThreads(threads, "updated_at");
+//
+// `worktreeLastActivityAtByKey` folds a locally-recorded worktree interaction
+// (e.g. closing a chat) into each chat's effective sort time. A worktree row is
+// positioned by its newest surviving chat — collapsing keeps the group at that
+// chat's slot — so closing the newest chat would otherwise sink the row to an
+// older sibling's timestamp even though closing is a recent interaction. Taking
+// the max of the chat's own time and its worktree's recorded activity keeps the
+// row in place. Callers that omit the map keep the plain activity sort.
+export function sortThreadsForSidebarV2<
+  T extends {
+    readonly id: string;
+    readonly environmentId?: string;
+    readonly worktreePath?: string | null;
+  } & ThreadSortInput,
+>(threads: readonly T[], worktreeLastActivityAtByKey?: Readonly<Record<string, string>>): T[] {
+  if (!worktreeLastActivityAtByKey) {
+    return sortThreads(threads, "updated_at");
+  }
+  const effectiveTimestamp = (thread: T): number => {
+    const base = getThreadSortTimestamp(thread, "updated_at");
+    const { environmentId, worktreePath } = thread;
+    if (environmentId == null || worktreePath == null) {
+      return base;
+    }
+    const activityAt =
+      worktreeLastActivityAtByKey[worktreeActivityKey(environmentId, worktreePath)];
+    const activityMs = activityAt ? Date.parse(activityAt) : Number.NaN;
+    return Number.isFinite(activityMs) ? Math.max(base, activityMs) : base;
+  };
+  // Match sortThreads' order: newest activity first, ties broken by descending
+  // id so the sequence stays stable.
+  return [...threads].sort((left, right) => {
+    const leftTimestamp = effectiveTimestamp(left);
+    const rightTimestamp = effectiveTimestamp(right);
+    if (leftTimestamp !== rightTimestamp) {
+      return rightTimestamp - leftTimestamp;
+    }
+    return left.id < right.id ? 1 : left.id > right.id ? -1 : 0;
+  });
 }
 
 type SettledTimestampInput = Pick<

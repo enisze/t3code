@@ -1666,6 +1666,10 @@ export default function SidebarV2() {
   // ever partitions live shells into the inbox (cards) and the snoozed shelf.
   // Parking a thread = archiving it, which removes it from `threads` here.
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  // Closing a chat is a worktree interaction the server timestamps don't record;
+  // fold it into the sort so the collapsed row keeps its place instead of
+  // sinking to an older sibling. See `sortThreadsForSidebarV2`.
+  const worktreeLastActivityAtByKey = useUiStateStore((state) => state.worktreeLastActivityAtByKey);
   const { activeThreads, snoozedThreads, snoozeNow, representativeKeyByThreadKey } = useMemo(() => {
     // Snooze wake times are second-precise, so classify against a real clock;
     // snoozeWakeTick re-runs this memo exactly at the next wake boundary.
@@ -1678,6 +1682,7 @@ export default function SidebarV2() {
           (scopedProjectKeys === null ||
             scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
       ),
+      worktreeLastActivityAtByKey,
     );
     // Chats sharing one worktree collapse to a single row (the earliest chat),
     // classified and shown by that representative; the rest live only in the
@@ -1712,7 +1717,7 @@ export default function SidebarV2() {
       snoozeNow: preciseNow,
       representativeKeyByThreadKey,
     };
-  }, [scopedProjectKeys, serverConfigs, snoozeWakeTick, threads]);
+  }, [scopedProjectKeys, serverConfigs, snoozeWakeTick, threads, worktreeLastActivityAtByKey]);
   // When the active route is a collapsed worktree sibling, its row is folded
   // into the earliest chat's; highlight and keep that representative visible.
   const effectiveRouteThreadKey =

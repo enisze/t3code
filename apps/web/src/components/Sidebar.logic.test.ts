@@ -724,6 +724,38 @@ describe("sortThreadsForSidebarV2", () => {
 
     expect(sorted.map((thread) => thread.id)).toEqual(["b", "a"]);
   });
+
+  it("lifts a chat by its worktree's recorded activity so a closed sibling doesn't sink the row", () => {
+    // `wt-old` is a surviving chat in a worktree whose newer sibling was just
+    // closed; `other` is a more recently active chat in a different worktree.
+    // Without the recorded close activity, `wt-old` would sort below `other`.
+    const wtOld = {
+      id: "wt-old",
+      environmentId: "env",
+      worktreePath: "/repo/wt",
+      createdAt: "2026-03-09T08:00:00.000Z",
+      updatedAt: "2026-03-09T08:00:00.000Z",
+      latestUserMessageAt: "2026-03-09T09:00:00.000Z",
+    };
+    const other = {
+      id: "other",
+      environmentId: "env",
+      worktreePath: "/repo/other",
+      createdAt: "2026-03-09T10:00:00.000Z",
+      updatedAt: "2026-03-09T10:00:00.000Z",
+      latestUserMessageAt: "2026-03-09T11:00:00.000Z",
+    };
+
+    expect(sortThreadsForSidebarV2([wtOld, other]).map((thread) => thread.id)).toEqual([
+      "other",
+      "wt-old",
+    ]);
+    expect(
+      sortThreadsForSidebarV2([wtOld, other], {
+        "env\0/repo/wt": "2026-03-09T12:00:00.000Z",
+      }).map((thread) => thread.id),
+    ).toEqual(["wt-old", "other"]);
+  });
 });
 
 describe("sortSettledThreadsForSidebarV2", () => {

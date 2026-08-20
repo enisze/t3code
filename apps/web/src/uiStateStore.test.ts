@@ -5,6 +5,7 @@ import {
   legacyProjectCwdPreferenceKey,
   markThreadUnread,
   markThreadVisited,
+  markWorktreeActive,
   parsePersistedState,
   PERSISTED_STATE_KEY,
   type PersistedUiState,
@@ -24,6 +25,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     showHiddenProjects: false,
     projectOrder: [],
     threadLastVisitedAtById: {},
+    worktreeLastActivityAtByKey: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
     ...overrides,
@@ -39,6 +41,23 @@ describe("uiStateStore pure functions", () => {
     expect(visited.threadLastVisitedAtById[threadId]).toBe("2026-02-25T12:30:00.700Z");
     expect(markThreadVisited(visited, threadId, "2026-02-25T12:30:00.000Z")).toBe(visited);
     expect(markThreadVisited(visited, threadId, "not-a-date")).toBe(visited);
+  });
+
+  it("records worktree activity without moving it backwards", () => {
+    const worktreeKey = "environment:/repo/wt";
+    const initialState = makeUiState();
+    const active = markWorktreeActive(initialState, worktreeKey, "2026-02-25T12:40:00.000Z");
+
+    expect(active.worktreeLastActivityAtByKey[worktreeKey]).toBe("2026-02-25T12:40:00.000Z");
+    // An older interaction never lowers the recorded activity.
+    expect(markWorktreeActive(active, worktreeKey, "2026-02-25T12:39:00.000Z")).toBe(active);
+    expect(markWorktreeActive(active, worktreeKey, "not-a-date")).toBe(active);
+    expect(markWorktreeActive(active, "", "2026-02-25T12:41:00.000Z")).toBe(active);
+    // A newer interaction advances it.
+    expect(
+      markWorktreeActive(active, worktreeKey, "2026-02-25T12:41:00.000Z")
+        .worktreeLastActivityAtByKey[worktreeKey],
+    ).toBe("2026-02-25T12:41:00.000Z");
   });
 
   it("marks a completed thread unread using the server completion timestamp", () => {
@@ -160,6 +179,10 @@ describe("parsePersistedState", () => {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
         invalid: "not-a-date",
       },
+      worktreeLastActivityAtByKey: {
+        "environment:/repo/wt": "2026-02-25T12:40:00.000Z",
+        invalid: "not-a-date",
+      },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       threadChangedFilesExpansionVersion: 1,
       threadChangedFilesExpandedById: {
@@ -179,6 +202,9 @@ describe("parsePersistedState", () => {
       projectOrder: ["physical-b", "physical-a"],
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
+      },
+      worktreeLastActivityAtByKey: {
+        "environment:/repo/wt": "2026-02-25T12:40:00.000Z",
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       threadChangedFilesExpandedById: {
@@ -277,6 +303,9 @@ describe("uiStateStore persistence", () => {
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
+      worktreeLastActivityAtByKey: {
+        "environment:/repo/wt": "2026-02-25T12:40:00.000Z",
+      },
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
           "turn-1": false,
@@ -299,6 +328,9 @@ describe("uiStateStore persistence", () => {
       projectOrder: ["physical-b", "physical-a"],
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
+      },
+      worktreeLastActivityAtByKey: {
+        "environment:/repo/wt": "2026-02-25T12:40:00.000Z",
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       threadChangedFilesExpansionVersion: 1,
