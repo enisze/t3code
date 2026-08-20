@@ -22,6 +22,7 @@ export interface PersistedUiState {
   projectHiddenById?: Record<string, boolean>;
   projectOrder?: string[];
   threadLastVisitedAtById?: Record<string, string>;
+  worktreeLastActivityAtByKey?: Record<string, string>;
   collapsedProjectCwds?: string[];
   expandedProjectCwds?: string[];
   projectOrderCwds?: string[];
@@ -44,6 +45,11 @@ export interface UiProjectState {
 
 export interface UiThreadState {
   threadLastVisitedAtById: Record<string, string>;
+  // Last time the user interacted with a worktree in a way the server-side
+  // thread timestamps don't capture — currently closing one of its chats.
+  // Keyed by `worktreeActivityKey`, it keeps the collapsed worktree row from
+  // sinking when its newest chat is closed. See `sortThreadsForSidebarV2`.
+  worktreeLastActivityAtByKey: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
 }
 
@@ -59,9 +65,16 @@ const initialState: UiState = {
   showHiddenProjects: false,
   projectOrder: [],
   threadLastVisitedAtById: {},
+  worktreeLastActivityAtByKey: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
 };
+
+// Group key for a worktree's local activity, matching the key
+// `collapseWorktreeSiblings` uses to fold a worktree's chats into one row.
+export function worktreeActivityKey(environmentId: string, worktreePath: string): string {
+  return `${environmentId}\0${worktreePath}`;
+}
 
 const LEGACY_PROJECT_CWD_PREFERENCE_PREFIX = "legacy-project-cwd:";
 const LEGACY_PROJECT_EXPANSION_DEFAULT_KEY = "legacy-project-expansion-default";
@@ -138,6 +151,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
     showHiddenProjects: false,
     projectOrder,
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
+    worktreeLastActivityAtByKey: sanitizeTimestampRecord(parsed.worktreeLastActivityAtByKey),
     threadChangedFilesExpandedById:
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
         ? sanitizePersistedThreadChangedFilesExpanded(parsed.threadChangedFilesExpandedById)
@@ -217,6 +231,7 @@ export function persistState(state: UiState): void {
         projectHiddenById: state.projectHiddenById,
         projectOrder: state.projectOrder,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
+        worktreeLastActivityAtByKey: state.worktreeLastActivityAtByKey,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
         threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
@@ -254,6 +269,28 @@ export function markThreadVisited(state: UiState, threadId: string, visitedAt: s
     threadLastVisitedAtById: {
       ...state.threadLastVisitedAtById,
       [threadId]: visitedAt,
+    },
+  };
+}
+
+export function markWorktreeActive(state: UiState, worktreeKey: string, activeAt: string): UiState {
+  if (worktreeKey.length === 0) {
+    return state;
+  }
+  const activeAtMs = Date.parse(activeAt);
+  if (!Number.isFinite(activeAtMs)) {
+    return state;
+  }
+  const previousActiveAt = state.worktreeLastActivityAtByKey[worktreeKey];
+  const previousActiveAtMs = previousActiveAt ? Date.parse(previousActiveAt) : NaN;
+  if (Number.isFinite(previousActiveAtMs) && previousActiveAtMs >= activeAtMs) {
+    return state;
+  }
+  return {
+    ...state,
+    worktreeLastActivityAtByKey: {
+      ...state.worktreeLastActivityAtByKey,
+      [worktreeKey]: activeAt,
     },
   };
 }
@@ -439,6 +476,7 @@ export function reorderProjects(
 
 interface UiStateStore extends UiState {
   markThreadVisited: (threadId: string, visitedAt: string) => void;
+  markWorktreeActive: (worktreeKey: string, activeAt: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
@@ -456,6 +494,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   ...readPersistedState(),
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
+  markWorktreeActive: (worktreeKey, activeAt) =>
+    set((state) => markWorktreeActive(state, worktreeKey, activeAt)),
   markThreadUnread: (threadId, latestTurnCompletedAt) =>
     set((state) => markThreadUnread(state, threadId, latestTurnCompletedAt)),
   setThreadChangedFilesExpanded: (threadId, turnId, expanded) =>

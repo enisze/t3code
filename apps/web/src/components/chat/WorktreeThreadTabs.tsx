@@ -30,6 +30,7 @@ import { useClientSettings } from "~/hooks/useSettings";
 import { readLocalApi } from "~/localApi";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { useUiStateStore, worktreeActivityKey } from "~/uiStateStore";
 
 export interface WorktreeContentTabDescriptor {
   id: string;
@@ -181,6 +182,18 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
           `Close "${shell.title}"? It will move to Archive.`,
         );
         if (!confirmed) return;
+      }
+
+      // Closing a chat is a fresh interaction with its worktree. Record it so
+      // the collapsed sidebar row keeps its position instead of sinking to a
+      // surviving sibling's older timestamp. See `sortThreadsForSidebarV2`.
+      if (shell.worktreePath !== null) {
+        useUiStateStore
+          .getState()
+          .markWorktreeActive(
+            worktreeActivityKey(shell.environmentId, shell.worktreePath),
+            new Date().toISOString(),
+          );
       }
 
       const fallback =
