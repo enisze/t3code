@@ -1658,7 +1658,6 @@ function ChatViewContent(props: ChatViewProps) {
   // multiple chats share one on-disk tree, matching the sidebar's
   // "New thread on {branch}" affordance.
   const newChatWorktreePath = activeThread?.worktreePath ?? null;
-  const newChatWorktreeBranch = activeThread?.branch ?? null;
   // File-diff "content tabs" live in the chat-column tab strip and are scoped to
   // the worktree, so they stay visible while switching between its chats. Key
   // them off the stable route ref (resolved via the shell/draft worktree) rather
@@ -1674,16 +1673,6 @@ function ChatViewContent(props: ChatViewProps) {
   // The browser preview is shown as a content tab in the chat column (beside the
   // file/diff viewers), not in the right panel.
   const previewTabActive = activeContentTab?.view === "preview";
-  const handleNewChatInScope = useCallback(() => {
-    if (!activeProjectRef) return;
-    void handleNewThread(activeProjectRef, {
-      branch: newChatWorktreeBranch,
-      worktreePath: newChatWorktreePath,
-      envMode: newChatWorktreePath ? "worktree" : "local",
-      forceNew: true,
-      preservePreviousDraft: true,
-    });
-  }, [activeProjectRef, newChatWorktreeBranch, newChatWorktreePath, handleNewThread]);
   const activeEnvironmentShell = useEnvironmentQuery(
     activeThread ? environmentShell.stateAtom(activeThread.environmentId) : null,
   );
@@ -2509,6 +2498,26 @@ function ChatViewContent(props: ChatViewProps) {
           input: { cwd: gitStatusCwd },
         }),
   );
+  // The reference a review or new worktree chat targets must follow the
+  // worktree's *actual* checked-out branch — the one shown in the footer chip —
+  // not the thread's stored `branch`, which drifts after a checkout, PR
+  // checkout, or branch switch inside the worktree. Mirror the footer's
+  // resolution (live git ref, then stored branch) for worktree-backed chats so
+  // a review never runs against a stale reference; local chats keep the stored
+  // value.
+  const newChatWorktreeBranch = newChatWorktreePath
+    ? (gitStatusQuery.data?.refName ?? activeThread?.branch ?? null)
+    : (activeThread?.branch ?? null);
+  const handleNewChatInScope = useCallback(() => {
+    if (!activeProjectRef) return;
+    void handleNewThread(activeProjectRef, {
+      branch: newChatWorktreeBranch,
+      worktreePath: newChatWorktreePath,
+      envMode: newChatWorktreePath ? "worktree" : "local",
+      forceNew: true,
+      preservePreviousDraft: true,
+    });
+  }, [activeProjectRef, newChatWorktreeBranch, newChatWorktreePath, handleNewThread]);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
   // Prefer an instance-id match so a custom Codex instance (e.g.
