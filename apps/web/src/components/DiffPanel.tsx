@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useOpenInPreferredEditor } from "../editorPreferences";
-import { type DraftId } from "../composerDraftStore";
+import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { openDiffFilePrimaryAction } from "../diffFileActions";
 import { useCheckpointDiff } from "~/lib/checkpointDiffState";
 import { cn } from "~/lib/utils";
@@ -309,27 +309,48 @@ export default function DiffPanel({
   // thread yet, so this resolves to the representative sibling that owns the
   // worktree; for an ordinary chat it's the same worktree either way.
   const workspaceThread = useThread(workspaceThreadRef) ?? activeThread;
-  const activeProjectId = workspaceThread?.projectId ?? null;
+  // A worktree can hold only a not-yet-sent draft (no server thread), so
+  // `workspaceThread` is null even though the draft already targets a worktree
+  // on disk. Read that draft's worktree/environment/project so the shared diff,
+  // git status, and branch preview load on open instead of only after the first
+  // message promotes the draft to a server thread. Drafts with no worktree keep
+  // their empty per-chat panel, matching the pre-draft behavior.
+  const draftThreadsByThreadKey = useComposerDraftStore((state) => state.draftThreadsByThreadKey);
+  const workspaceDraft = useMemo(() => {
+    if (workspaceThread || !workspaceThreadRef) return null;
+    const draft = Object.values(draftThreadsByThreadKey).find(
+      (candidate) =>
+        candidate.environmentId === workspaceThreadRef.environmentId &&
+        candidate.threadId === workspaceThreadRef.threadId,
+    );
+    return draft?.worktreePath != null ? draft : null;
+  }, [draftThreadsByThreadKey, workspaceThread, workspaceThreadRef]);
+  // The resolved worktree data source: a real thread when one exists, otherwise
+  // the worktree-targeting draft. Everything below keys off these instead of
+  // `workspaceThread` so a draft-only worktree behaves like a real one.
+  const workspaceEnvironmentId =
+    workspaceThread?.environmentId ?? workspaceDraft?.environmentId ?? null;
+  const hasWorkspaceSource = workspaceThread != null || workspaceDraft != null;
+  const activeProjectId = workspaceThread?.projectId ?? workspaceDraft?.projectId ?? null;
   const activeProject = useProject(
-    workspaceThread && activeProjectId
+    workspaceEnvironmentId && activeProjectId
       ? {
-          environmentId: workspaceThread.environmentId,
+          environmentId: workspaceEnvironmentId,
           projectId: activeProjectId,
         }
       : null,
   );
-  const activeCwd = workspaceThread?.worktreePath ?? activeProject?.workspaceRoot;
-  const serverConfig = useAtomValue(
-    serverEnvironment.configValueAtom(workspaceThread?.environmentId ?? null),
-  );
+  const activeCwd =
+    workspaceThread?.worktreePath ?? workspaceDraft?.worktreePath ?? activeProject?.workspaceRoot;
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(workspaceEnvironmentId));
   const openInPreferredEditor = useOpenInPreferredEditor(
-    workspaceThread?.environmentId ?? null,
+    workspaceEnvironmentId,
     serverConfig?.availableEditors ?? [],
   );
   const gitStatusQuery = useEnvironmentQuery(
-    workspaceThread != null && activeCwd != null
+    workspaceEnvironmentId != null && activeCwd != null
       ? vcsEnvironment.status({
-          environmentId: workspaceThread.environmentId,
+          environmentId: workspaceEnvironmentId,
           input: { cwd: activeCwd },
         })
       : null,
@@ -442,9 +463,9 @@ export default function DiffPanel({
     { enabled: isGitRepo && selectedTurn !== undefined },
   );
   const primaryBranchDiffPreview = useEnvironmentQuery(
-    selectedTurnId === null && workspaceThread && activeCwd
+    selectedTurnId === null && workspaceEnvironmentId && activeCwd
       ? reviewEnvironment.diffPreview({
-          environmentId: workspaceThread.environmentId,
+          environmentId: workspaceEnvironmentId,
           input: {
             cwd: activeCwd,
             ...(effectiveBaseRef ? { baseRef: effectiveBaseRef } : {}),
@@ -465,9 +486,9 @@ export default function DiffPanel({
     serverConfig?.cwd !== undefined &&
     serverConfig.cwd !== activeCwd;
   const fallbackBranchDiffPreview = useEnvironmentQuery(
-    shouldRetryBranchDiffAtEnvironmentCwd && workspaceThread && serverConfig
+    shouldRetryBranchDiffAtEnvironmentCwd && workspaceEnvironmentId && serverConfig
       ? reviewEnvironment.diffPreview({
-          environmentId: workspaceThread.environmentId,
+          environmentId: workspaceEnvironmentId,
           input: {
             cwd: serverConfig.cwd,
             ...(effectiveBaseRef ? { baseRef: effectiveBaseRef } : {}),
@@ -537,10 +558,10 @@ export default function DiffPanel({
   const localBranchRefs = useEnvironmentQuery(
     selectedTurnId === null &&
       selectedGitScope === "branch" &&
-      workspaceThread &&
+      workspaceEnvironmentId &&
       branchDiffPreview.data?.cwd
       ? vcsEnvironment.listRefs({
-          environmentId: workspaceThread.environmentId,
+          environmentId: workspaceEnvironmentId,
           input: {
             cwd: branchDiffPreview.data.cwd,
             includeMatchingRemoteRefs: true,
@@ -554,10 +575,10 @@ export default function DiffPanel({
   const remoteBranchRefs = useEnvironmentQuery(
     selectedTurnId === null &&
       selectedGitScope === "branch" &&
-      workspaceThread &&
+      workspaceEnvironmentId &&
       branchDiffPreview.data?.cwd
       ? vcsEnvironment.listRefs({
-          environmentId: workspaceThread.environmentId,
+          environmentId: workspaceEnvironmentId,
           input: {
             cwd: branchDiffPreview.data.cwd,
             includeMatchingRemoteRefs: true,
@@ -1191,7 +1212,7 @@ export default function DiffPanel({
 
   return (
     <DiffPanelShell mode={mode} header={headerRow}>
-      {!workspaceThread ? (
+      {!hasWorkspaceSource ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Select a thread to inspect turn diffs.
         </div>
