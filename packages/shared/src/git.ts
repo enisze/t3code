@@ -95,6 +95,20 @@ export function deriveLocalBranchNameFromRemoteRef(branchName: string): string {
 }
 
 /**
+ * Local branch name for a ref whose `name` already carries its remote prefix.
+ *
+ * `listRefs` reports a remote ref as `{ name: "origin/feature/demo",
+ * remoteName: "origin" }`, so only the ref's own remote prefix is stripped — a
+ * local branch such as `claude/feature` keeps every segment.
+ */
+export function stripRemoteRefPrefix(name: string, remoteName?: string | null): string {
+  const prefix = remoteName ? `${remoteName}/` : null;
+  return prefix !== null && name.startsWith(prefix) && name.length > prefix.length
+    ? name.slice(prefix.length)
+    : name;
+}
+
+/**
  * Normalize a user-provided worktree branch prefix into a single, valid,
  * lowercase git ref segment (no slashes). Falls back to the default prefix
  * when the input is empty/null or sanitizes to nothing.

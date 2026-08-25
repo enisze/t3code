@@ -152,16 +152,16 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
                     className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => {
-                      onCheckoutPullRequest?.(
-                        ref.remoteName ? `${ref.remoteName}/${ref.name}` : ref.name,
-                      );
+                      // `name` already carries the remote prefix for a remote ref,
+                      // so re-adding `remoteName` would ask for
+                      // `origin/origin/<branch>`: a ref that resolves to nothing
+                      // and never gets its worktree.
+                      onCheckoutPullRequest?.(ref.name);
                       setCheckoutReference("");
                     }}
                   >
                     <FolderGitIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 truncate">
-                      {ref.remoteName ? `${ref.remoteName}/${ref.name}` : ref.name}
-                    </span>
+                    <span className="min-w-0 truncate">{ref.name}</span>
                   </button>
                 ))}
               </div>

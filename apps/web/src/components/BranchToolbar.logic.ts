@@ -1,5 +1,5 @@
 import type { EnvironmentId, VcsRef, ProjectId } from "@t3tools/contracts";
-import { deriveLocalBranchNameFromRemoteRef } from "@t3tools/shared/git";
+import { deriveLocalBranchNameFromRemoteRef, stripRemoteRefPrefix } from "@t3tools/shared/git";
 import * as Schema from "effect/Schema";
 import { toSortableTimestamp } from "../lib/threadSort";
 export { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
@@ -236,7 +236,7 @@ export function resolveBranchSelectionTarget(input: {
 
 export function resolveExactBranchWorktreeInput(input: {
   activeProjectCwd: string;
-  ref: Pick<VcsRef, "name" | "isRemote" | "worktreePath">;
+  ref: Pick<VcsRef, "name" | "isRemote" | "remoteName" | "worktreePath">;
 }):
   | { kind: "reuse"; branch: string; worktreePath: string | null }
   | {
@@ -263,7 +263,11 @@ export function resolveExactBranchWorktreeInput(input: {
       kind: "create",
       cwd: activeProjectCwd,
       refName: ref.name,
-      newRefName: deriveLocalBranchNameFromRemoteRef(ref.name),
+      // The ref's own remote is the only prefix worth stripping; falling back to
+      // the first segment covers refs listed without a parsed remote name.
+      newRefName: ref.remoteName
+        ? stripRemoteRefPrefix(ref.name, ref.remoteName)
+        : deriveLocalBranchNameFromRemoteRef(ref.name),
       path: null,
     };
   }

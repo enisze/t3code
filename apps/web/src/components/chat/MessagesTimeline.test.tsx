@@ -13,13 +13,6 @@ vi.mock("@legendapp/list/react", async () => {
     renderItem: (args: { item: { id: string } }) => ReactNode;
     ListHeaderComponent?: ReactNode;
     ListFooterComponent?: ReactNode;
-    anchoredEndSpace?: {
-      anchorIndex: number;
-      anchorMaxSize?: number;
-      anchorOffset?: number;
-      onReady?: (info: { anchorIndex: number }) => void;
-      onSizeChanged?: (size: number) => void;
-    };
     contentInsetEndAdjustment?: number;
     className?: string;
     maintainScrollAtEnd?:
@@ -41,17 +34,9 @@ vi.mock("@legendapp/list/react", async () => {
         };
     ref?: Ref<LegendListRef>;
   }) => {
-    if (props.anchoredEndSpace) {
-      props.anchoredEndSpace.onSizeChanged?.(240);
-      props.anchoredEndSpace.onReady?.({ anchorIndex: props.anchoredEndSpace.anchorIndex });
-    }
     return (
       <div
         data-testid={legendListTestId}
-        data-anchor-index={props.anchoredEndSpace?.anchorIndex}
-        data-anchor-max-size={props.anchoredEndSpace?.anchorMaxSize}
-        data-anchor-offset={props.anchoredEndSpace?.anchorOffset}
-        data-anchor-on-ready={Boolean(props.anchoredEndSpace?.onReady)}
         data-content-inset-end={props.contentInsetEndAdjustment}
         data-class-name={props.className}
         data-maintain-scroll-at-end={props.maintainScrollAtEnd ? "enabled" : undefined}
@@ -190,9 +175,6 @@ function buildProps() {
     resolvedTheme: "light" as const,
     timestampFormat: "locale" as const,
     workspaceRoot: undefined,
-    anchorMessageId: null,
-    onAnchorReady: () => {},
-    onAnchorSizeChanged: () => {},
     contentInsetEndAdjustment: 0,
     onIsAtEndChange: () => {},
     onManualNavigation: () => {},
@@ -357,9 +339,7 @@ describe("MessagesTimeline", () => {
     expect(resolveTimelineMinimapInteractiveWidth(40, true)).toBe("22rem");
   });
 
-  it("anchors a sent attachment message using its measured height", () => {
-    const onAnchorReady = vi.fn();
-    const onAnchorSizeChanged = vi.fn();
+  it("keeps a sent attachment message pinned to the live edge", () => {
     const firstEntry = buildUserTimelineEntry("First prompt.");
     const secondEntry = {
       ...buildUserTimelineEntry("Newest prompt."),
@@ -382,27 +362,20 @@ describe("MessagesTimeline", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
-        anchorMessageId={secondEntry.message.id}
-        onAnchorReady={onAnchorReady}
-        onAnchorSizeChanged={onAnchorSizeChanged}
         contentInsetEndAdjustment={144}
         timelineEntries={[firstEntry, secondEntry]}
       />,
     );
 
-    expect(markup).toContain('data-anchor-index="1"');
-    expect(markup).toContain('data-anchor-offset="16"');
-    expect(markup).toContain('data-anchor-on-ready="true"');
-    expect(markup).not.toContain("data-anchor-max-size=");
+    // No reserved tail space: the streaming response hugs the composer instead
+    // of leaving a viewport-sized gap below the newest row.
     expect(markup).toContain('data-content-inset-end="144"');
     expect(markup).toContain("[overflow-anchor:none]");
-    expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
+    expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
+    expect(markup).toContain('data-maintain-scroll-at-end-animated="false"');
     expect(markup).toContain('data-maintain-visible-content-position="object"');
     expect(markup).toContain('data-maintain-visible-content-position-data="true"');
     expect(markup).toContain('data-maintain-visible-content-position-size="false"');
-    expect(onAnchorReady).toHaveBeenCalledOnce();
-    expect(onAnchorReady).toHaveBeenCalledWith(secondEntry.message.id, 1);
-    expect(onAnchorSizeChanged).toHaveBeenCalledWith(secondEntry.message.id, 240);
   });
 
   it("renders collapse controls for long user messages", () => {

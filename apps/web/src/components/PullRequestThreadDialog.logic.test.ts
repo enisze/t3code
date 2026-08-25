@@ -2,8 +2,44 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   canAutoSubmitResolvedReference,
+  findBranchRefForReference,
   resolveBranchWorktreeTarget,
 } from "./PullRequestThreadDialog.logic";
+
+describe("findBranchRefForReference", () => {
+  const remoteOnly = { name: "origin/claude/schedule-limit", remoteName: "origin" };
+  const local = { name: "claude/schedule-limit" };
+
+  it("resolves a remote-only branch from the fully qualified name a suggestion passes", () => {
+    // `listRefs` reports the ref as `origin/<branch>`, which is what the
+    // workspace picker shows and hands back on click.
+    expect(findBranchRefForReference([remoteOnly], "origin/claude/schedule-limit")).toBe(
+      remoteOnly,
+    );
+  });
+
+  it("resolves a remote-only branch from the plain branch name a user types", () => {
+    expect(findBranchRefForReference([remoteOnly], "claude/schedule-limit")).toBe(remoteOnly);
+  });
+
+  it("prefers the local branch when both a local and a remote ref match", () => {
+    expect(findBranchRefForReference([remoteOnly, local], "claude/schedule-limit")).toBe(local);
+  });
+
+  it("ignores surrounding whitespace", () => {
+    expect(findBranchRefForReference([local], "  claude/schedule-limit  ")).toBe(local);
+  });
+
+  it("resolves nothing for an empty or unmatched reference", () => {
+    expect(findBranchRefForReference([remoteOnly, local], "")).toBeUndefined();
+    expect(findBranchRefForReference([remoteOnly, local], "   ")).toBeUndefined();
+    expect(findBranchRefForReference([remoteOnly, local], "claude/other")).toBeUndefined();
+    // The doubled prefix a caller must never build.
+    expect(
+      findBranchRefForReference([remoteOnly], "origin/origin/claude/schedule-limit"),
+    ).toBeUndefined();
+  });
+});
 
 describe("resolveBranchWorktreeTarget", () => {
   it("creates a dedicated worktree for an existing local branch", () => {
@@ -28,7 +64,12 @@ describe("resolveBranchWorktreeTarget", () => {
     expect(
       resolveBranchWorktreeTarget({
         cwd: "/repo",
-        ref: { name: "origin/feature/review", isRemote: true, worktreePath: null },
+        ref: {
+          name: "origin/feature/review",
+          isRemote: true,
+          remoteName: "origin",
+          worktreePath: null,
+        },
       }),
     ).toEqual({
       branch: "feature/review",

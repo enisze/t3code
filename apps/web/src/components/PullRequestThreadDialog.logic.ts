@@ -1,6 +1,32 @@
 import type { VcsCreateWorktreeInput, VcsRef } from "@t3tools/contracts";
+import { stripRemoteRefPrefix } from "@t3tools/shared/git";
 
 import { resolveExactBranchWorktreeInput } from "./BranchToolbar.logic";
+
+/**
+ * Match a typed or clicked reference against listed refs.
+ *
+ * A remote ref carries its remote in `name` (`origin/claude/foo`) and again in
+ * `remoteName`, so a reference can legitimately arrive in either shape: the
+ * fully qualified `origin/claude/foo` a suggestion row shows, or the plain
+ * `claude/foo` a user types. Both must resolve, or the branch never gets its
+ * worktree. Local refs win over remote ones so an already-fetched branch is
+ * checked out as-is instead of being recreated from the remote.
+ */
+export function findBranchRefForReference<Ref extends Pick<VcsRef, "name" | "remoteName">>(
+  refs: ReadonlyArray<Ref>,
+  reference: string,
+): Ref | undefined {
+  const trimmed = reference.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  const matches = refs.filter(
+    (ref) => ref.name === trimmed || stripRemoteRefPrefix(ref.name, ref.remoteName) === trimmed,
+  );
+  return matches.find((ref) => ref.name === trimmed) ?? matches[0];
+}
 
 export type ResolvedBranchWorktreeTarget = {
   branch: string;
@@ -24,7 +50,7 @@ export type ResolvedBranchWorktreeTarget = {
  */
 export function resolveBranchWorktreeTarget(input: {
   readonly cwd: string;
-  readonly ref: Pick<VcsRef, "name" | "isRemote" | "worktreePath">;
+  readonly ref: Pick<VcsRef, "name" | "isRemote" | "remoteName" | "worktreePath">;
 }): ResolvedBranchWorktreeTarget {
   const target = resolveExactBranchWorktreeInput({
     activeProjectCwd: input.cwd,

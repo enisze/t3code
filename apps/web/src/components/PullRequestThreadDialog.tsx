@@ -19,6 +19,7 @@ import { vcsEnvironment } from "~/state/vcs";
 import { useAtomCommand } from "~/state/use-atom-command";
 import {
   canAutoSubmitResolvedReference,
+  findBranchRefForReference,
   resolveBranchWorktreeTarget,
 } from "./PullRequestThreadDialog.logic";
 import { Button } from "./ui/button";
@@ -143,9 +144,7 @@ export function PullRequestThreadDialog({
         })
       : null,
   );
-  const resolvedBranch = branchQuery.data?.refs.find(
-    (ref) => ref.name === reference.trim() || `${ref.remoteName}/${ref.name}` === reference.trim(),
-  );
+  const resolvedBranch = findBranchRefForReference(branchQuery.data?.refs ?? [], reference);
   const resolvedBranchTarget = useMemo(
     () =>
       cwd && resolvedBranch ? resolveBranchWorktreeTarget({ cwd, ref: resolvedBranch }) : null,
