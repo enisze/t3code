@@ -8,6 +8,7 @@ import {
   normalizeGitRemoteUrl,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
   sanitizeWorktreeBranchPrefix,
+  stripRemoteRefPrefix,
   WORKTREE_BRANCH_PREFIX,
 } from "./git.ts";
 
@@ -127,6 +128,25 @@ describe("sanitizeWorktreeBranchPrefix", () => {
     const branch = buildTemporaryWorktreeBranchName(() => "deadbeef", "team/wip");
     expect(branch).toBe("team-wip/deadbeef");
     expect(isTemporaryWorktreeBranch(branch)).toBe(true);
+  });
+});
+
+describe("stripRemoteRefPrefix", () => {
+  it("strips only the ref's own remote prefix", () => {
+    expect(stripRemoteRefPrefix("origin/claude/feature", "origin")).toBe("claude/feature");
+    expect(stripRemoteRefPrefix("upstream/main", "upstream")).toBe("main");
+  });
+
+  it("keeps a local branch that merely looks prefixed", () => {
+    // A local `claude/feature` has no remote, so nothing may be stripped —
+    // otherwise the branch resolves to `feature`, which need not exist.
+    expect(stripRemoteRefPrefix("claude/feature")).toBe("claude/feature");
+    expect(stripRemoteRefPrefix("claude/feature", null)).toBe("claude/feature");
+    expect(stripRemoteRefPrefix("claude/feature", "origin")).toBe("claude/feature");
+  });
+
+  it("keeps a name that is only the remote prefix", () => {
+    expect(stripRemoteRefPrefix("origin/", "origin")).toBe("origin/");
   });
 });
 
