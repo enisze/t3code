@@ -51,6 +51,10 @@
       "types": "./src/Net.ts",
       "import": "./src/Net.ts"
     },
+    "./privateNetworkHost": {
+      "types": "./src/privateNetworkHost.ts",
+      "import": "./src/privateNetworkHost.ts"
+    },
     "./DrainableWorker": {
       "types": "./src/DrainableWorker.ts",
       "import": "./src/DrainableWorker.ts"

@@ -9,6 +9,7 @@ import {
   type EnvironmentScopeRequiredError,
 } from "@t3tools/contracts";
 import { httpHeaderRedactionLayer } from "@t3tools/shared/httpObservability";
+import { isPrivateNetworkUrl } from "@t3tools/shared/privateNetworkHost";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -99,6 +100,34 @@ export const makeEnvironmentHttpApiClient = (httpBaseUrl: string) =>
     baseUrl: remoteApiBaseUrl(httpBaseUrl),
   });
 
+/**
+ * Extra guidance for a request that never got a response.
+ *
+ * A transport error against an RFC1918 address is nearly always the network
+ * rather than the server: the phone sits on mobile data or another SSID, or it
+ * kept an address the desktop only had on an earlier network. The raw
+ * `Transport error` gives no way to tell that apart from a dead backend, so say
+ * what to check.
+ */
+const localNetworkTransportHint = (requestUrl: string): string => {
+  if (!isPrivateNetworkUrl(requestUrl)) {
+    return "";
+  }
+
+  let host: string;
+  try {
+    host = new URL(requestUrl).host;
+  } catch {
+    return "";
+  }
+
+  return (
+    ` Nothing answered at ${host}. That address only works from the same local network,` +
+    ` so check this device is on that network (mobile data cannot reach it) and that the` +
+    ` address still matches the computer — it changes when the computer joins another network.`
+  );
+};
+
 const failRemoteRequest = (
   requestUrl: string,
   cause: unknown,
@@ -133,7 +162,9 @@ const failRemoteRequest = (
   }
   return Effect.fail(
     new RemoteEnvironmentAuthFetchError({
-      message: `Failed to fetch remote environment endpoint ${requestUrl} (${String(cause)}).`,
+      message:
+        `Failed to fetch remote environment endpoint ${requestUrl} (${String(cause)}).` +
+        localNetworkTransportHint(requestUrl),
       cause,
     }),
   );
