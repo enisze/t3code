@@ -65,26 +65,18 @@ export function detectComposerTrigger(
   const lineStart = text.lastIndexOf("\n", Math.max(0, cursor - 1)) + 1;
   const linePrefix = text.slice(lineStart, cursor);
 
-  if (linePrefix.startsWith("/")) {
-    const commandMatch = /^\/(\S*)$/.exec(linePrefix);
-    if (commandMatch) {
-      const commandQuery = commandMatch[1] ?? "";
-      if (commandQuery.toLowerCase() === "model") {
-        return {
-          kind: "slash-model",
-          query: "",
-          rangeStart: lineStart,
-          rangeEnd: cursor,
-        };
-      }
-      return {
-        kind: "slash-command",
-        query: commandQuery,
-        rangeStart: lineStart,
-        rangeEnd: cursor,
-      };
-    }
+  const wsCheck = isWhitespaceChar ?? isWhitespace;
+  let tokenIdx = cursor - 1;
+  while (tokenIdx >= 0 && !wsCheck(text[tokenIdx] ?? "")) {
+    tokenIdx -= 1;
+  }
+  const tokenStart = tokenIdx + 1;
 
+  const token = text.slice(tokenStart, cursor);
+
+  // `/model gpt-5` carries its argument across spaces, so it can only be read
+  // from the line start — mid-sentence it would swallow the surrounding prose.
+  if (linePrefix.startsWith("/") && !/^\/\S*$/.test(linePrefix)) {
     const modelMatch = /^\/model(?:\s+(.*))?$/.exec(linePrefix);
     if (modelMatch) {
       return {
@@ -96,14 +88,28 @@ export function detectComposerTrigger(
     }
   }
 
-  const wsCheck = isWhitespaceChar ?? isWhitespace;
-  let tokenIdx = cursor - 1;
-  while (tokenIdx >= 0 && !wsCheck(text[tokenIdx] ?? "")) {
-    tokenIdx -= 1;
+  // Any slash that opens a token browses commands, not just one opening the
+  // line — asking for a command halfway through a sentence is as reasonable as
+  // starting with it. Scoping to the token start is what keeps `src/main.ts`
+  // from popping the menu open on every path you type.
+  if (token.startsWith("/")) {
+    const commandQuery = token.slice(1);
+    if (commandQuery.toLowerCase() === "model") {
+      return {
+        kind: "slash-model",
+        query: "",
+        rangeStart: tokenStart,
+        rangeEnd: cursor,
+      };
+    }
+    return {
+      kind: "slash-command",
+      query: commandQuery,
+      rangeStart: tokenStart,
+      rangeEnd: cursor,
+    };
   }
-  const tokenStart = tokenIdx + 1;
 
-  const token = text.slice(tokenStart, cursor);
   if (token.startsWith("$")) {
     return {
       kind: "skill",

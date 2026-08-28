@@ -224,24 +224,22 @@ export const isCollapsedCursorAdjacentToMention = isCollapsedCursorAdjacentToInl
 
 export function detectComposerTrigger(text: string, cursorInput: number): ComposerTrigger | null {
   const cursor = clampCursor(text, cursorInput);
-  const lineStart = text.lastIndexOf("\n", Math.max(0, cursor - 1)) + 1;
-  const linePrefix = text.slice(lineStart, cursor);
-
-  if (linePrefix.startsWith("/")) {
-    const commandMatch = /^\/(\S*)$/.exec(linePrefix);
-    if (commandMatch) {
-      const commandQuery = commandMatch[1] ?? "";
-      return {
-        kind: "slash-command",
-        query: commandQuery,
-        rangeStart: lineStart,
-        rangeEnd: cursor,
-      };
-    }
-  }
-
   const tokenStart = tokenStartForCursor(text, cursor);
   const token = text.slice(tokenStart, cursor);
+
+  // Any slash that opens a token browses commands, not just one opening the
+  // line — asking for a command halfway through a sentence is as reasonable as
+  // starting with it. Scoping to the token start is what keeps `src/main.ts`
+  // from popping the menu open on every path you type.
+  if (token.startsWith("/")) {
+    return {
+      kind: "slash-command",
+      query: token.slice(1),
+      rangeStart: tokenStart,
+      rangeEnd: cursor,
+    };
+  }
+
   if (token.startsWith("$")) {
     return {
       kind: "skill",
