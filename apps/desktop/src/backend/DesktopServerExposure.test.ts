@@ -324,6 +324,84 @@ describe("DesktopServerExposure", () => {
     ),
   );
 
+  it.effect("re-resolves the advertised LAN host after the machine changes networks", () => {
+    // `read` hands back this same object every call, so reassigning `en0` models the
+    // machine roaming to another network while the app stays open.
+    const roamingNetworkInterfaces: Record<
+      string,
+      DesktopNetworkInterfaces.DesktopNetworkInterfaceInfo[]
+    > = {
+      en0: [{ address: "192.168.2.37", family: "IPv4", internal: false }],
+    };
+
+    return withHarness(
+      roamingNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 3773 });
+        const change = yield* serverExposure.setMode("network-accessible");
+        assert.equal(change.state.endpointUrl, "http://192.168.2.37:3773");
+
+        roamingNetworkInterfaces.en0 = [
+          { address: "192.168.1.21", family: "IPv4", internal: false },
+        ];
+
+        const state = yield* serverExposure.getState;
+        assert.equal(state.mode, "network-accessible");
+        assert.equal(state.advertisedHost, "192.168.1.21");
+        assert.equal(state.endpointUrl, "http://192.168.1.21:3773");
+
+        const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+        assert.deepEqual(
+          endpoints.map((endpoint) => endpoint.httpBaseUrl),
+          ["http://127.0.0.1:3773/", "http://192.168.1.21:3773/"],
+        );
+
+        // The backend is already bound to every interface, so the new address needs
+        // no relaunch — binding and loopback URL must stay put.
+        const backendConfig = yield* serverExposure.backendConfig;
+        assert.equal(backendConfig.bindHost, "0.0.0.0");
+        assert.equal(backendConfig.httpBaseUrl.href, "http://127.0.0.1:3773/");
+      }),
+    );
+  });
+
+  it.effect("keeps a local-only fallback unadvertised when a LAN address appears later", () => {
+    const lateNetworkInterfaces: Record<
+      string,
+      DesktopNetworkInterfaces.DesktopNetworkInterfaceInfo[]
+    > = {};
+
+    return withHarness(
+      lateNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+
+        yield* settings.setServerExposureMode("network-accessible");
+        const state = yield* serverExposure.configureFromSettings({ port: 3773 });
+        assert.equal(state.mode, "local-only");
+
+        lateNetworkInterfaces.en0 = [{ address: "192.168.1.21", family: "IPv4", internal: false }];
+
+        // The fallback bound loopback only, so advertising the address that showed up
+        // afterwards would point clients at a socket this process never listens on.
+        const refreshed = yield* serverExposure.getState;
+        assert.equal(refreshed.mode, "local-only");
+        assert.equal(refreshed.advertisedHost, null);
+        assert.equal(refreshed.endpointUrl, null);
+
+        const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+        assert.deepEqual(
+          endpoints.map((endpoint) => endpoint.httpBaseUrl),
+          ["http://127.0.0.1:3773/"],
+        );
+      }),
+      {},
+      dieOnSpawnLayer(),
+    );
+  });
+
   it.effect("does not spawn the tailscale CLI while server exposure is local-only", () =>
     withHarness(
       lanNetworkInterfaces,

@@ -399,6 +399,44 @@ function resolveRuntimeState(input: {
   };
 }
 
+/**
+ * Recompute the advertised LAN host from the current interfaces.
+ *
+ * The LAN address is resolved once while starting up, but laptops move between
+ * networks (and DHCP leases rotate) while the app stays open for days. The
+ * backend is bound to `0.0.0.0`, so the new address already serves traffic —
+ * only the advertised host goes stale, and a stale host sends pairing links and
+ * QR codes to an IP nobody answers on. Rebinding is never needed here, so this
+ * refresh deliberately leaves `bindHost`/`localHttpUrl`/`port` untouched.
+ */
+const withRefreshedAdvertisedHost = (input: {
+  readonly state: RuntimeState;
+  readonly networkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces;
+  readonly advertisedHostOverride: Option.Option<string>;
+}): RuntimeState => {
+  // Only network-accessible runs bind the LAN interface; a local-only run (including
+  // one that fell back for want of an address) has nothing reachable to advertise.
+  if (input.state.mode !== "network-accessible") {
+    return input.state;
+  }
+
+  const advertisedHost = resolveLanAdvertisedHost(
+    input.networkInterfaces,
+    Option.getOrUndefined(input.advertisedHostOverride),
+  );
+  if (advertisedHost === Option.getOrNull(input.state.advertisedHost)) {
+    return input.state;
+  }
+
+  return {
+    ...input.state,
+    endpointUrl: Option.fromNullishOr(
+      advertisedHost === null ? null : `http://${advertisedHost}:${input.state.port}`,
+    ),
+    advertisedHost: Option.fromNullishOr(advertisedHost),
+  };
+};
+
 const requiresBackendRelaunch = (previous: RuntimeState, next: RuntimeState): boolean =>
   previous.port !== next.port ||
   previous.bindHost !== next.bindHost ||
@@ -426,7 +464,18 @@ export const make = Effect.gen(function* () {
 
   const readNetworkInterfaces = networkInterfaces.read;
 
-  const getState = Ref.get(stateRef).pipe(Effect.map(toContractState));
+  const refreshAdvertisedHost = Effect.gen(function* () {
+    const currentNetworkInterfaces = yield* readNetworkInterfaces;
+    return yield* Ref.updateAndGet(stateRef, (state) =>
+      withRefreshedAdvertisedHost({
+        state,
+        networkInterfaces: currentNetworkInterfaces,
+        advertisedHostOverride: config.desktopLanHostOverride,
+      }),
+    );
+  });
+
+  const getState = refreshAdvertisedHost.pipe(Effect.map(toContractState));
   const backendConfig = Ref.get(stateRef).pipe(Effect.map(toBackendConfig));
 
   const configureFromSettings = Effect.fn("desktop.serverExposure.configureFromSettings")(
@@ -522,8 +571,14 @@ export const make = Effect.gen(function* () {
   );
 
   const getAdvertisedEndpoints = Effect.gen(function* () {
-    const state = yield* Ref.get(stateRef);
     const currentNetworkInterfaces = yield* readNetworkInterfaces;
+    const state = yield* Ref.updateAndGet(stateRef, (current) =>
+      withRefreshedAdvertisedHost({
+        state: current,
+        networkInterfaces: currentNetworkInterfaces,
+        advertisedHostOverride: config.desktopLanHostOverride,
+      }),
+    );
     const coreEndpoints = resolveDesktopCoreAdvertisedEndpoints({
       port: state.port,
       exposure: toResolvedExposure(state),
