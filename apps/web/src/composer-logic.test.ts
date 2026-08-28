@@ -94,6 +94,52 @@ describe("detectComposerTrigger", () => {
     });
   });
 
+  it("opens the command menu for a slash mid-sentence", () => {
+    const text = "please run /rev";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "rev",
+      rangeStart: "please run ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("opens the command menu for a bare slash mid-sentence", () => {
+    const text = "now do /";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "",
+      rangeStart: "now do ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("opens the command menu after a newline inside a longer draft", () => {
+    const text = "first line\nsecond /co";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "co",
+      rangeStart: "first line\nsecond ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("ignores a slash inside a token so typing paths stays quiet", () => {
+    expect(detectComposerTrigger("src/mai", "src/mai".length)).toBeNull();
+    expect(
+      detectComposerTrigger("see packages/shared/src", "see packages/shared/src".length),
+    ).toBeNull();
+    expect(
+      detectComposerTrigger("https://example.com/do", "https://example.com/do".length),
+    ).toBeNull();
+  });
+
   it("detects $skill trigger at cursor", () => {
     const text = "Use $gh-fi";
     const trigger = detectComposerTrigger(text, text.length);
