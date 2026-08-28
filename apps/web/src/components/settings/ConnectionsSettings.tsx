@@ -40,7 +40,11 @@ import * as Option from "effect/Option";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
-import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
+import {
+  resolveDesktopPairingUrl,
+  resolveHostedPairingUrl,
+  resolveLocalNetworkPairingHost,
+} from "./pairingUrls";
 import { applyWslEnableSelection } from "./ConnectionsSettings.logic";
 import {
   SettingsPageContainer,
@@ -575,6 +579,11 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   const revealValue = shareablePairingUrl ?? pairingLink.credential;
   const isShareableHostedAppPairingUrl =
     shareablePairingUrl !== null && isHostedAppPairingUrl(shareablePairingUrl);
+  const localNetworkPairingHost = useMemo(
+    () =>
+      shareablePairingUrl === null ? null : resolveLocalNetworkPairingHost(shareablePairingUrl),
+    [shareablePairingUrl],
+  );
   const canCopyToClipboard =
     typeof window !== "undefined" &&
     window.isSecureContext &&
@@ -775,6 +784,13 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
           {shareablePairingUrl === null ? (
             <p className="text-[11px] text-muted-foreground/70">
               Copy the token and pair from another client using this backend&apos;s reachable host.
+            </p>
+          ) : null}
+          {localNetworkPairingHost ? (
+            <p className="text-[11px] text-muted-foreground/70">
+              {localNetworkPairingHost} is reachable only from this network — the other device has
+              to join it too. Mobile data can&apos;t reach it, and the address changes when this
+              computer joins another network.
             </p>
           ) : null}
         </div>
