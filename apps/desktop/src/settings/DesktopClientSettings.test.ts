@@ -33,6 +33,7 @@ const clientSettings: ClientSettings = {
   sidebarThreadPreviewCount: 6,
   sidebarV2Enabled: false,
   sidebarV2ConfiguredByUser: false,
+  sidebarV2GroupByProject: false,
   timestampFormat: "24-hour",
   wordWrap: true,
 };
