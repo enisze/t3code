@@ -1,5 +1,13 @@
 import * as Schema from "effect/Schema";
-import { type PointerEvent as ReactPointerEvent, useCallback, useRef, useState } from "react";
+import {
+  type PointerEvent as ReactPointerEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+
+import { lockDragCursor } from "~/lib/dragCursorLock";
 
 import { getLocalStorageItem, setLocalStorageItem } from "./useLocalStorage";
 
@@ -21,9 +29,6 @@ export interface UseResizableWidthOptions {
 
 export interface ResizableWidthHandlers {
   readonly onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
-  readonly onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
-  readonly onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
-  readonly onPointerCancel: (event: ReactPointerEvent<HTMLElement>) => void;
 }
 
 /**
@@ -34,6 +39,13 @@ export interface ResizableWidthHandlers {
  * The hook updates an internal `width` state during drag (so the panel
  * follows the cursor live) and only commits to localStorage when the user
  * lifts the pointer.
+ *
+ * The drag runs on window listeners rather than on the handle's own pointer
+ * events. Pointer capture can be released out from under the handle (the
+ * element unmounts, the browser drops the capture), and a handle that never
+ * sees its own pointerup would leave the document stuck showing the resize
+ * cursor. Window listeners plus the ref-counted cursor lock make every unwind
+ * path — pointerup, cancel, lost capture, unmount — restore the cursor.
  */
 export function useResizableWidth(options: UseResizableWidthOptions): {
   readonly width: number;
@@ -63,106 +75,113 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
 
   const clampedWidth = clamp(width);
 
-  const dragStateRef = useRef<{
-    pointerId: number;
-    startX: number;
-    startWidth: number;
-    pending: number;
-    rafId: number | null;
-    target: HTMLElement;
-  } | null>(null);
+  /** Tears down the in-flight drag (listeners, capture, cursor lock). */
+  const endDragRef = useRef<(() => void) | null>(null);
 
-  const releasePointer = useCallback((pointerId: number) => {
-    const state = dragStateRef.current;
-    if (!state) return;
-    if (state.rafId !== null) {
-      cancelAnimationFrame(state.rafId);
-    }
-    try {
-      if (state.target.hasPointerCapture(pointerId)) {
-        state.target.releasePointerCapture(pointerId);
-      }
-    } catch {
-      // pointer may already be released; harmless.
-    }
-    document.body.style.removeProperty("cursor");
-    document.body.style.removeProperty("user-select");
-    dragStateRef.current = null;
-  }, []);
+  useEffect(() => () => endDragRef.current?.(), []);
 
   const onPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
       if (event.button !== 0) return;
       event.preventDefault();
       event.stopPropagation();
+
+      // A previous drag that never got its pointerup would otherwise keep its
+      // listeners and cursor lock alive forever.
+      endDragRef.current?.();
+
       const target = event.currentTarget;
-      try {
-        target.setPointerCapture(event.pointerId);
-      } catch {
-        return;
-      }
-      document.body.style.cursor = "col-resize";
-      document.body.style.userSelect = "none";
-      dragStateRef.current = {
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startWidth: clampedWidth,
-        pending: clampedWidth,
-        rafId: null,
-        target,
+      const pointerId = event.pointerId;
+      const startX = event.clientX;
+      const startWidth = clampedWidth;
+      let pending = startWidth;
+      let rafId: number | null = null;
+
+      const releaseCursor = lockDragCursor("col-resize");
+
+      const endDrag = () => {
+        if (endDragRef.current !== endDrag) return;
+        endDragRef.current = null;
+        if (rafId !== null) {
+          cancelAnimationFrame(rafId);
+          rafId = null;
+        }
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onCancel);
+        target.removeEventListener("lostpointercapture", onLostCapture);
+        try {
+          if (target.hasPointerCapture(pointerId)) {
+            target.releasePointerCapture(pointerId);
+          }
+        } catch {
+          // pointer may already be released; harmless.
+        }
+        releaseCursor();
       };
-    },
-    [clampedWidth],
-  );
 
-  const onPointerMove = useCallback(
-    (event: ReactPointerEvent<HTMLElement>) => {
-      const state = dragStateRef.current;
-      if (!state || state.pointerId !== event.pointerId) return;
-      event.preventDefault();
-      const delta = edge === "left" ? state.startX - event.clientX : event.clientX - state.startX;
-      state.pending = clamp(state.startWidth + delta);
-      if (state.rafId !== null) return;
-      state.rafId = requestAnimationFrame(() => {
-        const active = dragStateRef.current;
-        if (!active) return;
-        active.rafId = null;
-        setWidth(active.pending);
-      });
-    },
-    [clamp, edge],
-  );
-
-  const onPointerUp = useCallback(
-    (event: ReactPointerEvent<HTMLElement>) => {
-      const state = dragStateRef.current;
-      if (!state || state.pointerId !== event.pointerId) return;
-      const finalWidth = clamp(state.pending);
-      releasePointer(event.pointerId);
-      // Commit once at drag-end to avoid 60Hz localStorage writes.
-      try {
-        setLocalStorageItem(storageKey, finalWidth, WidthSchema);
-      } catch (error) {
-        console.error("Could not persist panel width.", error);
+      function onMove(moveEvent: PointerEvent) {
+        if (moveEvent.pointerId !== pointerId) return;
+        moveEvent.preventDefault();
+        const delta = edge === "left" ? startX - moveEvent.clientX : moveEvent.clientX - startX;
+        pending = clamp(startWidth + delta);
+        if (rafId !== null) return;
+        rafId = requestAnimationFrame(() => {
+          rafId = null;
+          setWidth(pending);
+        });
       }
-      setWidth(finalWidth);
-    },
-    [clamp, releasePointer, storageKey],
-  );
 
-  const onPointerCancel = useCallback(
-    (event: ReactPointerEvent<HTMLElement>) => {
-      const state = dragStateRef.current;
-      if (!state || state.pointerId !== event.pointerId) return;
-      // Don't persist a cancelled drag; revert to the start width.
-      releasePointer(event.pointerId);
-      setWidth(state.startWidth);
+      /** Ends the drag and commits the width reached so far. */
+      function commit() {
+        const finalWidth = clamp(pending);
+        endDrag();
+        // Commit once at drag-end to avoid 60Hz localStorage writes.
+        try {
+          setLocalStorageItem(storageKey, finalWidth, WidthSchema);
+        } catch (error) {
+          console.error("Could not persist panel width.", error);
+        }
+        setWidth(finalWidth);
+      }
+
+      function onUp(upEvent: PointerEvent) {
+        if (upEvent.pointerId !== pointerId) return;
+        commit();
+      }
+
+      function onCancel(cancelEvent: PointerEvent) {
+        if (cancelEvent.pointerId !== pointerId) return;
+        // Don't persist a cancelled drag; revert to the start width.
+        endDrag();
+        setWidth(startWidth);
+      }
+
+      // Capture loss the drag did not ask for (the handle unmounted, or the
+      // browser dropped it) means no further pointer events are guaranteed:
+      // settle on the width reached so far rather than holding the cursor
+      // hostage waiting for a pointerup that will never arrive.
+      function onLostCapture(lostEvent: Event) {
+        if ((lostEvent as PointerEvent).pointerId !== pointerId) return;
+        commit();
+      }
+
+      endDragRef.current = endDrag;
+      try {
+        target.setPointerCapture(pointerId);
+      } catch {
+        // Window listeners below keep the drag functional without capture.
+      }
+      window.addEventListener("pointermove", onMove, { passive: false });
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onCancel);
+      target.addEventListener("lostpointercapture", onLostCapture);
     },
-    [releasePointer],
+    [clamp, clampedWidth, edge, storageKey],
   );
 
   return {
     width: clampedWidth,
-    handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel },
+    handlers: { onPointerDown },
   };
 }

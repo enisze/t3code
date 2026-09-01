@@ -3,6 +3,7 @@ import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
 import { PanelLeftCloseIcon, PanelLeftIcon } from "lucide-react";
 import * as React from "react";
+import { lockDragCursor } from "~/lib/dragCursorLock";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -360,6 +361,10 @@ function SidebarRail({
   const sidebarInstance = React.use(SidebarInstanceContext);
   const railRef = React.useRef<HTMLButtonElement | null>(null);
   const suppressClickRef = React.useRef(false);
+  // Releases the drag cursor lock and the window-level end listeners. Kept in
+  // a ref so every unwind path (pointerup, cancel, lost capture, unmount) can
+  // run it exactly once.
+  const resizeCleanupRef = React.useRef<(() => void) | null>(null);
   const resizeStateRef = React.useRef<{
     moved: boolean;
     pointerId: number;
@@ -383,6 +388,8 @@ function SidebarRail({
     (pointerId: number) => {
       const resizeState = resizeStateRef.current;
       if (!resizeState) {
+        resizeCleanupRef.current?.();
+        resizeCleanupRef.current = null;
         return;
       }
       if (resizeState.rafId !== null) {
@@ -396,14 +403,15 @@ function SidebarRail({
       }
       resolvedResizable?.onResize?.(resizeState.width);
       resizeStateRef.current = null;
+      resizeCleanupRef.current?.();
+      resizeCleanupRef.current = null;
       if (resizeState.rail.hasPointerCapture(pointerId)) {
         resizeState.rail.releasePointerCapture(pointerId);
       }
-      document.body.style.removeProperty("cursor");
-      document.body.style.removeProperty("user-select");
     },
     [resolvedResizable],
   );
+  const stopResizeFromWindow = React.useEffectEvent((pointerId: number) => stopResize(pointerId));
 
   const handlePointerDown = React.useCallback(
     (event: React.PointerEvent<HTMLButtonElement>) => {
@@ -451,9 +459,29 @@ function SidebarRail({
         wrapper,
       };
       wrapper.style.setProperty("--sidebar-width", `${initialWidth}px`);
-      event.currentTarget.setPointerCapture(event.pointerId);
-      document.body.style.cursor = "col-resize";
-      document.body.style.userSelect = "none";
+
+      const rail = event.currentTarget;
+      const pointerId = event.pointerId;
+      // A drag that never got its end event would otherwise leak its lock.
+      resizeCleanupRef.current?.();
+      const releaseCursor = lockDragCursor("col-resize");
+      // The rail can stop receiving pointer events mid-drag (capture dropped,
+      // rail unmounted). Without these the drag would never unwind and the
+      // whole document would stay stuck on the resize cursor.
+      const endFromWindow = (endEvent: Event) => {
+        if ((endEvent as PointerEvent).pointerId !== pointerId) return;
+        stopResizeFromWindow(pointerId);
+      };
+      resizeCleanupRef.current = () => {
+        window.removeEventListener("pointerup", endFromWindow);
+        window.removeEventListener("pointercancel", endFromWindow);
+        rail.removeEventListener("lostpointercapture", endFromWindow);
+        releaseCursor();
+      };
+      window.addEventListener("pointerup", endFromWindow);
+      window.addEventListener("pointercancel", endFromWindow);
+      rail.addEventListener("lostpointercapture", endFromWindow);
+      rail.setPointerCapture(pointerId);
     },
     [onPointerDown, open, resolvedResizable, sidebarInstance?.side],
   );
@@ -586,8 +614,8 @@ function SidebarRail({
       resizeState?.transitionTargets.forEach((element) => {
         element.style.removeProperty("transition-duration");
       });
-      document.body.style.removeProperty("cursor");
-      document.body.style.removeProperty("user-select");
+      resizeCleanupRef.current?.();
+      resizeCleanupRef.current = null;
     };
   }, []);
 

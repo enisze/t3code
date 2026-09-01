@@ -10,7 +10,7 @@ import {
 const KEY = "env-1:/worktree";
 
 beforeEach(() => {
-  useWorkspaceContentTabsStore.setState({ byWorktree: {} });
+  useWorkspaceContentTabsStore.setState({ byWorktree: {}, closedByWorktree: {} });
 });
 
 const tabs = () =>
@@ -118,6 +118,95 @@ describe("workspaceContentTabsStore", () => {
     expect(tabs().tabs).toEqual([
       { id: "tab_1", filePath: "", view: "preview", previewTabId: "tab_1" },
     ]);
+  });
+});
+
+describe("workspaceContentTabsStore closed-tab history", () => {
+  it("remembers a closed tab and pops it back (LIFO)", () => {
+    const store = useWorkspaceContentTabsStore.getState();
+    store.openFileDiff(KEY, "a.ts");
+    store.closeTab(KEY, "a.ts", { view: "diff", filePath: "a.ts" });
+    store.openFile(KEY, "b.ts");
+    store.closeTab(KEY, "b.ts", { view: "file", filePath: "b.ts" });
+
+    expect(useWorkspaceContentTabsStore.getState().popClosedTab(KEY)).toEqual({
+      view: "file",
+      filePath: "b.ts",
+    });
+    expect(useWorkspaceContentTabsStore.getState().popClosedTab(KEY)).toEqual({
+      view: "diff",
+      filePath: "a.ts",
+    });
+    // Stack is now empty.
+    expect(useWorkspaceContentTabsStore.getState().popClosedTab(KEY)).toBeNull();
+  });
+
+  it("does not remember a tab when no closed record is supplied", () => {
+    const store = useWorkspaceContentTabsStore.getState();
+    store.openFile(KEY, "a.ts");
+    store.closeTab(KEY, "a.ts");
+    expect(useWorkspaceContentTabsStore.getState().popClosedTab(KEY)).toBeNull();
+  });
+
+  it("does not remember a tab when the tab did not exist", () => {
+    useWorkspaceContentTabsStore
+      .getState()
+      .closeTab(KEY, "ghost.ts", { view: "file", filePath: "ghost.ts" });
+    expect(useWorkspaceContentTabsStore.getState().popClosedTab(KEY)).toBeNull();
+  });
+
+  it("remembers a preview's URL so it can be reopened", () => {
+    const store = useWorkspaceContentTabsStore.getState();
+    store.openPreview(KEY, "tab_1");
+    store.closeTab(KEY, "tab_1", {
+      view: "preview",
+      filePath: "",
+      previewUrl: "http://localhost:3000",
+    });
+    expect(useWorkspaceContentTabsStore.getState().popClosedTab(KEY)).toEqual({
+      view: "preview",
+      filePath: "",
+      previewUrl: "http://localhost:3000",
+    });
+  });
+
+  it("bounds the closed-tab stack to the last 10", () => {
+    const store = useWorkspaceContentTabsStore.getState();
+    for (let index = 0; index < 12; index += 1) {
+      const path = `file-${index}.ts`;
+      store.openFile(KEY, path);
+      store.closeTab(KEY, path, { view: "file", filePath: path });
+    }
+    const popped: string[] = [];
+    for (let index = 0; index < 12; index += 1) {
+      const closed = useWorkspaceContentTabsStore.getState().popClosedTab(KEY);
+      if (closed) popped.push(closed.filePath);
+    }
+    // Only the last 10 closes survive; the two oldest (0, 1) were evicted.
+    expect(popped).toEqual([
+      "file-11.ts",
+      "file-10.ts",
+      "file-9.ts",
+      "file-8.ts",
+      "file-7.ts",
+      "file-6.ts",
+      "file-5.ts",
+      "file-4.ts",
+      "file-3.ts",
+      "file-2.ts",
+    ]);
+  });
+
+  it("keeps closed-tab stacks separate per worktree", () => {
+    const other = "env-1:/other";
+    const store = useWorkspaceContentTabsStore.getState();
+    store.openFile(KEY, "a.ts");
+    store.closeTab(KEY, "a.ts", { view: "file", filePath: "a.ts" });
+    expect(useWorkspaceContentTabsStore.getState().popClosedTab(other)).toBeNull();
+    expect(useWorkspaceContentTabsStore.getState().popClosedTab(KEY)).toEqual({
+      view: "file",
+      filePath: "a.ts",
+    });
   });
 });
 

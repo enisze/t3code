@@ -7,6 +7,7 @@ import {
   type ModelSelection,
   type ProjectScript,
   type ProjectId,
+  type PreviewSessionSnapshot,
   type ProviderApprovalDecision,
   ProviderInstanceId,
   type ServerProvider,
@@ -124,8 +125,10 @@ import {
   useRightPanelStore,
 } from "../rightPanelStore";
 import {
+  type ClosedWorkspaceContentTab,
   selectWorktreeContentTabs,
   useWorkspaceContentTabsStore,
+  type WorkspaceContentTab,
   type WorkspaceContentTabView,
 } from "../workspaceContentTabsStore";
 import {
@@ -1164,6 +1167,23 @@ type LocalThreadErrorEntry = {
 
 function chatActionErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "An error occurred.";
+}
+
+// Snapshot the info needed to reopen a content tab later (Cmd/Ctrl+Shift+T).
+// A preview is only reopenable when it has a URL to re-navigate to — its live
+// session is torn down on close — so a never-navigated preview is not
+// remembered (returns undefined).
+function closedTabRecordForContentTab(
+  tab: WorkspaceContentTab,
+  previewSessions: Record<string, PreviewSessionSnapshot>,
+): ClosedWorkspaceContentTab | undefined {
+  if (tab.view !== "preview") {
+    return { view: tab.view, filePath: tab.filePath };
+  }
+  const snapshot = tab.previewTabId ? previewSessions[tab.previewTabId] : undefined;
+  const url = snapshot && snapshot.navStatus._tag !== "Idle" ? snapshot.navStatus.url : undefined;
+  if (!url) return undefined;
+  return { view: "preview", filePath: "", previewUrl: url };
 }
 
 function ChatViewContent(props: ChatViewProps) {
@@ -3274,7 +3294,11 @@ function ChatViewContent(props: ChatViewProps) {
     (tabId: string) => {
       if (!contentTabsWorktreeKey) return;
       const tab = contentTabsState.tabs.find((entry) => entry.id === tabId);
-      useWorkspaceContentTabsStore.getState().closeTab(contentTabsWorktreeKey, tabId);
+      // Remember the tab so Cmd/Ctrl+Shift+T can reopen it.
+      const closedRecord = tab
+        ? closedTabRecordForContentTab(tab, activePreviewState.sessions)
+        : undefined;
+      useWorkspaceContentTabsStore.getState().closeTab(contentTabsWorktreeKey, tabId, closedRecord);
       // Closing a preview tab also tears down its underlying browser session.
       if (tab?.view === "preview" && tab.previewTabId && workspaceThreadRef) {
         void closePreviewSession({
@@ -3293,6 +3317,29 @@ function ChatViewContent(props: ChatViewProps) {
       activePreviewState.sessions,
     ],
   );
+  // Reopen the most recently closed content tab in this worktree, browser-style
+  // (Cmd/Ctrl+Shift+T). File/diff tabs reopen by path; a preview reopens by
+  // re-navigating a fresh session to the URL it was last showing.
+  const reopenClosedContentTab = useCallback(() => {
+    if (!contentTabsWorktreeKey) return;
+    const closed = useWorkspaceContentTabsStore.getState().popClosedTab(contentTabsWorktreeKey);
+    if (!closed) return;
+    if (closed.view === "preview") {
+      if (!workspaceThreadRef || !closed.previewUrl || !isPreviewSupportedInRuntime()) return;
+      void openUrlInPreview({
+        threadRef: workspaceThreadRef,
+        url: closed.previewUrl,
+        openPreview,
+      });
+      return;
+    }
+    const store = useWorkspaceContentTabsStore.getState();
+    if (closed.view === "diff") {
+      store.openFileDiff(contentTabsWorktreeKey, closed.filePath);
+    } else {
+      store.openFile(contentTabsWorktreeKey, closed.filePath);
+    }
+  }, [contentTabsWorktreeKey, workspaceThreadRef, openPreview]);
   const activateChatContent = useCallback(() => {
     if (!contentTabsWorktreeKey) return;
     useWorkspaceContentTabsStore.getState().activateChat(contentTabsWorktreeKey);
@@ -4464,6 +4511,13 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
 
+      if (command === "tab.reopenClosed") {
+        event.preventDefault();
+        event.stopPropagation();
+        reopenClosedContentTab();
+        return;
+      }
+
       if (command === "modelPicker.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -4497,6 +4551,7 @@ function ChatViewContent(props: ChatViewProps) {
     splitPanelTerminal,
     keybindings,
     onToggleDiff,
+    reopenClosedContentTab,
     toggleRightPanel,
     toggleTerminalVisibility,
     composerRef,
@@ -5138,6 +5193,11 @@ function ChatViewContent(props: ChatViewProps) {
     async (requestId: ApprovalRequestId, answers: Record<string, unknown>) => {
       if (!activeThreadId) return;
 
+      // Answering the agent hands the turn back to the conversation, so reveal
+      // it exactly like sending a message does. Without this, a file/diff tab
+      // opened while reviewing keeps covering the chat the answer just resumed.
+      activateChatContent();
+      setMaximizedRightPanelThreadKey(null);
       setRespondingUserInputRequestIds((existing) =>
         existing.includes(requestId) ? existing : [...existing, requestId],
       );
@@ -5159,7 +5219,7 @@ function ChatViewContent(props: ChatViewProps) {
       setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
       return result;
     },
-    [activeThreadId, environmentId, respondToThreadUserInput, setThreadError],
+    [activateChatContent, activeThreadId, environmentId, respondToThreadUserInput, setThreadError],
   );
 
   const setActivePendingUserInputQuestionIndex = useCallback(
@@ -5475,6 +5535,11 @@ function ChatViewContent(props: ChatViewProps) {
     const nextThreadModelSelection: ModelSelection = ctxSelectedModelSelection;
 
     sendInFlightRef.current = true;
+    // The implementation chat opens in this same worktree, whose content tabs
+    // are shared — leaving a file/diff tab active would hide the new chat we
+    // are about to navigate to.
+    activateChatContent();
+    setMaximizedRightPanelThreadKey(null);
     beginLocalDispatch({ preparingWorktree: false });
     const finish = () => {
       sendInFlightRef.current = false;
@@ -5574,6 +5639,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
     finish();
   }, [
+    activateChatContent,
     activeProject,
     activeProposedPlan,
     activeThreadBranch,
