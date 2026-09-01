@@ -979,6 +979,16 @@ body {
   overflow: hidden;
 }
 
+/* While a pane resize drag is in flight, keep the pointer stream in this
+   document. An Electron <webview> is a separate renderer: dragging a panel
+   edge across one lets it swallow the pointerup, so the drag never ended and
+   the whole app stayed stuck showing the resize cursor. The attribute is set
+   by lockDragCursor for the lifetime of the drag. */
+html[data-drag-active] webview,
+html[data-drag-active] iframe {
+  pointer-events: none;
+}
+
 #root {
   height: 100%;
   width: 100%;

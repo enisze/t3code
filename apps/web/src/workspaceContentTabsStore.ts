@@ -33,6 +33,23 @@ export interface WorkspaceContentTab {
 }
 
 /**
+ * The minimum needed to reopen a closed content tab (the browser-style
+ * "reopen last closed tab"). Preview sessions are torn down on close, so a
+ * closed preview is reopened by re-navigating a fresh session to `previewUrl`
+ * rather than reviving its old `previewTabId`.
+ */
+export interface ClosedWorkspaceContentTab {
+  view: WorkspaceContentTabView;
+  /** Repo-relative path for the file/diff viewer; empty for previews. */
+  filePath: string;
+  /** The URL a closed preview was showing, so a new session can reopen it. */
+  previewUrl?: string;
+}
+
+/** How many closed tabs to remember per worktree for reopening. */
+const MAX_CLOSED_TABS_PER_WORKTREE = 10;
+
+/**
  * The content-tab strip is scoped to a worktree, so a chat with no on-disk
  * worktree has no strip. Returns null in that case.
  */
@@ -62,6 +79,8 @@ interface WorktreeContentTabsState {
 
 interface WorkspaceContentTabsStore {
   byWorktree: Record<string, WorktreeContentTabsState>;
+  /** LIFO stack of recently closed tabs per worktree, for reopening. */
+  closedByWorktree: Record<string, ClosedWorkspaceContentTab[]>;
   /** Open (replacing the single file viewer) showing `filePath`'s diff. */
   openFileDiff: (worktreeKey: string, filePath: string) => void;
   /** Open (replacing the single file viewer) showing `filePath`'s contents. */
@@ -75,7 +94,16 @@ interface WorkspaceContentTabsStore {
   setTabView: (worktreeKey: string, view: WorkspaceContentTabView) => void;
   activateTab: (worktreeKey: string, tabId: string) => void;
   activateChat: (worktreeKey: string) => void;
-  closeTab: (worktreeKey: string, tabId: string) => void;
+  /**
+   * Close a tab. When `closed` is supplied and a tab was actually removed, it
+   * is pushed onto the worktree's closed-tab stack so it can be reopened.
+   */
+  closeTab: (worktreeKey: string, tabId: string, closed?: ClosedWorkspaceContentTab) => void;
+  /**
+   * Pop and return the most recently closed tab for the worktree, or null when
+   * there is nothing to reopen.
+   */
+  popClosedTab: (worktreeKey: string) => ClosedWorkspaceContentTab | null;
 }
 
 const EMPTY_STATE: WorktreeContentTabsState = { tabs: [], activeTabId: null };
@@ -117,6 +145,7 @@ const openFileViewer = (
 
 export const useWorkspaceContentTabsStore = create<WorkspaceContentTabsStore>()((set) => ({
   byWorktree: {},
+  closedByWorktree: {},
   openFileDiff: (worktreeKey, filePath) => openFileViewer(set, worktreeKey, filePath, "diff"),
   openFile: (worktreeKey, filePath) => openFileViewer(set, worktreeKey, filePath, "file"),
   openPreview: (worktreeKey, previewTabId) =>
@@ -164,18 +193,42 @@ export const useWorkspaceContentTabsStore = create<WorkspaceContentTabsStore>()(
         current.activeTabId === null ? current : { ...current, activeTabId: null },
       ),
     })),
-  closeTab: (worktreeKey, tabId) =>
-    set((state) => ({
-      byWorktree: updateWorktree(state.byWorktree, worktreeKey, (current) => {
-        const index = current.tabs.findIndex((tab) => tab.id === tabId);
-        if (index < 0) return current;
-        const tabs = current.tabs.filter((tab) => tab.id !== tabId);
-        if (current.activeTabId !== tabId) return { ...current, tabs };
+  closeTab: (worktreeKey, tabId, closed) =>
+    set((state) => {
+      const current = state.byWorktree[worktreeKey] ?? EMPTY_STATE;
+      // Nothing removed → leave both the tab map and the closed stack untouched.
+      if (!current.tabs.some((tab) => tab.id === tabId)) return {};
+      const byWorktree = updateWorktree(state.byWorktree, worktreeKey, (curr) => {
+        const index = curr.tabs.findIndex((tab) => tab.id === tabId);
+        const tabs = curr.tabs.filter((tab) => tab.id !== tabId);
+        if (curr.activeTabId !== tabId) return { ...curr, tabs };
         // Closing the active viewer falls back to a neighbour, else the chat.
         const fallback = tabs[index] ?? tabs[index - 1] ?? null;
         return { tabs, activeTabId: fallback?.id ?? null };
-      }),
-    })),
+      });
+      if (!closed) return { byWorktree };
+      const stack = state.closedByWorktree[worktreeKey] ?? [];
+      const nextStack = [...stack, closed].slice(-MAX_CLOSED_TABS_PER_WORKTREE);
+      return {
+        byWorktree,
+        closedByWorktree: { ...state.closedByWorktree, [worktreeKey]: nextStack },
+      };
+    }),
+  popClosedTab: (worktreeKey) => {
+    let popped: ClosedWorkspaceContentTab | null = null;
+    set((state) => {
+      const stack = state.closedByWorktree[worktreeKey];
+      if (!stack || stack.length === 0) return {};
+      popped = stack[stack.length - 1] ?? null;
+      const nextStack = stack.slice(0, -1);
+      if (nextStack.length === 0) {
+        const { [worktreeKey]: _emptied, ...rest } = state.closedByWorktree;
+        return { closedByWorktree: rest };
+      }
+      return { closedByWorktree: { ...state.closedByWorktree, [worktreeKey]: nextStack } };
+    });
+    return popped;
+  },
 }));
 
 export function selectWorktreeContentTabs(
