@@ -13,6 +13,8 @@ import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 import {
   markPromotedDraftThreadByRef,
+  type ComposerDocumentAttachment,
+  type ComposerImageAttachment,
   type DraftThreadEnvMode,
   type DraftThreadState,
   useComposerDraftStore,
@@ -43,6 +45,10 @@ interface NewThreadOptions {
   forceNew?: boolean;
   /** Text to place in the fresh draft before routing to it. */
   initialPrompt?: string;
+  /** Image attachments to stage in the fresh draft alongside `initialPrompt`. */
+  initialImages?: ReadonlyArray<ComposerImageAttachment>;
+  /** Document attachments to stage in the fresh draft alongside `initialPrompt`. */
+  initialDocuments?: ReadonlyArray<ComposerDocumentAttachment>;
   /** Explicit model for this draft. Takes precedence over carried and sticky state. */
   modelSelection?: ModelSelection;
   /** Submit the initial prompt once the destination composer is ready. */
@@ -69,6 +75,8 @@ export function useNewThreadHandler() {
   return useCallback(
     (projectRef: ScopedProjectRef, options?: NewThreadOptions): Promise<void> => {
       const {
+        addDocuments,
+        addImages,
         getComposerDraft,
         getDraftSessionByLogicalProjectKey,
         getDraftSession,
@@ -306,6 +314,12 @@ export function useNewThreadHandler() {
         }
         if (options?.initialPrompt !== undefined) {
           setPrompt(draftId, options.initialPrompt);
+        }
+        if (options?.initialImages && options.initialImages.length > 0) {
+          addImages(draftId, [...options.initialImages]);
+        }
+        if (options?.initialDocuments && options.initialDocuments.length > 0) {
+          addDocuments(draftId, [...options.initialDocuments]);
         }
         if (options?.autoSubmitInitialPrompt) {
           markDraftForAutoSubmit(draftId);

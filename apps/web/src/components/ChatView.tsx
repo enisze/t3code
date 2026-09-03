@@ -326,6 +326,10 @@ import {
   serverUpdateGuidance,
 } from "../versionSkew";
 import { useAssetUrls } from "../assets/assetUrls";
+import {
+  buildUnavailableAttachmentsToastCopy,
+  reuseMessageAttachments,
+} from "../lib/messageAttachmentReuse";
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
@@ -1382,6 +1386,7 @@ function ChatViewContent(props: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
   const sendInFlightRef = useRef(false);
+  const newChatFromMessageInFlightRef = useRef(false);
   const terminalUiOpenByThreadRef = useRef<Record<string, boolean>>({});
 
   useLayoutEffect(() => {
@@ -5833,6 +5838,44 @@ function ChatViewContent(props: ChatViewProps) {
     }
     void onRevertToTurnCountRef.current(targetTurnCount);
   }, []);
+  // Reusing a sent message as a fresh chat's opening prompt. The composer's
+  // `File`s are gone once the turn starts, so the attachments' bytes are read
+  // back from the server before the draft is created — otherwise the new chat
+  // would carry the text and silently drop the images.
+  const startNewChatFromMessage = useCallback(
+    async (message: ChatMessage) => {
+      if (!activeProjectRef || newChatFromMessageInFlightRef.current) return;
+      newChatFromMessageInFlightRef.current = true;
+      try {
+        const reused = await reuseMessageAttachments(message.attachments ?? []);
+        // No workspace options: like plain "New chat", the fresh draft starts
+        // from the configured branch/worktree defaults rather than inheriting
+        // the source chat's checkout.
+        await handleNewThread(activeProjectRef, {
+          forceNew: true,
+          initialPrompt: message.text,
+          ...(reused.images.length > 0 ? { initialImages: reused.images } : {}),
+          ...(reused.documents.length > 0 ? { initialDocuments: reused.documents } : {}),
+        });
+        if (reused.unavailableNames.length > 0) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "warning",
+              ...buildUnavailableAttachmentsToastCopy(reused.unavailableNames),
+            }),
+          );
+        }
+      } finally {
+        newChatFromMessageInFlightRef.current = false;
+      }
+    },
+    [activeProjectRef, handleNewThread],
+  );
+  const startNewChatFromMessageRef = useRef(startNewChatFromMessage);
+  startNewChatFromMessageRef.current = startNewChatFromMessage;
+  const onStartNewChatFromMessage = useCallback((message: ChatMessage) => {
+    void startNewChatFromMessageRef.current(message);
+  }, []);
 
   // Empty state: no active thread
   if (!activeThread) {
@@ -6121,6 +6164,7 @@ function ChatViewContent(props: ChatViewProps) {
                 onOpenTurnDiff={onOpenTurnDiff}
                 revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
                 onRevertUserMessage={onRevertUserMessage}
+                onStartNewChatFromMessage={onStartNewChatFromMessage}
                 isRevertingCheckpoint={isRevertingCheckpoint}
                 onImageExpand={onExpandTimelineImage}
                 markdownCwd={gitCwd ?? undefined}
