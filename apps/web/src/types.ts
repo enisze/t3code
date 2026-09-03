@@ -36,7 +36,10 @@ export interface ChatImageAttachment extends ContractChatImageAttachment {
   readonly previewUrl?: string;
 }
 
-export type ChatDocumentAttachment = ContractChatDocumentAttachment;
+export interface ChatDocumentAttachment extends ContractChatDocumentAttachment {
+  /** Signed asset URL the document's bytes can be re-read from. */
+  readonly previewUrl?: string;
+}
 
 export type ChatAttachment = ChatImageAttachment | ChatDocumentAttachment;
 

@@ -44,6 +44,7 @@ import {
   GlobeIcon,
   HammerIcon,
   MessageCircleIcon,
+  MessageSquarePlusIcon,
   MousePointerClickIcon,
   PaintbrushIcon,
   PaperclipIcon,
@@ -128,6 +129,7 @@ interface TimelineRowSharedState {
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertUserMessage: (messageId: MessageId) => void;
+  onStartNewChatFromMessage: (message: TimelineMessage) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   onToggleTurnFold: (turnId: TurnId) => void;
@@ -165,6 +167,8 @@ interface MessagesTimelineProps {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
+  /** Opens a fresh draft seeded with a past user message's text and attachments. */
+  onStartNewChatFromMessage: (message: TimelineMessage) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   activeThreadEnvironmentId: EnvironmentId;
@@ -197,6 +201,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onOpenTurnDiff,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
+  onStartNewChatFromMessage,
   isRevertingCheckpoint,
   onImageExpand,
   activeThreadEnvironmentId,
@@ -393,6 +398,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       skills,
       activeThreadEnvironmentId,
       onRevertUserMessage,
+      onStartNewChatFromMessage,
       onImageExpand,
       onOpenTurnDiff,
       onToggleTurnFold,
@@ -407,6 +413,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       skills,
       activeThreadEnvironmentId,
       onRevertUserMessage,
+      onStartNewChatFromMessage,
       onImageExpand,
       onOpenTurnDiff,
       onToggleTurnFold,
@@ -948,6 +955,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           </Tooltip>
           <div className="flex items-center gap-0.5">
             {canRevertAgentWork && <RevertUserMessageButton messageId={row.message.id} />}
+            <StartNewChatFromMessageButton message={row.message} />
             {displayedUserMessage.copyText && (
               <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />
             )}
@@ -979,6 +987,33 @@ function RevertUserMessageButton({ messageId }: { messageId: MessageId }) {
         <Undo2Icon className="size-3" />
       </TooltipTrigger>
       <TooltipPopup side="top">Revert to this message</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+/**
+ * Reuses a past user message as the opening prompt of a brand-new chat, with
+ * its images and documents carried over.
+ */
+function StartNewChatFromMessageButton({ message }: { message: TimelineMessage }) {
+  const ctx = use(TimelineRowCtx);
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            onClick={() => ctx.onStartNewChatFromMessage(message)}
+            aria-label="Start a new chat with this message"
+          />
+        }
+      >
+        <MessageSquarePlusIcon className="size-3" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">Start a new chat with this message</TooltipPopup>
     </Tooltip>
   );
 }
