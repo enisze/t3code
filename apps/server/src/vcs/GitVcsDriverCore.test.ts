@@ -1772,6 +1772,141 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    /**
+     * A branch pushed from somewhere else and never fetched here: what an
+     * agent-pushed branch or a teammate's pull request head actually looks like
+     * locally, and the case where no local ref resolves the name at all.
+     */
+    const pushBranchFromPeer = (input: { readonly cwd: string; readonly branch: string }) =>
+      Effect.gen(function* () {
+        const remote = yield* makeTmpDir("git-remote-");
+        const peer = yield* makeTmpDir("git-peer-");
+        const { initialBranch } = yield* initRepoWithCommit(input.cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(input.cwd, ["remote", "add", "origin", remote]);
+        yield* git(input.cwd, ["push", "-u", "origin", initialBranch]);
+        yield* git(peer, ["clone", remote, "."]);
+        yield* git(peer, ["config", "user.email", "test@test.com"]);
+        yield* git(peer, ["config", "user.name", "Test"]);
+        yield* git(peer, ["checkout", "-b", input.branch]);
+        yield* writeTextFile(peer, "peer.txt", "peer\n");
+        yield* git(peer, ["add", "peer.txt"]);
+        yield* git(peer, ["commit", "-m", "peer change"]);
+        yield* git(peer, ["push", "origin", input.branch]);
+        return { initialBranch, remoteHead: yield* git(peer, ["rev-parse", "HEAD"]) };
+      });
+
+    it.effect("switches to a branch that only exists on the remote and was never fetched", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { remoteHead } = yield* pushBranchFromPeer({ cwd, branch: "agent/pushed" });
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        assert.notInclude(yield* driver.listLocalBranchNames(cwd), "agent/pushed");
+
+        const switched = yield* driver.switchRef({ cwd, refName: "agent/pushed" });
+
+        assert.equal(switched.refName, "agent/pushed");
+        assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), remoteHead);
+        assert.equal(
+          yield* git(cwd, ["rev-parse", "--abbrev-ref", "agent/pushed@{upstream}"]),
+          "origin/agent/pushed",
+        );
+      }),
+    );
+
+    it.effect("switches to an unfetched branch named with its remote", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { remoteHead } = yield* pushBranchFromPeer({ cwd, branch: "agent/qualified" });
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const switched = yield* driver.switchRef({ cwd, refName: "origin/agent/qualified" });
+
+        assert.equal(switched.refName, "agent/qualified");
+        assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), remoteHead);
+        assert.equal(
+          yield* git(cwd, ["rev-parse", "--abbrev-ref", "agent/qualified@{upstream}"]),
+          "origin/agent/qualified",
+        );
+      }),
+    );
+
+    it.effect("switches to the local branch sharing a remote ref's name instead of detaching", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* pushBranchFromPeer({ cwd, branch: "shared" });
+        yield* git(cwd, ["fetch", "origin"]);
+        // A local branch of the same name that tracks nothing: `--track` cannot
+        // recreate it, and checking out the remote ref would detach HEAD.
+        yield* git(cwd, ["branch", "shared", initialBranch]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const switched = yield* driver.switchRef({ cwd, refName: "origin/shared" });
+
+        assert.equal(switched.refName, "shared");
+        assert.equal(
+          yield* git(cwd, ["rev-parse", "HEAD"]),
+          yield* git(cwd, ["rev-parse", "shared"]),
+        );
+      }),
+    );
+
+    it.effect("creates a worktree for a remote branch that was never fetched", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { remoteHead } = yield* pushBranchFromPeer({ cwd, branch: "agent/worktree" });
+        const pathService = yield* Path.Path;
+        const worktreePath = pathService.join(
+          yield* makeTmpDir("git-remote-worktrees-"),
+          "agent-worktree",
+        );
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const created = yield* driver.createWorktree({
+          cwd,
+          refName: "agent/worktree",
+          path: worktreePath,
+        });
+
+        assert.equal(created.worktree.refName, "agent/worktree");
+        assert.equal(created.worktree.path, worktreePath);
+        assert.equal(yield* git(worktreePath, ["branch", "--show-current"]), "agent/worktree");
+        assert.equal(yield* git(worktreePath, ["rev-parse", "HEAD"]), remoteHead);
+        assert.equal(
+          yield* git(worktreePath, ["rev-parse", "--abbrev-ref", "agent/worktree@{upstream}"]),
+          "origin/agent/worktree",
+        );
+      }),
+    );
+
+    it.effect("creates a worktree on a tracking branch for a fetched remote ref", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { remoteHead } = yield* pushBranchFromPeer({ cwd, branch: "agent/tracked" });
+        yield* git(cwd, ["fetch", "origin"]);
+        const pathService = yield* Path.Path;
+        const worktreePath = pathService.join(
+          yield* makeTmpDir("git-tracked-worktrees-"),
+          "agent-tracked",
+        );
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const created = yield* driver.createWorktree({
+          cwd,
+          refName: "origin/agent/tracked",
+          path: worktreePath,
+        });
+
+        assert.equal(created.worktree.refName, "agent/tracked");
+        assert.equal(yield* git(worktreePath, ["branch", "--show-current"]), "agent/tracked");
+        assert.equal(yield* git(worktreePath, ["rev-parse", "HEAD"]), remoteHead);
+        assert.equal(
+          yield* git(worktreePath, ["rev-parse", "--abbrev-ref", "agent/tracked@{upstream}"]),
+          "origin/agent/tracked",
+        );
+      }),
+    );
+
     it.effect("pushes with upstream setup and skips when already up to date", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

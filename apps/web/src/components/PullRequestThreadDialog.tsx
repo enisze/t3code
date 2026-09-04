@@ -21,6 +21,7 @@ import {
   canAutoSubmitResolvedReference,
   findBranchRefForReference,
   resolveBranchWorktreeTarget,
+  resolveTypedBranchWorktreeTarget,
 } from "./PullRequestThreadDialog.logic";
 import { Button } from "./ui/button";
 import {
@@ -145,11 +146,26 @@ export function PullRequestThreadDialog({
       : null,
   );
   const resolvedBranch = findBranchRefForReference(branchQuery.data?.refs ?? [], reference);
-  const resolvedBranchTarget = useMemo(
+  const listedBranchTarget = useMemo(
     () =>
       cwd && resolvedBranch ? resolveBranchWorktreeTarget({ cwd, ref: resolvedBranch }) : null,
     [cwd, resolvedBranch],
   );
+  // A branch nobody here has fetched yet matches no listed ref, so once the
+  // lookup has settled without a match the typed name itself becomes the target
+  // and the server resolves it against the remotes.
+  const typedBranchTarget = useMemo(
+    () =>
+      cwd && !resolvedBranch && !branchQuery.isPending
+        ? resolveTypedBranchWorktreeTarget({
+            cwd,
+            reference,
+            isPullRequestReference: parsedReference !== null,
+          })
+        : null,
+    [branchQuery.isPending, cwd, parsedReference, reference, resolvedBranch],
+  );
+  const resolvedBranchTarget = listedBranchTarget ?? typedBranchTarget;
 
   const liveResolvedPullRequest =
     parsedReference !== null && parsedReference === parsedDebouncedReference
@@ -178,7 +194,7 @@ export function PullRequestThreadDialog({
   }, [resolvedPullRequest?.state]);
 
   const handleConfirm = useCallback(async () => {
-    if (!resolvedPullRequest && !resolvedBranch) {
+    if (!resolvedPullRequest && !resolvedBranchTarget) {
       setReferenceDirty(true);
       setRevealed(true);
       return;
@@ -268,7 +284,6 @@ export function PullRequestThreadDialog({
     environmentId,
     parsedReference,
     preparePullRequestThreadAction,
-    resolvedBranch,
     resolvedBranchTarget,
     resolvedPullRequest,
     threadId,
@@ -277,7 +292,7 @@ export function PullRequestThreadDialog({
   const canAutoSubmit = canAutoSubmitResolvedReference({
     isPullRequestReference: parsedReference !== null,
     hasResolvedPullRequest: resolvedPullRequest !== null,
-    hasResolvedBranch: Boolean(resolvedBranch),
+    hasResolvedBranch: Boolean(resolvedBranchTarget),
   });
 
   useEffect(() => {
@@ -389,11 +404,17 @@ export function PullRequestThreadDialog({
               </div>
             </div>
           ) : null}
-          {!resolvedPullRequest && resolvedBranch ? (
+          {!resolvedPullRequest && resolvedBranchTarget ? (
             <div className="rounded-xl border border-border/70 bg-muted/24 p-3">
-              <p className="font-medium text-sm">{resolvedBranch.name}</p>
+              <p className="font-medium text-sm">
+                {resolvedBranch?.name ?? resolvedBranchTarget.branch}
+              </p>
               <p className="text-muted-foreground text-xs">
-                {resolvedBranchTarget?.worktreePath ? "Existing worktree" : "Existing branch"}
+                {resolvedBranchTarget.worktreePath
+                  ? "Existing worktree"
+                  : resolvedBranch
+                    ? "Existing branch"
+                    : "Fetched from the remote when opened"}
               </p>
             </div>
           ) : null}
@@ -424,7 +445,7 @@ export function PullRequestThreadDialog({
               void handleConfirm();
             }}
             disabled={
-              !cwd || (!resolvedPullRequest && !resolvedBranch) || isResolving || isPreparing
+              !cwd || (!resolvedPullRequest && !resolvedBranchTarget) || isResolving || isPreparing
             }
           >
             {isPreparing ? "Preparing worktree..." : "Open worktree"}

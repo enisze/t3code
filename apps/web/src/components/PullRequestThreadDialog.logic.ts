@@ -74,6 +74,38 @@ export function resolveBranchWorktreeTarget(input: {
 }
 
 /**
+ * Take a reference at its word when no listed ref matches it.
+ *
+ * The ref list is read from local refs only, so a branch pushed from somewhere
+ * else — another machine, an agent, a collaborator — matches nothing here until
+ * something fetches it, and that is exactly the branch a user types instead of
+ * picking. Send the name as given: the server resolves it against the remotes,
+ * fetching the branch before it creates the worktree, and reports back the local
+ * branch the worktree landed on.
+ */
+export function resolveTypedBranchWorktreeTarget(input: {
+  readonly cwd: string;
+  readonly reference: string;
+  /**
+   * A reference that names a pull request is never a branch name, so it must
+   * keep waiting on — and failing with — the pull request lookup rather than
+   * being sent off as a ref nothing can resolve.
+   */
+  readonly isPullRequestReference: boolean;
+}): ResolvedBranchWorktreeTarget | null {
+  const branch = input.reference.trim();
+  if (branch.length === 0 || input.isPullRequestReference) {
+    return null;
+  }
+  return {
+    branch,
+    worktreePath: null,
+    reuseExisting: false,
+    createInput: { cwd: input.cwd, refName: branch, path: null },
+  };
+}
+
+/**
  * Whether an auto-submitted reference has resolved into something safe to act on.
  *
  * A reference that names a pull request must resolve *as a pull request*. The
@@ -84,7 +116,9 @@ export function resolveBranchWorktreeTarget(input: {
  * setup script. The result is a worktree without the pull request's content.
  *
  * References that don't name a pull request are branch references, so there the
- * resolved branch is the only signal available.
+ * resolved branch target is the only signal available — including the typed
+ * fallback, which only becomes a target once the ref lookup has settled without
+ * a match.
  */
 export function canAutoSubmitResolvedReference(input: {
   readonly isPullRequestReference: boolean;
