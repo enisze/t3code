@@ -2959,6 +2959,92 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const normalizeWorktreePath = (worktreePath: string) =>
     path.normalize(path.resolve(worktreePath));
 
+  const localBranchExists = (cwd: string, operation: string, refName: string) =>
+    executeGit(operation, cwd, ["show-ref", "--verify", "--quiet", `refs/heads/${refName}`], {
+      timeoutMs: 5_000,
+      allowNonZeroExit: true,
+    }).pipe(Effect.map((result) => result.exitCode === 0));
+
+  const remoteTrackingRefExists = (cwd: string, operation: string, refName: string) =>
+    executeGit(operation, cwd, ["show-ref", "--verify", "--quiet", `refs/remotes/${refName}`], {
+      timeoutMs: 5_000,
+      allowNonZeroExit: true,
+    }).pipe(Effect.map((result) => result.exitCode === 0));
+
+  const refResolvesToCommit = (cwd: string, operation: string, refName: string) =>
+    executeGit(operation, cwd, ["rev-parse", "--verify", "--quiet", `${refName}^{commit}`], {
+      timeoutMs: 5_000,
+      allowNonZeroExit: true,
+    }).pipe(Effect.map((result) => result.exitCode === 0));
+
+  /**
+   * Fetch a branch that exists only on a remote, so it can be checked out.
+   *
+   * Every ref T3 offers is read from local refs, and nothing fetches on the way
+   * to a checkout, so a branch pushed from somewhere else — another machine, a
+   * cloud agent, a collaborator's fork — stays unresolvable no matter how the
+   * name arrives: `git checkout` reports "pathspec ... did not match" and
+   * `git worktree add` "invalid reference". Checking it out is precisely the
+   * moment to go get it.
+   *
+   * A qualified `<remote>/<branch>` is fetched from the remote it names;
+   * a plain branch name is looked for on each configured remote, primary first,
+   * stopping at the first remote that has it. The created remote-tracking ref is
+   * returned so the caller checks out that exact ref instead of relying on git's
+   * DWIM, which refuses a plain name carried by more than one remote.
+   *
+   * Best effort throughout: an unreachable or unauthenticated remote leaves the
+   * caller to fail with git's own message about the ref it could not find.
+   */
+  const fetchRemoteRefForCheckout = Effect.fn("fetchRemoteRefForCheckout")(function* (
+    cwd: string,
+    refName: string,
+  ) {
+    const remoteNames = yield* listRemoteNames(cwd).pipe(
+      Effect.orElseSucceed((): ReadonlyArray<string> => []),
+    );
+    if (remoteNames.length === 0) {
+      return null;
+    }
+    const parsedRemoteRef = parseRemoteRefWithRemoteNames(
+      refName,
+      remoteNames.toSorted((left, right) => right.length - left.length),
+    );
+    const primaryRemoteName = remoteNames.includes("origin") ? "origin" : remoteNames[0];
+    const candidates = parsedRemoteRef
+      ? [{ remoteName: parsedRemoteRef.remoteName, remoteBranch: parsedRemoteRef.branchName }]
+      : [
+          ...(primaryRemoteName === undefined ? [] : [primaryRemoteName]),
+          ...remoteNames.filter((remoteName) => remoteName !== primaryRemoteName),
+        ].map((remoteName) => ({ remoteName, remoteBranch: refName }));
+
+    const env = yield* resolveNetworkGitEnv("GitVcsDriver.fetchRemoteRefForCheckout", cwd).pipe(
+      Effect.orElseSucceed(() => undefined),
+    );
+    for (const candidate of candidates) {
+      const remoteTrackingRef = `${candidate.remoteName}/${candidate.remoteBranch}`;
+      const result = yield* executeGit(
+        "GitVcsDriver.fetchRemoteRefForCheckout",
+        cwd,
+        [
+          "fetch",
+          "--quiet",
+          "--no-tags",
+          candidate.remoteName,
+          `+refs/heads/${candidate.remoteBranch}:refs/remotes/${remoteTrackingRef}`,
+        ],
+        {
+          ...(env ? { env } : {}),
+          allowNonZeroExit: true,
+        },
+      ).pipe(Effect.orElseSucceed(() => null));
+      if (result?.exitCode === 0) {
+        return remoteTrackingRef;
+      }
+    }
+    return null;
+  });
+
   /**
    * `git worktree add` refuses two situations the caller can neither see nor fix
    * by hand, and both surface as an opaque "git worktree add failed":
@@ -2980,15 +3066,69 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input) {
-    const targetBranch = input.newRefName ?? input.refName;
+    // A start ref that resolves nowhere locally is the branch someone else
+    // pushed: fetch it, and start from the remote-tracking ref that fetch
+    // created rather than the ambiguous name that was asked for.
+    const requestedRefResolves = yield* refResolvesToCommit(
+      input.cwd,
+      "GitVcsDriver.createWorktree.startRefResolves",
+      input.refName,
+    );
+    const fetchedRemoteRef = requestedRefResolves
+      ? null
+      : yield* fetchRemoteRefForCheckout(input.cwd, input.refName);
+    if (!requestedRefResolves && fetchedRemoteRef === null) {
+      // Naming the ref beats git's "invalid reference": the caller usually typed
+      // this name, and no amount of worktree machinery can rescue a branch that
+      // is neither here nor on a remote we can reach.
+      return yield* new GitCommandError({
+        ...gitCommandContext({
+          operation: "GitVcsDriver.createWorktree",
+          cwd: input.cwd,
+          args: ["worktree", "add", input.refName],
+        }),
+        detail: `Could not resolve "${input.refName}": no local branch, tag or commit matches it, and it could not be fetched from a remote.`,
+      });
+    }
+    const startRef = fetchedRemoteRef ?? input.refName;
+
+    // `git worktree add <path> <remote>/<branch>` lands on a DETACHED HEAD,
+    // which no thread can commit and push from. A remote branch therefore gets a
+    // local branch to live on: the existing local branch of that name, or a new
+    // one tracking the remote ref. An explicitly requested `newRefName` already
+    // names that branch, so nothing has to be derived for it.
+    const derivedLocalBranch = input.newRefName
+      ? null
+      : (yield* remoteTrackingRefExists(
+            input.cwd,
+            "GitVcsDriver.createWorktree.startRefIsRemoteTracking",
+            startRef,
+          ))
+        ? deriveLocalBranchNameFromRemoteRef(startRef)
+        : null;
+    const existingLocalBranch =
+      derivedLocalBranch !== null &&
+      (yield* localBranchExists(
+        input.cwd,
+        "GitVcsDriver.createWorktree.derivedLocalBranchExists",
+        derivedLocalBranch,
+      ))
+        ? derivedLocalBranch
+        : null;
+    const newBranch =
+      input.newRefName ?? (existingLocalBranch === null ? derivedLocalBranch : null);
+    const startPoint = existingLocalBranch ?? startRef;
+    const targetBranch = newBranch ?? startPoint;
     const sanitizedBranch = targetBranch.replace(/\//g, "-");
     const repoName = path.basename(input.cwd);
     const requestedPath = input.path ?? path.join(worktreesDir, repoName, sanitizedBranch);
 
+    // A new branch started from a remote-tracking ref is tracked by git's own
+    // default, so `-b` needs no `--track`.
     const buildArgs = (worktreePath: string) =>
-      input.newRefName
-        ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
-        : ["worktree", "add", worktreePath, input.refName];
+      newBranch
+        ? ["worktree", "add", "-b", newBranch, worktreePath, startPoint]
+        : ["worktree", "add", worktreePath, startPoint];
 
     // Stable diagnostics so the surfaced git output is the C-locale text
     // regardless of the machine's language. The args are worktree paths and
@@ -3056,7 +3196,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // Only a plain checkout can land on an existing worktree: `-b` demands a
     // branch that does not exist yet, so a claim on that name is a failure the
     // caller has to see.
-    const claim = input.newRefName
+    const claim = newBranch
       ? null
       : (entries.find((entry) => entry.branch === targetBranch) ?? null);
 
@@ -3347,84 +3487,102 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  /**
+   * Decide how to check out a ref, given every shape it can arrive in: a local
+   * branch, a `<remote>/<branch>` tracking ref, or a bare name.
+   *
+   * Every remote case has to end on a local branch — a thread commits and pushes
+   * from its checkout, and `git checkout <remote>/<branch>` yields a detached
+   * HEAD instead. So a remote ref checks out the local branch that already
+   * tracks it, else the local branch of the same name, else a new branch
+   * tracking it.
+   */
+  const resolveCheckoutPlan = Effect.fn("resolveCheckoutPlan")(function* (
+    cwd: string,
+    refName: string,
+  ) {
+    const [localInputExists, remoteExists] = yield* Effect.all(
+      [
+        localBranchExists(cwd, "GitVcsDriver.switchRef.localInputExists", refName),
+        remoteTrackingRefExists(cwd, "GitVcsDriver.switchRef.remoteExists", refName),
+      ],
+      { concurrency: "unbounded" },
+    );
+
+    if (localInputExists) {
+      return { resolved: true, args: ["checkout", refName], branch: refName };
+    }
+    if (!remoteExists) {
+      return { resolved: false, args: ["checkout", refName], branch: refName };
+    }
+
+    const localTrackingBranch = yield* executeGit(
+      "GitVcsDriver.switchRef.localTrackingBranch",
+      cwd,
+      ["for-each-ref", "--format=%(refname:short)\t%(upstream:short)", "refs/heads"],
+      {
+        timeoutMs: 5_000,
+        allowNonZeroExit: true,
+      },
+    ).pipe(
+      Effect.map((result) =>
+        result.exitCode === 0 ? parseTrackingBranchByUpstreamRef(result.stdout, refName) : null,
+      ),
+    );
+    if (localTrackingBranch) {
+      return {
+        resolved: true,
+        args: ["checkout", localTrackingBranch],
+        branch: localTrackingBranch,
+      };
+    }
+
+    const localTrackedBranchCandidate = deriveLocalBranchNameFromRemoteRef(refName);
+    const localTrackedBranchTargetExists =
+      localTrackedBranchCandidate === null
+        ? false
+        : yield* localBranchExists(
+            cwd,
+            "GitVcsDriver.switchRef.localTrackedBranchTargetExists",
+            localTrackedBranchCandidate,
+          );
+    // A local branch already holding the derived name cannot be recreated with
+    // `--track`, and checking out the remote ref itself would detach HEAD. That
+    // local branch is what the ref list shows for this remote branch anyway, so
+    // check it out — the same thing `git checkout <branch>` would do.
+    if (localTrackedBranchTargetExists && localTrackedBranchCandidate) {
+      return {
+        resolved: true,
+        args: ["checkout", localTrackedBranchCandidate],
+        branch: localTrackedBranchCandidate,
+      };
+    }
+
+    return {
+      resolved: true,
+      args: ["checkout", "--track", refName],
+      // The branch does not exist yet, so no worktree can be holding it.
+      branch: localTrackedBranchCandidate,
+    };
+  });
+
   const switchRef: GitVcsDriver.GitVcsDriver["Service"]["switchRef"] = Effect.fn("switchRef")(
     function* (input) {
-      const [localInputExists, remoteExists] = yield* Effect.all(
-        [
-          executeGit(
-            "GitVcsDriver.switchRef.localInputExists",
-            input.cwd,
-            ["show-ref", "--verify", "--quiet", `refs/heads/${input.refName}`],
-            {
-              timeoutMs: 5_000,
-              allowNonZeroExit: true,
-            },
-          ).pipe(Effect.map((result) => result.exitCode === 0)),
-          executeGit(
-            "GitVcsDriver.switchRef.remoteExists",
-            input.cwd,
-            ["show-ref", "--verify", "--quiet", `refs/remotes/${input.refName}`],
-            {
-              timeoutMs: 5_000,
-              allowNonZeroExit: true,
-            },
-          ).pipe(Effect.map((result) => result.exitCode === 0)),
-        ],
-        { concurrency: "unbounded" },
-      );
-
-      const localTrackingBranch = remoteExists
-        ? yield* executeGit(
-            "GitVcsDriver.switchRef.localTrackingBranch",
-            input.cwd,
-            ["for-each-ref", "--format=%(refname:short)\t%(upstream:short)", "refs/heads"],
-            {
-              timeoutMs: 5_000,
-              allowNonZeroExit: true,
-            },
-          ).pipe(
-            Effect.map((result) =>
-              result.exitCode === 0
-                ? parseTrackingBranchByUpstreamRef(result.stdout, input.refName)
-                : null,
+      const initialPlan = yield* resolveCheckoutPlan(input.cwd, input.refName);
+      // Nothing local matches the requested ref: the usual cause is a branch
+      // pushed from elsewhere that this repository has never fetched, so go and
+      // fetch it before giving up on it.
+      const plan = initialPlan.resolved
+        ? initialPlan
+        : yield* fetchRemoteRefForCheckout(input.cwd, input.refName).pipe(
+            Effect.flatMap((fetchedRef) =>
+              fetchedRef === null
+                ? Effect.succeed(initialPlan)
+                : resolveCheckoutPlan(input.cwd, fetchedRef),
             ),
-          )
-        : null;
+          );
 
-      const localTrackedBranchCandidate = deriveLocalBranchNameFromRemoteRef(input.refName);
-      const localTrackedBranchTargetExists =
-        remoteExists && localTrackedBranchCandidate
-          ? yield* executeGit(
-              "GitVcsDriver.switchRef.localTrackedBranchTargetExists",
-              input.cwd,
-              ["show-ref", "--verify", "--quiet", `refs/heads/${localTrackedBranchCandidate}`],
-              {
-                timeoutMs: 5_000,
-                allowNonZeroExit: true,
-              },
-            ).pipe(Effect.map((result) => result.exitCode === 0))
-          : false;
-
-      const checkoutArgs = localInputExists
-        ? ["checkout", input.refName]
-        : remoteExists && !localTrackingBranch && localTrackedBranchTargetExists
-          ? ["checkout", input.refName]
-          : remoteExists && !localTrackingBranch
-            ? ["checkout", "--track", input.refName]
-            : remoteExists && localTrackingBranch
-              ? ["checkout", localTrackingBranch]
-              : ["checkout", input.refName];
-
-      // The local branch the checkout lands on, which is what another worktree
-      // can be holding. For the `--track` case the branch does not exist yet, so
-      // nothing can hold it.
-      const checkoutBranch = localInputExists
-        ? input.refName
-        : remoteExists
-          ? (localTrackingBranch ?? localTrackedBranchCandidate)
-          : input.refName;
-
-      yield* checkoutWithWorktreeClaimRecovery(input.cwd, checkoutArgs, checkoutBranch);
+      yield* checkoutWithWorktreeClaimRecovery(input.cwd, plan.args, plan.branch);
 
       const refName = yield* runGitStdout("GitVcsDriver.switchRef.currentBranch", input.cwd, [
         "branch",

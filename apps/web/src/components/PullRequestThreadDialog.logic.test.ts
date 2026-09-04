@@ -4,6 +4,7 @@ import {
   canAutoSubmitResolvedReference,
   findBranchRefForReference,
   resolveBranchWorktreeTarget,
+  resolveTypedBranchWorktreeTarget,
 } from "./PullRequestThreadDialog.logic";
 
 describe("findBranchRefForReference", () => {
@@ -116,6 +117,49 @@ describe("resolveBranchWorktreeTarget", () => {
       reuseExisting: true,
       createInput: null,
     });
+  });
+});
+
+describe("resolveTypedBranchWorktreeTarget", () => {
+  it("sends an unlisted branch name to the server to resolve against the remotes", () => {
+    // A branch pushed elsewhere and never fetched here matches no listed ref,
+    // so the typed name has to travel as-is instead of being refused.
+    expect(
+      resolveTypedBranchWorktreeTarget({
+        cwd: "/repo",
+        reference: "  agent/pushed  ",
+        isPullRequestReference: false,
+      }),
+    ).toEqual({
+      branch: "agent/pushed",
+      worktreePath: null,
+      reuseExisting: false,
+      createInput: {
+        cwd: "/repo",
+        refName: "agent/pushed",
+        path: null,
+      },
+    });
+  });
+
+  it("resolves nothing for a blank reference", () => {
+    expect(
+      resolveTypedBranchWorktreeTarget({
+        cwd: "/repo",
+        reference: "   ",
+        isPullRequestReference: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("leaves a pull request reference to the pull request lookup", () => {
+    expect(
+      resolveTypedBranchWorktreeTarget({
+        cwd: "/repo",
+        reference: "https://github.com/pingdotgg/t3code/pull/42",
+        isPullRequestReference: true,
+      }),
+    ).toBeNull();
   });
 });
 
