@@ -288,7 +288,7 @@ describe("DiffNavigatorFileList", () => {
     expect(markup).toContain('aria-label="Mark b.ts as not viewed"');
   });
 
-  it("highlights the active file's row", () => {
+  it("highlights the active file's row well beyond the hover tint", () => {
     const markup = renderToStaticMarkup(
       <DiffNavigatorFileList
         files={[
@@ -303,6 +303,43 @@ describe("DiffNavigatorFileList", () => {
     );
 
     expect(markup).toContain('data-active="true"');
+    expect(markup).toContain('aria-current="true"');
+    // A tinted surface, an outline and an edge marker, so the open file is not
+    // told apart from a hovered row by a few percent of opacity.
+    expect(markup).toContain("bg-primary/12");
+    expect(markup).toContain("ring-primary/35");
+    expect(markup).toContain("bg-primary");
+  });
+
+  it("keeps the active row's emphasis when the file is already viewed", () => {
+    const markup = renderToStaticMarkup(
+      <DiffNavigatorFileList
+        files={[{ path: "a.ts", additions: 1, deletions: 0, viewed: true, conflicted: false }]}
+        resolvedTheme="light"
+        activeFilePath="a.ts"
+        onOpenFile={() => {}}
+        onToggleViewed={() => {}}
+      />,
+    );
+
+    expect(markup).toContain("bg-primary/12");
+    expect(markup).not.toContain("opacity-70");
+  });
+
+  it("marks the active conflicted row with its own emphasis", () => {
+    const markup = renderToStaticMarkup(
+      <DiffNavigatorFileList
+        files={[{ path: "a.ts", additions: 1, deletions: 1, viewed: false, conflicted: true }]}
+        resolvedTheme="light"
+        activeFilePath="a.ts"
+        onOpenFile={() => {}}
+        onToggleViewed={() => {}}
+      />,
+    );
+
+    expect(markup).toContain("bg-destructive/15");
+    expect(markup).toContain("ring-destructive/40");
+    expect(markup).not.toContain("bg-primary/12");
   });
 
   it("separates merge conflicts from other changed files", () => {

@@ -387,6 +387,7 @@ export const DiffNavigatorFileList = memo(function DiffNavigatorFileList(props: 
                 <div
                   key={`file:${file.path}`}
                   data-active={isActive || undefined}
+                  aria-current={isActive ? "true" : undefined}
                   role="button"
                   tabIndex={0}
                   onClick={() => onOpenFile(file.path)}
@@ -396,18 +397,37 @@ export const DiffNavigatorFileList = memo(function DiffNavigatorFileList(props: 
                       onOpenFile(file.path);
                     }
                   }}
+                  // The open file has to be findable at a glance in a long list,
+                  // so it carries three cues instead of the one tint that hover
+                  // nearly matched: a tinted surface, an outline, and the solid
+                  // edge marker below. `bg-accent` alone is 4% white in dark
+                  // mode — indistinguishable from `hover:bg-accent/60`.
                   className={cn(
-                    "group flex w-full cursor-pointer items-center gap-2 rounded-xl py-2 pr-3 pl-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    "group relative flex w-full cursor-pointer items-center gap-2 rounded-xl py-2 pr-3 pl-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                     isActive
-                      ? file.conflicted
-                        ? "bg-destructive/12"
-                        : "bg-accent"
+                      ? cn(
+                          // Clips the edge marker to the row's rounded corners.
+                          "overflow-hidden",
+                          file.conflicted
+                            ? "bg-destructive/15 ring-1 ring-inset ring-destructive/40"
+                            : "bg-primary/12 ring-1 ring-inset ring-primary/35",
+                        )
                       : file.conflicted
                         ? "bg-destructive/[0.06] hover:bg-destructive/10"
                         : "hover:bg-accent/60",
-                    file.viewed && "opacity-70",
+                    // Dimming a viewed row must never outrank the selection.
+                    file.viewed && !isActive && "opacity-70",
                   )}
                 >
+                  {isActive ? (
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        "absolute inset-y-0 left-0 w-1",
+                        file.conflicted ? "bg-destructive" : "bg-primary",
+                      )}
+                    />
+                  ) : null}
                   <Checkbox
                     checked={file.viewed}
                     className="shrink-0"
@@ -436,7 +456,12 @@ export const DiffNavigatorFileList = memo(function DiffNavigatorFileList(props: 
                         never paint over the diff stat; the directory collapses
                         first so the file name stays readable as long as
                         possible, then the name itself ellipsizes. */}
-                    <span className="flex min-w-0 flex-1 items-baseline overflow-hidden font-mono text-xs">
+                    <span
+                      className={cn(
+                        "flex min-w-0 flex-1 items-baseline overflow-hidden font-mono text-xs",
+                        isActive && "font-medium",
+                      )}
+                    >
                       {directory ? (
                         <span className="min-w-0 shrink-[9999] truncate text-foreground">
                           {directory}
