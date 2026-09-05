@@ -1,5 +1,6 @@
 import {
   ORCHESTRATION_WS_METHODS,
+  OrchestrationGetSnapshotError,
   type EnvironmentId as EnvironmentIdType,
   type OrchestrationThread,
   type OrchestrationThreadDetailSnapshot,
@@ -11,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom } from "effect/unstable/reactivity";
@@ -41,6 +43,16 @@ function formatThreadError(cause: Cause.Cause<unknown>): string {
   return error instanceof Error && error.message.trim().length > 0
     ? error.message
     : "Could not synchronize the thread.";
+}
+
+const isOrchestrationGetSnapshotError = Schema.is(OrchestrationGetSnapshotError);
+
+function isMissingThreadError(cause: Cause.Cause<unknown>, threadId: ThreadIdType): boolean {
+  const error = Cause.squash(cause);
+  return (
+    isOrchestrationGetSnapshotError(error) &&
+    (error.reason === "not_found" || error.message === `Thread ${threadId} was not found`)
+  );
 }
 
 function shouldPersistThread(thread: OrchestrationThread): boolean {
@@ -179,6 +191,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     );
   });
 
+  const handleStreamError = (cause: Cause.Cause<unknown>) =>
+    isMissingThreadError(cause, threadId) ? setDeleted() : setStreamError(cause);
+
   const applyItem = Effect.fn("EnvironmentThreadState.applyItem")(function* (
     item: OrchestrationThreadStreamItem,
   ) {
@@ -276,6 +291,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 
         const sequence = yield* SubscriptionRef.get(lastSequence);
         const canResume = Option.isSome(current.data);
+        // A confirmed-missing thread has no snapshot body, but retaining a
+        // cursor keeps the follow-up subscription on the replay path. That
+        // path can observe a later deletion event (or simply stay idle)
+        // without repeatedly asking the server for the same absent snapshot.
+        const hasResumeCursor = canResume || current.status === "deleted";
         if (!supportsCompletionMarker && canResume) {
           yield* SubscriptionRef.update(state, (value) => ({
             ...value,
@@ -286,12 +306,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 
         return {
           threadId,
-          ...(canResume ? { afterSequence: sequence } : {}),
+          ...(hasResumeCursor ? { afterSequence: sequence } : {}),
           ...(supportsCompletionMarker ? { requestCompletionMarker: true as const } : {}),
         };
       }),
       {
-        onExpectedFailure: setStreamError,
+        onExpectedFailure: handleStreamError,
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,
       },
