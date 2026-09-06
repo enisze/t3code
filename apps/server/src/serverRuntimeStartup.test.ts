@@ -113,45 +113,6 @@ it.effect("enqueueCommand fails queued work when readiness fails", () =>
   ),
 );
 
-it.effect("launchStartupHeartbeat does not block the caller while counts are loading", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const releaseCounts = yield* Deferred.make<void, never>();
-
-      yield* ServerRuntimeStartup.launchStartupHeartbeat.pipe(
-        Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
-          getCommandReadModel: () => Effect.die("unused"),
-          getSnapshot: () => Effect.die("unused"),
-          getShellSnapshot: () => Effect.die("unused"),
-          listAccountRoutes: () => Effect.die("unused"),
-          getArchivedShellSnapshot: () => Effect.die("unused"),
-          getSnapshotSequence: () => Effect.die("unused"),
-          getCounts: () =>
-            Deferred.await(releaseCounts).pipe(
-              Effect.as({
-                projectCount: 2,
-                threadCount: 3,
-              }),
-            ),
-          getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
-          getDefaultModelSelectionForCwd: () => Effect.succeed(Option.none()),
-          getProjectShellById: () => Effect.succeed(Option.none()),
-          getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
-          getThreadCheckpointContext: () => Effect.succeed(Option.none()),
-          getFullThreadDiffContext: () => Effect.succeed(Option.none()),
-          getThreadShellById: () => Effect.succeed(Option.none()),
-          getThreadDetailById: () => Effect.succeed(Option.none()),
-          getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
-        }),
-        Effect.provideService(AnalyticsService.AnalyticsService, {
-          record: () => Effect.void,
-          flush: Effect.void,
-        }),
-      );
-    }),
-  ),
-);
-
 it.effect("resolveWelcomeBase derives cwd and project name from server config", () =>
   Effect.gen(function* () {
     const welcome = yield* ServerRuntimeStartup.resolveWelcomeBase.pipe(
@@ -184,7 +145,6 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
         getCommandReadModel: () => Effect.die("unused"),
         getSnapshot: () => Effect.die("unused"),
         getShellSnapshot: () => Effect.die("unused"),
-        listAccountRoutes: () => Effect.die("unused"),
         getArchivedShellSnapshot: () => Effect.die("unused"),
         getSnapshotSequence: () => Effect.die("unused"),
         getCounts: () => Effect.die("unused"),
@@ -195,19 +155,16 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
               id: bootstrapProjectId,
               title: "Startup Project",
               workspaceRoot: "/tmp/startup-project",
-              defaultModelSelection: ServerRuntimeStartup.getAutoBootstrapDefaultModelSelection(),
-              gitHubAccount: null,
-              worktreeBranchPrefix: null,
-              defaultWorktreeBranch: null,
-              previewPort: null,
-              worktreeCopyFiles: [],
+              defaultModelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: DEFAULT_MODEL,
+              },
               scripts: [],
               createdAt: "2026-01-01T00:00:00.000Z",
               updatedAt: "2026-01-01T00:00:00.000Z",
               deletedAt: null,
             }),
           ),
-        getDefaultModelSelectionForCwd: () => Effect.die("unused"),
         getProjectShellById: () => Effect.die("unused"),
         getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.some(bootstrapThreadId)),
         getImportedAgentSessionSources: () => Effect.die("unused"),
@@ -276,12 +233,25 @@ it.effect.each([
         getCommandReadModel: () => Effect.die("unused"),
         getSnapshot: () => Effect.die("unused"),
         getShellSnapshot: () => Effect.die("unused"),
-        listAccountRoutes: () => Effect.die("unused"),
         getArchivedShellSnapshot: () => Effect.die("unused"),
         getSnapshotSequence: () => Effect.die("unused"),
         getCounts: () => Effect.die("unused"),
-        getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
-        getDefaultModelSelectionForCwd: () => Effect.succeed(Option.none()),
+        getEventReplayStats: () => Effect.die("unused"),
+        getActiveProjectByWorkspaceRoot: () =>
+          Effect.succeed(
+            existing
+              ? Option.some({
+                  id: ProjectId.make("existing-project"),
+                  title: "Startup Project",
+                  workspaceRoot: "/tmp/startup-project",
+                  defaultModelSelection: projectSelection,
+                  scripts: [],
+                  createdAt: "2026-01-01T00:00:00.000Z",
+                  updatedAt: "2026-01-01T00:00:00.000Z",
+                  deletedAt: null,
+                })
+              : Option.none(),
+          ),
         getProjectShellById: () => Effect.die("unused"),
         getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
         getImportedAgentSessionSources: () => Effect.die("unused"),
@@ -408,13 +378,11 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
         getCommandReadModel: () => Effect.die("unused"),
         getSnapshot: () => Effect.die("unused"),
         getShellSnapshot: () => Effect.die("unused"),
-        listAccountRoutes: () => Effect.die("unused"),
         getArchivedShellSnapshot: () => Effect.die("unused"),
         getSnapshotSequence: () => Effect.die("unused"),
         getCounts: () => Effect.die("unused"),
         getEventReplayStats: () => Effect.die("unused"),
         getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
-        getDefaultModelSelectionForCwd: () => Effect.succeed(Option.none()),
         getProjectShellById: () => Effect.die("unused"),
         getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
         getImportedAgentSessionSources: () => Effect.die("unused"),
