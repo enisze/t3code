@@ -73,6 +73,9 @@ const CODEX_PLAN_LABELS: Readonly<
   enterprise_cbp_usage_based: "ChatGPT Enterprise",
   enterprise: "ChatGPT Enterprise",
   edu: "ChatGPT Edu",
+  edu_plus: "ChatGPT Edu Plus",
+  edu_pro: "ChatGPT Edu Pro",
+  ent: "ChatGPT Enterprise",
   unknown: "ChatGPT",
 };
 

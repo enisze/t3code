@@ -1,4 +1,3 @@
-
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
@@ -37,8 +36,15 @@ import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import type { SidebarProjectGroupingMode } from "@t3tools/contracts/settings";
 import { mapAtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
-import { decodeProjectScriptKeybindingRule, keybindingValueForCommand } from "../../lib/projectScriptKeybindings";
-import { buildProjectScript, commandForProjectScript, nextProjectScriptId } from "../../projectScripts";
+import {
+  decodeProjectScriptKeybindingRule,
+  keybindingValueForCommand,
+} from "../../lib/projectScriptKeybindings";
+import {
+  buildProjectScript,
+  commandForProjectScript,
+  nextProjectScriptId,
+} from "../../projectScripts";
 import type { ProjectScript, ResolvedKeybindingsConfig, ServerSettings } from "@t3tools/contracts";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import type { NewProjectScriptInput } from "../ProjectScriptDialog";

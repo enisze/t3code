@@ -161,7 +161,9 @@ export function ProjectsSettings({
           return member ? (
             <ProjectSettingsPanel environmentId={member.environmentId} projectId={member.id} />
           ) : (
-            <p className="p-8 text-sm text-muted-foreground">This project is no longer available.</p>
+            <p className="p-8 text-sm text-muted-foreground">
+              This project is no longer available.
+            </p>
           );
         })()
       )}

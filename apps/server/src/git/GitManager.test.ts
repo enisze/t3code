@@ -1144,19 +1144,19 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         yield* configureRemote(repoDir, "origin", originDir, "origin");
         yield* configureRemote(repoDir, "my-org/upstream", upstreamDir, "my-org/upstream");
 
-      const gitConfigReads: string[] = [];
-      const { manager } = yield* makeManager({ gitConfigReads });
+        const gitConfigReads: string[] = [];
+        const { manager } = yield* makeManager({ gitConfigReads });
 
-      yield* manager.remoteStatus({ cwd: repoDir }, { refreshUpstream: false });
-      gitConfigReads.length = 0;
-      yield* manager.remoteStatus({ cwd: repoDir }, { refreshUpstream: false });
+        yield* manager.remoteStatus({ cwd: repoDir }, { refreshUpstream: false });
+        gitConfigReads.length = 0;
+        yield* manager.remoteStatus({ cwd: repoDir }, { refreshUpstream: false });
 
-      const identityReads = gitConfigReads.filter(
-        (key) =>
-          key === "branch.feature/status-identity-cache.remote" || key === "remote.origin.url",
-      );
-      expect(identityReads).toHaveLength(0);
-    }),
+        const identityReads = gitConfigReads.filter(
+          (key) =>
+            key === "branch.feature/status-identity-cache.remote" || key === "remote.origin.url",
+        );
+        expect(identityReads).toHaveLength(0);
+      }),
   );
 
   it.effect("turn-end refresh finds a new PR and keeps known PRs cached", () =>

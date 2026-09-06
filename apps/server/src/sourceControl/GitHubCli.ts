@@ -607,11 +607,10 @@ export const make = Effect.gen(function* () {
 
   const execute: GitHubCli["Service"]["execute"] = (input) =>
     Effect.serviceOption(GitHubAccountResolver).pipe(
-      Effect.flatMap(
-        (resolverOption): Effect.Effect<GitHubAccountResolution> =>
-          Option.isNone(resolverOption)
-            ? Effect.succeed({ _tag: "ambient" })
-            : resolverOption.value.resolveForCwd(input.cwd),
+      Effect.flatMap((resolverOption): Effect.Effect<GitHubAccountResolution> =>
+        Option.isNone(resolverOption)
+          ? Effect.succeed({ _tag: "ambient" })
+          : resolverOption.value.resolveForCwd(input.cwd),
       ),
       Effect.flatMap((resolution) => {
         // The project selected an account we can't act as. Refuse instead of

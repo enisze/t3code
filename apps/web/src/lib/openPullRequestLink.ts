@@ -14,7 +14,12 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { useProjects, useServerConfigs } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
 
-import type { EnvironmentId, RepositoryIdentity, ScopedThreadRef, ThreadLinkedPullRequest } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  RepositoryIdentity,
+  ScopedThreadRef,
+  ThreadLinkedPullRequest,
+} from "@t3tools/contracts";
 export class PullRequestLinkOpenError extends Schema.TaggedErrorClass<PullRequestLinkOpenError>()(
   "PullRequestLinkOpenError",
   {

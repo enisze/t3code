@@ -3432,7 +3432,6 @@ pending_approval_requests AS (
         ),
       );
 
-
   const listAccountRouteRows = SqlSchema.findAll({
     Request: Schema.Void,
     Result: ProjectionAccountRouteRowSchema,
@@ -3544,7 +3543,6 @@ pending_approval_requests AS (
     getThreadDetailSnapshot,
   } satisfies ProjectionSnapshotQueryShape;
 });
-
 
 /**
  * True when `cwd` is `base` itself or lives beneath it. Compares normalized,

@@ -22,7 +22,6 @@ import type * as Effect from "effect/Effect";
 
 import type { ProjectionRepositoryError } from "../Errors.ts";
 
-
 import { ProjectIconOverride, ThreadEnvMode } from "@t3tools/contracts";
 export const ProjectionProject = Schema.Struct({
   projectId: ProjectId,

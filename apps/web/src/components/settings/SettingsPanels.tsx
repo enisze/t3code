@@ -594,7 +594,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar
         ? ["Auto-open task panel"]
         : []),
-      ...(settings.enableLegacyTokenStreaming !== DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming
+      ...(settings.enableLegacyTokenStreaming !==
+      DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming
         ? ["Assistant output"]
         : []),
       ...(settings.enableProviderUpdateChecks !==

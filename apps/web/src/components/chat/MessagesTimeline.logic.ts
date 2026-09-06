@@ -13,7 +13,10 @@ import { commandProgramName } from "@t3tools/client-runtime/work-log/command-lab
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 
 import { shallow } from "zustand/vanilla/shallow";
-import { liveActivityToolStatus, resolveWorkEntryToolPresentation } from "@t3tools/client-runtime/work-log/presentation";
+import {
+  liveActivityToolStatus,
+  resolveWorkEntryToolPresentation,
+} from "@t3tools/client-runtime/work-log/presentation";
 import { isStreamingMessageTextUpdate } from "../../session-logic";
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
 export const TIMELINE_MINIMAP_ITEM_SPACING = 8;
@@ -765,13 +768,7 @@ function replaceStreamingMessageRows(
     expandedWorkGroupIds: previousExpandedGroups,
     ...previousContext
   } = previous.input;
-  const {
-    timelineEntries,
-    latestTurn,
-    expandedTurnIds,
-    expandedWorkGroupIds,
-    ...context
-  } = input;
+  const { timelineEntries, latestTurn, expandedTurnIds, expandedWorkGroupIds, ...context } = input;
   if (
     timelineEntries.length !== previousEntries.length ||
     !shallow(previousContext, context) ||

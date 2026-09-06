@@ -2107,11 +2107,15 @@ const makeWsRpcLayer = (
                   servers: initial,
                   scannedAt: initialScannedAt,
                 });
-                yield* portDiscovery.subscribe((servers) =>
-                  Effect.gen(function* () {
-                    const scannedAt = DateTime.formatIso(yield* DateTime.now);
-                    yield* Queue.offer(queue, { servers, scannedAt });
-                  }),
+                yield* portDiscovery.subscribe(
+                  // Upstream takes the scan inputs explicitly; reuse the snapshot
+                  // already produced above rather than scanning twice.
+                  { configuredUrls: [], initialSnapshot: initial },
+                  (servers) =>
+                    Effect.gen(function* () {
+                      const scannedAt = DateTime.formatIso(yield* DateTime.now);
+                      yield* Queue.offer(queue, { servers, scannedAt });
+                    }),
                 );
               }),
             ),

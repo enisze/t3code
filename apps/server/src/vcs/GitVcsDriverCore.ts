@@ -41,6 +41,7 @@ import {
 } from "../sourceControl/GitHubAccountResolver.ts";
 import { ServerConfig } from "../config.ts";
 
+export const PATCH_RENDER_PREFIX_ARGS = ["--src-prefix=a/", "--dst-prefix=b/"] as const;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";

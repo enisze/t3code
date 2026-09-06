@@ -1,4 +1,3 @@
-
 import { videoMimeType } from "@t3tools/shared/video";
 import type {
   ChatImageAttachment as ContractChatImageAttachment,
