@@ -61,6 +61,11 @@ function makeProject(
     workspaceRoot,
     defaultModelSelection: null,
     scripts: [],
+    gitHubAccount: null,
+    worktreeBranchPrefix: null,
+    defaultWorktreeBranch: null,
+    previewPort: null,
+    worktreeCopyFiles: [],
     createdAt: "2026-08-01T00:00:00.000Z",
     updatedAt: NOW,
   };

@@ -120,6 +120,11 @@ const project = {
   },
   defaultModelSelection: null,
   scripts: [],
+  gitHubAccount: null,
+  worktreeBranchPrefix: null,
+  defaultWorktreeBranch: null,
+  previewPort: null,
+  worktreeCopyFiles: [],
   createdAt: NOW,
   updatedAt: NOW,
 } satisfies OrchestrationProjectShell;

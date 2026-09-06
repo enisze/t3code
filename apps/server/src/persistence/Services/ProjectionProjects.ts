@@ -22,6 +22,8 @@ import type * as Effect from "effect/Effect";
 
 import type { ProjectionRepositoryError } from "../Errors.ts";
 
+import { ThreadEnvMode } from "@t3tools/contracts/environment";
+import { ProjectIconOverride } from "@t3tools/contracts";
 export const ProjectionProject = Schema.Struct({
   projectId: ProjectId,
   title: Schema.String,
@@ -31,6 +33,9 @@ export const ProjectionProject = Schema.Struct({
   gitHubAccount: Schema.NullOr(GitHubAccountRef),
   worktreeBranchPrefix: Schema.NullOr(Schema.String),
   defaultWorktreeBranch: Schema.NullOr(Schema.String),
+  defaultThreadEnvMode: Schema.NullOr(ThreadEnvMode),
+  autoPull: Schema.Boolean,
+  projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
   previewPort: Schema.NullOr(PortSchema),
   worktreeCopyFiles: ProjectWorktreeCopyFiles,
   scripts: Schema.Array(ProjectScript),

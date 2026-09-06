@@ -103,6 +103,11 @@ const makeProject = (): OrchestrationProjectShell => ({
   workspaceRoot: WORKSPACE_ROOT,
   defaultModelSelection: null,
   scripts: [],
+  gitHubAccount: null,
+  worktreeBranchPrefix: null,
+  defaultWorktreeBranch: null,
+  previewPort: null,
+  worktreeCopyFiles: [],
   createdAt: "2026-08-24T09:00:00.000Z",
   updatedAt: "2026-08-24T09:00:00.000Z",
 });

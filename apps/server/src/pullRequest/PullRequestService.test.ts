@@ -56,6 +56,11 @@ function project(input: {
       : {}),
     defaultModelSelection: null,
     scripts: [],
+    gitHubAccount: null,
+    worktreeBranchPrefix: null,
+    defaultWorktreeBranch: null,
+    previewPort: null,
+    worktreeCopyFiles: [],
     createdAt: "2026-07-01T00:00:00Z",
     updatedAt: "2026-07-01T00:00:00Z",
   };
