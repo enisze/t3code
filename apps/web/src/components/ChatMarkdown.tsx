@@ -97,6 +97,7 @@ import { MediaVideoPlayer } from "./media/MediaVideoPlayer";
 import { shouldOpenMarkdownFileLinkInBrowserByDefault } from "../markdown-links";
 import type { CSSProperties, ComponentProps } from "react";
 import { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   isBrowserPreviewFile,
   openFileInPreview,

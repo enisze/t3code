@@ -27,7 +27,8 @@ export type ComposerProviderStateInput = {
   models: ReadonlyArray<ServerProviderModel>;
   promptInjectionState?: ComposerPromptInjectionState;
   modelOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined;
-  planModeEnabled: boolean;
+  /** Defaults to false; the fork's composer omits it outside plan mode. */
+  planModeEnabled?: boolean;
 };
 
 export type ComposerPromptInjectionState = "none" | "ultrathink";
@@ -70,7 +71,7 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
     models,
     modelOptions,
     promptInjectionState = "none",
-    planModeEnabled,
+    planModeEnabled = false,
   } = input;
   if (provider === "opencode") {
     const normalizedModel = normalizeModelSlug(model, provider);
