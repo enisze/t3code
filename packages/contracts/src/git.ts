@@ -114,6 +114,8 @@ export const GitRunStackedActionInput = Schema.Struct({
   actionId: TrimmedNonEmptyStringSchema,
   cwd: TrimmedNonEmptyStringSchema,
   action: GitStackedAction,
+  /** Preferred target for a newly created change request. */
+  baseBranch: Schema.optional(TrimmedNonEmptyStringSchema),
   commitMessage: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000))),
   featureBranch: Schema.optional(Schema.Boolean),
   filePaths: Schema.optional(
@@ -169,6 +171,9 @@ export const VcsCreateRefInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   refName: TrimmedNonEmptyStringSchema,
   switchRef: Schema.optional(Schema.Boolean),
+  // Branch this ref is created from. Recorded as `gh-merge-base` so a later
+  // pull request targets the branch it branched from, not the repo default.
+  baseRefName: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type VcsCreateRefInput = typeof VcsCreateRefInput.Type;
 
@@ -206,6 +211,11 @@ const VcsStatusChangeRequest = Schema.Struct({
    * servers and providers whose lookups do not report it.
    */
   updatedAt: Schema.optional(Schema.NullOr(Schema.String)),
+  mergeability: Schema.optional(Schema.Literals(["clean", "conflicting", "blocked", "unknown"])),
+  checks: Schema.optional(Schema.Literals(["passing", "failing", "pending", "unknown"])),
+  failedCheckCount: Schema.optional(NonNegativeInt),
+  /** Open review threads awaiting resolution; absent when the provider can't report it. */
+  unresolvedReviewThreadCount: Schema.optional(NonNegativeInt),
 });
 
 const VcsStatusLocalShape = {
@@ -221,6 +231,8 @@ const VcsStatusLocalShape = {
         path: TrimmedNonEmptyStringSchema,
         insertions: NonNegativeInt,
         deletions: NonNegativeInt,
+        /** Present and true when Git reports this as an unmerged path. */
+        conflicted: Schema.optionalKey(Schema.Boolean),
       }),
     ),
     insertions: NonNegativeInt,
@@ -280,6 +292,11 @@ export const GitResolvePullRequestResult = Schema.Struct({
   pullRequest: GitResolvedPullRequest,
 });
 export type GitResolvePullRequestResult = typeof GitResolvePullRequestResult.Type;
+
+export const GitMergePullRequestResult = Schema.Struct({
+  pullRequest: GitResolvedPullRequest,
+});
+export type GitMergePullRequestResult = typeof GitMergePullRequestResult.Type;
 
 export const GitPreparePullRequestThreadResult = Schema.Struct({
   pullRequest: GitResolvedPullRequest,

@@ -26,6 +26,15 @@ function encodeMarkdownLinkDestination(path: string): string {
     .replaceAll("\\", "%5C");
 }
 
+const SIMPLE_MENTION_PATH_REGEX = /^[^\s@"\\]+$/;
+
+export function serializeComposerMentionPath(path: string): string {
+  if (SIMPLE_MENTION_PATH_REGEX.test(path)) {
+    return path;
+  }
+  return `"${path.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
+
 export function serializeComposerFileLink(path: string): string {
   const label = escapeMarkdownLinkLabel(composerFileLinkBasename(path));
   return `[${label}](${encodeMarkdownLinkDestination(path)})`;

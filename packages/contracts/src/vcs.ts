@@ -77,6 +77,20 @@ export const VcsProcessExitFailureKind = Schema.Literals([
   "authentication",
   "not-found",
   "rate-limited",
+  // The working directory couldn't be resolved to a repository the provider can
+  // act on — it isn't a git repository, has no remotes, or none of its remotes
+  // point to the provider's host. Distinct from `not-found` (the change request
+  // itself is missing) because the fix is about the directory, not the PR.
+  "repository-not-found",
+  // The authenticated identity is valid but lacks permission for the operation
+  // (e.g. merging as a project-selected account that isn't a collaborator).
+  "permission-denied",
+  // The change request exists but the platform refused to merge it — conflicts,
+  // failing required checks, branch protection, or a disallowed merge method.
+  "merge-blocked",
+  // The provider accepted the request but is temporarily unable to serve it,
+  // such as an HTTP 5xx response from GitHub or GitLab.
+  "provider-unavailable",
   "command-failed",
 ]);
 export type VcsProcessExitFailureKind = typeof VcsProcessExitFailureKind.Type;
@@ -132,6 +146,9 @@ export class VcsProcessExitError extends Schema.TaggedErrorClass<VcsProcessExitE
     error: VcsProcessExitFailure,
     failureKind: VcsProcessExitFailureKind,
   ) {
+    // `detail` is derived only from the (safe) classified kind — never from raw
+    // stderr, which can carry secrets in unpredictable shapes and is therefore
+    // dropped, keeping only its length.
     const detail =
       failureKind === "authentication"
         ? "Authentication failed."

@@ -5,6 +5,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Struct from "effect/Struct";
 import { ProviderOptionSelections } from "./model.ts";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
+import { GitHubAccountRef } from "./sourceControl.ts";
 import {
   ApprovalRequestId,
   CheckpointRef,
@@ -15,6 +16,7 @@ import {
   MessageId,
   NonNegativeInt,
   PositiveInt,
+  PortSchema,
   ProjectId,
   ProviderItemId,
   ThreadId,
@@ -31,6 +33,7 @@ export const ORCHESTRATION_WS_METHODS = {
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   searchThreads: "orchestration.searchThreads",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
+  generateContinuationSummary: "orchestration.generateContinuationSummary",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
 } as const;
@@ -174,6 +177,10 @@ export function isProviderSendTurnSupportedImageMimeType(mimeType: string): bool
   return PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPE_SET.has(mimeType.toLowerCase());
 }
 const PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS = 14_000_000;
+// Documents are handed to the agent as files in the worktree rather than
+// inlined into the model context, so they can be larger than images.
+export const PROVIDER_SEND_TURN_MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
+const PROVIDER_SEND_TURN_MAX_DOCUMENT_DATA_URL_CHARS = 36_000_000;
 const CHAT_ATTACHMENT_ID_MAX_CHARS = 128;
 // Correlation id is command id by design in this model.
 export const CorrelationId = CommandId;
@@ -239,13 +246,45 @@ const UploadChatImageAttachment = Schema.Struct({
 });
 export type UploadChatImageAttachment = typeof UploadChatImageAttachment.Type;
 
+// Non-image files (pdf, docx, xlsx, csv, …). Unlike images, these are not
+// inlined into the model context; the server writes them into the worktree
+// and points the agent at the path, so the mimeType is unrestricted (only
+// bounded in length) and only the byte cap differs.
+export const ChatDocumentAttachment = Schema.Struct({
+  type: Schema.Literal("document"),
+  id: ChatAttachmentId,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
+  sizeBytes: NonNegativeInt.check(
+    Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_DOCUMENT_BYTES),
+  ),
+});
+export type ChatDocumentAttachment = typeof ChatDocumentAttachment.Type;
+
+const UploadChatDocumentAttachment = Schema.Struct({
+  type: Schema.Literal("document"),
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
+  sizeBytes: NonNegativeInt.check(
+    Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_DOCUMENT_BYTES),
+  ),
+  dataUrl: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_DOCUMENT_DATA_URL_CHARS),
+  ),
+});
+export type UploadChatDocumentAttachment = typeof UploadChatDocumentAttachment.Type;
+
 export const ChatAttachment = Schema.Union([
   ChatImageAttachment,
   ChatFileAttachment,
   ChatUnknownAttachment,
+  ChatDocumentAttachment,
 ]);
 export type ChatAttachment = typeof ChatAttachment.Type;
-const UploadChatAttachment = Schema.Union([UploadChatImageAttachment]);
+const UploadChatAttachment = Schema.Union([
+  UploadChatImageAttachment,
+  UploadChatDocumentAttachment,
+]);
 export type UploadChatAttachment = typeof UploadChatAttachment.Type;
 
 export const ProjectScriptIcon = Schema.Literals([
@@ -326,6 +365,25 @@ export const ProjectIconOverride = Schema.Union([
 ]);
 export type ProjectIconOverride = typeof ProjectIconOverride.Type;
 
+export const PROJECT_WORKTREE_COPY_FILES_MAX_ENTRIES = 50;
+export const PROJECT_WORKTREE_COPY_FILE_MAX_LENGTH = 512;
+
+/**
+ * Workspace-relative paths copied from the project root into every new
+ * worktree. Lets a project share untracked local files (e.g. `.env.local`)
+ * without hand-writing a setup script, and each worktree gets an independent
+ * copy rather than a symlink back to the project root — so editing the file in
+ * one worktree cannot change it in another.
+ */
+export const ProjectWorktreeCopyFiles = Schema.Array(
+  TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WORKTREE_COPY_FILE_MAX_LENGTH)),
+).check(Schema.isMaxLength(PROJECT_WORKTREE_COPY_FILES_MAX_ENTRIES));
+export type ProjectWorktreeCopyFiles = typeof ProjectWorktreeCopyFiles.Type;
+
+const ProjectWorktreeCopyFilesField = ProjectWorktreeCopyFiles.pipe(
+  Schema.withDecodingDefault(Effect.succeed([])),
+);
+
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
@@ -341,6 +399,35 @@ export const OrchestrationProject = Schema.Struct({
   // Optional on the wire so cached snapshots from older servers still decode.
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
+  reviewModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  /**
+   * GitHub account (from `gh auth status`) to run this project's GitHub
+   * operations as. Null means fall back to the machine-global active account.
+   */
+  gitHubAccount: Schema.NullOr(GitHubAccountRef).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /**
+   * Branch-name prefix for auto-created worktree branches (e.g. `feature`
+   * produces `feature/<slug>`). Null falls back to the default prefix.
+   */
+  worktreeBranchPrefix: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /**
+   * Branch new worktrees are created from (e.g. `main`). Null falls back to the
+   * repository default branch (`origin/HEAD`), then the current checkout.
+   */
+  defaultWorktreeBranch: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /**
+   * Localhost port opened in the in-app browser preview (e.g. `5173` →
+   * `http://localhost:5173`) via the chat header's preview button. Null when
+   * unset. Only honored on the desktop build.
+   */
+  previewPort: Schema.NullOr(PortSchema).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  worktreeCopyFiles: ProjectWorktreeCopyFilesField,
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -555,6 +642,18 @@ export const OrchestrationProjectShell = Schema.Struct({
   // Optional on the wire so cached snapshots from older servers still decode.
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
+  reviewModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  gitHubAccount: Schema.NullOr(GitHubAccountRef).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  worktreeBranchPrefix: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  defaultWorktreeBranch: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  previewPort: Schema.NullOr(PortSchema).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  worktreeCopyFiles: ProjectWorktreeCopyFilesField,
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -763,6 +862,12 @@ export const ProjectCreateCommand = Schema.Struct({
   // Retained for older clients that sent an automatic create-time seed. The
   // server ignores it; explicit project defaults use project.meta.update.
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  reviewModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  gitHubAccount: Schema.optional(Schema.NullOr(GitHubAccountRef)),
+  worktreeBranchPrefix: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  defaultWorktreeBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  previewPort: Schema.optional(Schema.NullOr(PortSchema)),
+  worktreeCopyFiles: Schema.optional(ProjectWorktreeCopyFiles),
   createdAt: IsoDateTime,
 });
 
@@ -778,6 +883,12 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   autoPull: Schema.optional(Schema.Boolean),
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
+  reviewModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  gitHubAccount: Schema.optional(Schema.NullOr(GitHubAccountRef)),
+  worktreeBranchPrefix: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  defaultWorktreeBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  previewPort: Schema.optional(Schema.NullOr(PortSchema)),
+  worktreeCopyFiles: Schema.optional(ProjectWorktreeCopyFiles),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
 });
 
@@ -1269,6 +1380,12 @@ export const ProjectCreatedPayload = Schema.Struct({
   // Optional so persisted events from older servers still decode.
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
+  reviewModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  gitHubAccount: Schema.optional(Schema.NullOr(GitHubAccountRef)),
+  worktreeBranchPrefix: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  defaultWorktreeBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  previewPort: Schema.optional(Schema.NullOr(PortSchema)),
+  worktreeCopyFiles: Schema.optional(ProjectWorktreeCopyFiles),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -1284,6 +1401,12 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   autoPull: Schema.optional(Schema.Boolean),
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
+  reviewModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  gitHubAccount: Schema.optional(Schema.NullOr(GitHubAccountRef)),
+  worktreeBranchPrefix: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  defaultWorktreeBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  previewPort: Schema.optional(Schema.NullOr(PortSchema)),
+  worktreeCopyFiles: Schema.optional(ProjectWorktreeCopyFiles),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
   updatedAt: IsoDateTime,
 });
@@ -1850,6 +1973,20 @@ export class OrchestrationGetWorkflowScriptError extends Schema.TaggedErrorClass
   }
 }
 
+export const OrchestrationGenerateContinuationSummaryInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type OrchestrationGenerateContinuationSummaryInput =
+  typeof OrchestrationGenerateContinuationSummaryInput.Type;
+
+export const OrchestrationGenerateContinuationSummaryResult = Schema.Struct({
+  sourceThreadId: ThreadId,
+  sourceTitle: TrimmedNonEmptyString,
+  summary: TrimmedNonEmptyString,
+});
+export type OrchestrationGenerateContinuationSummaryResult =
+  typeof OrchestrationGenerateContinuationSummaryResult.Type;
+
 export const OrchestrationRpcSchemas = {
   dispatchCommand: {
     input: ClientOrchestrationCommand,
@@ -1874,6 +2011,10 @@ export const OrchestrationRpcSchemas = {
   getArchivedShellSnapshot: {
     input: Schema.Struct({}),
     output: OrchestrationShellSnapshot,
+  },
+  generateContinuationSummary: {
+    input: OrchestrationGenerateContinuationSummaryInput,
+    output: OrchestrationGenerateContinuationSummaryResult,
   },
   subscribeThread: {
     input: OrchestrationSubscribeThreadInput,
@@ -1920,6 +2061,14 @@ export class OrchestrationGetFullThreadDiffError extends Schema.TaggedErrorClass
 
 export class OrchestrationSearchThreadsError extends Schema.TaggedErrorClass<OrchestrationSearchThreadsError>()(
   "OrchestrationSearchThreadsError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+export class OrchestrationGenerateContinuationSummaryError extends Schema.TaggedErrorClass<OrchestrationGenerateContinuationSummaryError>()(
+  "OrchestrationGenerateContinuationSummaryError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),

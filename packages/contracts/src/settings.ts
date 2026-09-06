@@ -209,6 +209,35 @@ export const LoadBalancingWeights = Schema.Record(
   Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
 );
 
+// Syntax highlighting theme for code diffs. These names map to themes bundled
+// by `@pierre/diffs` (Pierre's own themes plus the Shiki theme collection).
+// The selected theme applies in dark mode; light mode always uses pierre-light.
+export const DiffTheme = Schema.Literals([
+  "pierre-dark",
+  "tokyo-night",
+  "one-dark-pro",
+  "ayu-dark",
+  "dracula",
+  "catppuccin-mocha",
+  "github-dark-default",
+  "github-dark-dimmed",
+  "material-theme-palenight",
+  "night-owl",
+  "nord",
+  "monokai",
+  "poimandres",
+  "vesper",
+  "synthwave-84",
+]);
+export type DiffTheme = typeof DiffTheme.Type;
+export const DEFAULT_DIFF_THEME: DiffTheme = "pierre-dark";
+
+export const DEFAULT_REVIEW_PROMPT =
+  "Review the current changes. Focus on correctness, regressions, security, performance, and missing tests. Report findings by severity with file and line references.";
+
+export const DEFAULT_RESOLVE_PROMPT =
+  "Resolve the merge conflicts between this branch and its origin/upstream branch. Fetch the latest origin branch, merge or rebase it into the current branch, and resolve every conflict so the working tree is clean. Preserve the intent of both sides, keep the build passing, and explain each conflict you resolved.";
+
 export const ClientSettingsSchema = Schema.Struct({
   loadBalancingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   loadBalancingWeights: LoadBalancingWeights.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
@@ -273,6 +302,7 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   diffIgnoreWhitespace: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   diffLayout: DiffLayout.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_DIFF_LAYOUT))),
+  diffTheme: DiffTheme.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_DIFF_THEME))),
   environmentIdentificationMode: EnvironmentIdentificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE)),
   ),
@@ -364,6 +394,20 @@ export const ClientSettingsSchema = Schema.Struct({
   sidebarThreadPreviewCount: SidebarThreadPreviewCount.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT)),
   ),
+  sidebarV2Enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // When set, sidebar v2 breaks its flat inbox into per-project sections
+  // (headed by the project name) instead of one activity-sorted list. Off by
+  // default so v2 keeps its single-stream shape until the user opts in.
+  sidebarV2GroupByProject: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
+  ),
+  // Whether `sidebarV2Enabled` reflects an explicit choice in Settings → Beta.
+  // Client settings persist as a whole blob, so every user who has ever touched
+  // any setting already has `sidebarV2Enabled: false` stored — without this bit
+  // there is no way to tell that apart from "left alone", and a channel-derived
+  // default could never reach them. Mirrors `updateChannelConfiguredByUser`.
+  sidebarV2ConfiguredByUser: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
   ),
@@ -932,6 +976,13 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /**
+   * Global default branch-name prefix for auto-created worktree branches
+   * (e.g. `feature` → `feature/<slug>`). Empty falls back to the built-in
+   * default (`t3code`). A project's own `worktreeBranchPrefix`, when set,
+   * overrides this.
+   */
+  worktreeBranchPrefix: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
@@ -951,6 +1002,12 @@ export const ServerSettings = Schema.Struct({
   ),
   sourceControlWriterModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  reviewPrompt: TrimmedNonEmptyString.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_REVIEW_PROMPT)),
+  ),
+  resolvePrompt: TrimmedNonEmptyString.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_RESOLVE_PROMPT)),
   ),
 
   // Legacy single-instance-per-driver settings. Continues to be the source
@@ -1173,6 +1230,7 @@ export const ServerSettingsPatch = Schema.Struct({
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
+  worktreeBranchPrefix: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   sourceControlWritingStyle: Schema.optionalKey(
     Schema.Struct({
@@ -1182,6 +1240,8 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  reviewPrompt: Schema.optionalKey(TrimmedNonEmptyString),
+  resolvePrompt: Schema.optionalKey(TrimmedNonEmptyString),
   observability: Schema.optionalKey(
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),
@@ -1235,6 +1295,7 @@ export const ClientSettingsPatch = Schema.Struct({
   confirmThreadUnpin: Schema.optionalKey(Schema.Boolean),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
   diffLayout: Schema.optionalKey(DiffLayout),
+  diffTheme: Schema.optionalKey(DiffTheme),
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
   glassOpacity: Schema.optionalKey(GlassOpacity),
   onboardingCompletedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
@@ -1282,6 +1343,9 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
+  sidebarV2Enabled: Schema.optionalKey(Schema.Boolean),
+  sidebarV2GroupByProject: Schema.optionalKey(Schema.Boolean),
+  sidebarV2ConfiguredByUser: Schema.optionalKey(Schema.Boolean),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   wordWrap: Schema.optionalKey(Schema.Boolean),
 });

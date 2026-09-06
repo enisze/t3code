@@ -102,8 +102,10 @@ function makeProject(
     scripts: [],
     createdAt: "2026-07-01T00:00:00.000Z",
     updatedAt: "2026-07-01T00:00:00.000Z",
+    // `Partial` widens every field with `undefined`, which `exactOptionalPropertyTypes`
+    // rejects against the exact-optional shape. The spread is test-only fixture data.
     ...overrides,
-  };
+  } as EnvironmentProject;
 }
 
 function settings(

@@ -6,6 +6,7 @@ import {
   ClientSettingsSchema,
   ClientSettingsPatch,
   ClaudeSettings,
+  DEFAULT_REVIEW_PROMPT,
   DEFAULT_SERVER_SETTINGS,
   resolveProviderInstanceEnabled,
   ServerSettings,
@@ -287,9 +288,19 @@ describe("ClientSettings environment identification", () => {
   });
 });
 
-describe("ClientSettings sidebar", () => {
-  it("defaults to the current sidebar", () => {
-    expect(decodeClientSettings({}).legacySidebarEnabled).toBe(false);
+describe("ClientSettings sidebar v2", () => {
+  it("defaults the beta off with a three-day auto-settle threshold", () => {
+    const settings = decodeClientSettings({});
+    expect(settings.sidebarV2Enabled).toBe(false);
+    expect(settings.sidebarV2GroupByProject).toBe(false);
+    expect(settings.sidebarAutoSettleAfterDays).toBe(3);
+  });
+
+  it("treats settings written before the beta had a per-channel default as unconfigured", () => {
+    // The stored blob always carries `sidebarV2Enabled`, so only the companion
+    // flag can distinguish "user opted out" from "never touched it".
+    expect(decodeClientSettings({ sidebarV2Enabled: false }).sidebarV2ConfiguredByUser).toBe(false);
+    expect(decodeClientSettings({ sidebarV2Enabled: true }).sidebarV2ConfiguredByUser).toBe(false);
   });
 
   it("drops the retired sidebar v2 beta keys, resetting everyone to the default", () => {
@@ -523,6 +534,19 @@ describe("ServerSettings.sourceControlWritingStyle", () => {
       mode: "custom",
       customInstructions: "Prefer concise wording.",
     });
+  });
+});
+
+describe("ServerSettings.reviewPrompt", () => {
+  it("provides a useful default for legacy configs", () => {
+    expect(decodeServerSettings({}).reviewPrompt).toBe(DEFAULT_REVIEW_PROMPT);
+  });
+
+  it("trims review prompt updates and rejects empty prompts", () => {
+    expect(
+      decodeServerSettingsPatch({ reviewPrompt: "  Review this carefully.  " }).reviewPrompt,
+    ).toBe("Review this carefully.");
+    expect(() => decodeServerSettingsPatch({ reviewPrompt: "   " })).toThrow();
   });
 });
 

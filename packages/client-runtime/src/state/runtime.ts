@@ -85,6 +85,7 @@ export interface AtomCommandReporter {
 export interface AtomCommand<W, A, E> {
   readonly label: string;
   readonly run: (registry: AtomRegistry.AtomRegistry, input: W) => Promise<AtomCommandResult<A, E>>;
+  readonly cancel?: (registry: AtomRegistry.AtomRegistry) => void;
 }
 
 export type AtomCommandConcurrency<W> =
@@ -345,6 +346,7 @@ export async function executeAtomQuery<A, E>(
   atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
   options: AtomQueryOptions = {},
   reporter: AtomCommandReporter = console,
+  signal?: AbortSignal,
 ): Promise<AtomCommandResult<A, E>> {
   const query = Effect.scoped(
     Effect.gen(function* () {
@@ -378,10 +380,12 @@ export function createRuntimeCommand<R, ER, W, A, E>(
     readonly execute: (input: W, registry: AtomRegistry.AtomRegistry) => Effect.Effect<A, E, R>;
     readonly scheduler?: AtomCommandScheduler;
     readonly concurrency?: AtomCommandConcurrency<W>;
+    readonly cancellable?: boolean;
   },
 ): AtomCommand<W, A, E | ER> {
   const scheduler = options.scheduler ?? createAtomCommandScheduler();
   const concurrency = options.concurrency ?? { mode: "parallel" as const };
+  const activeControllers = new WeakMap<AtomRegistry.AtomRegistry, AbortController>();
   return {
     label: options.label,
     run: (registry, input) =>
@@ -390,9 +394,26 @@ export function createRuntimeCommand<R, ER, W, A, E>(
           const atom = runtime
             .atom(options.execute(input, registry))
             .pipe(Atom.withLabel(options.label));
-          return executeAtomQuery(registry, atom, { reportDefect: false, reportFailure: false });
+          const controller = options.cancellable ? new AbortController() : null;
+          if (controller) activeControllers.set(registry, controller);
+          return executeAtomQuery(
+            registry,
+            atom,
+            { reportDefect: false, reportFailure: false },
+            console,
+            controller?.signal,
+          ).finally(() => {
+            if (controller && activeControllers.get(registry) === controller) {
+              activeControllers.delete(registry);
+            }
+          });
         }),
       ),
+    ...(options.cancellable
+      ? {
+          cancel: (registry: AtomRegistry.AtomRegistry) => activeControllers.get(registry)?.abort(),
+        }
+      : {}),
   };
 }
 

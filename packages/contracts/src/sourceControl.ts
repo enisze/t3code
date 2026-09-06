@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
 export const SourceControlProviderKind = Schema.Literals([
@@ -33,6 +33,11 @@ export const ChangeRequest = Schema.Struct({
   isDraft: Schema.optional(Schema.Boolean),
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
+  mergeability: Schema.optional(Schema.Literals(["clean", "conflicting", "blocked", "unknown"])),
+  checks: Schema.optional(Schema.Literals(["passing", "failing", "pending", "unknown"])),
+  failedCheckCount: Schema.optional(NonNegativeInt),
+  /** Open review threads awaiting resolution; absent when the provider can't report it. */
+  unresolvedReviewThreadCount: Schema.optional(NonNegativeInt),
   updatedAt: Schema.Option(Schema.DateTimeUtc),
   isCrossRepository: Schema.optional(Schema.Boolean),
   headRepositoryNameWithOwner: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -125,6 +130,18 @@ export const SourceControlProviderAuth = Schema.Struct({
 });
 export type SourceControlProviderAuth = typeof SourceControlProviderAuth.Type;
 
+/**
+ * Reference to a specific GitHub account already authenticated in the `gh`
+ * CLI (one of the accounts surfaced by `gh auth status`). Projects attach one
+ * of these so their GitHub operations run as that account without touching the
+ * machine-global active account.
+ */
+export const GitHubAccountRef = Schema.Struct({
+  host: TrimmedNonEmptyString,
+  login: TrimmedNonEmptyString,
+});
+export type GitHubAccountRef = typeof GitHubAccountRef.Type;
+
 const SourceControlDiscoverySharedFields = {
   label: TrimmedNonEmptyString,
   executable: Schema.optional(TrimmedNonEmptyString),
@@ -141,10 +158,35 @@ export const VcsDiscoveryItem = Schema.Struct({
 });
 export type VcsDiscoveryItem = typeof VcsDiscoveryItem.Type;
 
+/**
+ * An account authenticated in a source-control CLI (currently only GitHub via
+ * `gh auth status`). Surfaced so a project can be attached to a specific
+ * account. `active` marks the machine-global default account.
+ */
+export const SourceControlAccountInfo = Schema.Struct({
+  host: TrimmedNonEmptyString,
+  login: TrimmedNonEmptyString,
+  authenticated: Schema.Boolean,
+  active: Schema.Boolean,
+  /**
+   * When the CLI knows about this account but it is not usable (e.g. its token
+   * expired or was revoked), the human-readable reason from `gh auth status`.
+   * Absent for healthy accounts. Lets the UI explain why a project's selected
+   * account fell back to the machine default instead of failing silently.
+   */
+  authError: Schema.optional(TrimmedNonEmptyString),
+});
+export type SourceControlAccountInfo = typeof SourceControlAccountInfo.Type;
+
 export const SourceControlProviderDiscoveryItem = Schema.Struct({
   kind: SourceControlProviderKind,
   ...SourceControlDiscoverySharedFields,
   auth: SourceControlProviderAuth,
+  /**
+   * All accounts the provider CLI is aware of. Lets a project pick which
+   * account to act as. Absent for providers without multi-account discovery.
+   */
+  accounts: Schema.optional(Schema.Array(SourceControlAccountInfo)),
 });
 export type SourceControlProviderDiscoveryItem = typeof SourceControlProviderDiscoveryItem.Type;
 

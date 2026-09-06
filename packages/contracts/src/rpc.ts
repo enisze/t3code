@@ -63,6 +63,7 @@ import {
   GitPreparePullRequestThreadResult,
   VcsPullInput,
   GitPullRequestRefInput,
+  GitMergePullRequestResult,
   VcsPullResult,
   VcsRemoveWorktreeInput,
   GitResolvePullRequestResult,
@@ -83,6 +84,7 @@ import {
   ClientOrchestrationCommand,
   ORCHESTRATION_WS_METHODS,
   OrchestrationDispatchCommandError,
+  OrchestrationGenerateContinuationSummaryError,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetSnapshotError,
@@ -282,6 +284,7 @@ export const WS_METHODS = {
   // Git workflow methods
   gitRunStackedAction: "git.runStackedAction",
   gitResolvePullRequest: "git.resolvePullRequest",
+  gitMergePullRequest: "git.mergePullRequest",
   gitPreparePullRequestThread: "git.preparePullRequestThread",
 
   // Review methods
@@ -893,6 +896,12 @@ const WsGitResolvePullRequestRpc = Rpc.make(WS_METHODS.gitResolvePullRequest, {
   error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
 });
 
+export const WsGitMergePullRequestRpc = Rpc.make(WS_METHODS.gitMergePullRequest, {
+  payload: GitPullRequestRefInput,
+  success: GitMergePullRequestResult,
+  error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
+});
+
 const WsGitPreparePullRequestThreadRpc = Rpc.make(WS_METHODS.gitPreparePullRequestThread, {
   payload: GitPreparePullRequestThreadInput,
   success: GitPreparePullRequestThreadResult,
@@ -1100,6 +1109,18 @@ const WsOrchestrationGetArchivedShellSnapshotRpc = Rpc.make(
   },
 );
 
+export const WsOrchestrationGenerateContinuationSummaryRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.generateContinuationSummary,
+  {
+    payload: OrchestrationRpcSchemas.generateContinuationSummary.input,
+    success: OrchestrationRpcSchemas.generateContinuationSummary.output,
+    error: Schema.Union([
+      OrchestrationGenerateContinuationSummaryError,
+      EnvironmentAuthorizationError,
+    ]),
+  },
+);
+
 const WsOrchestrationSubscribeShellRpc = Rpc.make(ORCHESTRATION_WS_METHODS.subscribeShell, {
   payload: OrchestrationRpcSchemas.subscribeShell.input,
   success: OrchestrationRpcSchemas.subscribeShell.output,
@@ -1259,6 +1280,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsRefreshStatusRpc,
   WsGitRunStackedActionRpc,
   WsGitResolvePullRequestRpc,
+  WsGitMergePullRequestRpc,
   WsGitPreparePullRequestThreadRpc,
   WsVcsListRefsRpc,
   WsVcsCreateWorktreeRpc,
@@ -1300,6 +1322,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGetFullThreadDiffRpc,
   WsOrchestrationSearchThreadsRpc,
   WsOrchestrationGetArchivedShellSnapshotRpc,
+  WsOrchestrationGenerateContinuationSummaryRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
 );
