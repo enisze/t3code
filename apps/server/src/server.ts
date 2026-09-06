@@ -321,6 +321,9 @@ const PullRequestServiceLive = PullRequestService.layer.pipe(
 );
 
 const GitManagerLayerLive = GitManager.layer.pipe(
+  // GitManager copies configured files into new worktrees; provide the copier
+  // here so it does not leak out as a requirement onto every CLI entry point.
+  Layer.provideMerge(ProjectWorktreeFileCopier.layer),
   Layer.provideMerge(ProjectSetupScriptRunner.layer.pipe(Layer.provide(ServerSettingsLayerLive))),
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),

@@ -156,49 +156,6 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
-/**
- * Build a compact role-tagged transcript for the continuation summarizer.
- *
- * When the conversation is long, keep the opening message (the original goal)
- * plus the most recent exchanges rather than shipping the entire transcript to
- * the model — the summary needs intent and current state, not every turn, and
- * this keeps the one-time generation cost bounded.
- */
-const CONTINUATION_TRANSCRIPT_MAX_CHARS = 24_000;
-
-function buildContinuationTranscript(
-  messages: ReadonlyArray<{ readonly role: string; readonly text: string }>,
-): string {
-  const lines = messages
-    .map((message) => {
-      const text = message.text.trim();
-      if (text.length === 0) return null;
-      const label =
-        message.role === "user"
-          ? "User"
-          : message.role === "assistant"
-            ? "Assistant"
-            : message.role;
-      return `${label}: ${text}`;
-    })
-    .filter((line): line is string => line !== null);
-  if (lines.length === 0) return "";
-
-  const joined = lines.join("\n\n");
-  if (joined.length <= CONTINUATION_TRANSCRIPT_MAX_CHARS) return joined;
-
-  const head = lines[0] ?? "";
-  let budget = CONTINUATION_TRANSCRIPT_MAX_CHARS - head.length;
-  const tail: string[] = [];
-  for (let index = lines.length - 1; index >= 1; index--) {
-    const line = lines[index] ?? "";
-    if (budget - line.length < 0) break;
-    budget -= line.length;
-    tail.unshift(line);
-  }
-  return [head, "[… earlier conversation omitted …]", ...tail].join("\n\n");
-}
-
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -574,7 +531,6 @@ const makeWsRpcLayer = (
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
-      const textGeneration = yield* TextGeneration.TextGeneration;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -2564,100 +2520,20 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "git",
             },
           ),
-        [ORCHESTRATION_WS_METHODS.generateContinuationSummary]: (input) =>
-          observeRpcEffect(
-            ORCHESTRATION_WS_METHODS.generateContinuationSummary,
-            Effect.gen(function* () {
-              const threadOption = yield* projectionSnapshotQuery
-                .getThreadDetailById(input.threadId)
-                .pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new OrchestrationGenerateContinuationSummaryError({
-                        message: "Failed to load thread",
-                        cause,
-                      }),
-                  ),
-                );
-              if (Option.isNone(threadOption)) {
-                return yield* new OrchestrationGenerateContinuationSummaryError({
-                  message: "Thread not found",
-                });
-              }
-              const thread = threadOption.value;
-
-              const projectOption = yield* projectionSnapshotQuery
-                .getProjectShellById(thread.projectId)
-                .pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new OrchestrationGenerateContinuationSummaryError({
-                        message: "Failed to load project",
-                        cause,
-                      }),
-                  ),
-                );
-              const cwd =
-                thread.worktreePath ??
-                (Option.isSome(projectOption) ? projectOption.value.workspaceRoot : null);
-              if (cwd === null) {
-                return yield* new OrchestrationGenerateContinuationSummaryError({
-                  message: "Project not found for thread",
-                });
-              }
-
-              const transcript = buildContinuationTranscript(thread.messages);
-              if (transcript.trim().length === 0) {
-                return yield* new OrchestrationGenerateContinuationSummaryError({
-                  message: "Thread has no conversation to summarize",
-                });
-              }
-
-              const { textGenerationModelSelection } = yield* serverSettings.getSettings.pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationGenerateContinuationSummaryError({
-                      message: "Failed to load server settings",
-                      cause,
-                    }),
-                ),
-              );
-              const generated = yield* textGeneration
-                .generateContinuationSummary({
-                  cwd,
-                  sourceTitle: thread.title,
-                  transcript,
-                  modelSelection: textGenerationModelSelection,
-                })
-                .pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new OrchestrationGenerateContinuationSummaryError({
-                        message: "Failed to generate continuation summary",
-                        cause,
-                      }),
-                  ),
-                );
-              const summary = generated.summary.trim();
-              if (summary.length === 0) {
-                return yield* new OrchestrationGenerateContinuationSummaryError({
-                  message: "Generated summary was empty",
-                });
-              }
-
-              return {
-                sourceThreadId: thread.id,
-                sourceTitle: thread.title,
-                summary,
-              };
-            }),
-            { "rpc.aggregate": "orchestration" },
-          ),
         [WS_METHODS.gitMergePullRequest]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitMergePullRequest,
             gitWorkflow.mergePullRequest(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
             { "rpc.aggregate": "git" },
+          ),
+        [ORCHESTRATION_WS_METHODS.generateContinuationSummary]: (_input) =>
+          // The fork generates this from the thread transcript via TextGeneration.
+          // That service is not in this handler's context on the upstream server
+          // graph, so the RPC is answered explicitly rather than silently missing.
+          Effect.fail(
+            new OrchestrationGenerateContinuationSummaryError({
+              message: "Continuation summaries are not available on this server build.",
+            }),
           ),
         [WS_METHODS.gitPreparePullRequestThread]: (input) =>
           observeRpcEffect(
