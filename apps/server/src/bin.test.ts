@@ -52,14 +52,7 @@ import { environmentAuthenticatedAuthLayer } from "./auth/http.ts";
 
 import packageJson from "../package.json" with { type: "json" };
 
-import * as ProjectWorktreeFileCopier from "./project/ProjectWorktreeFileCopier.ts";
-const CliRuntimeLayer = Layer.mergeAll(
-  NodeServices.layer,
-  NetService.layer,
-  // Project commands reach GitManager, which copies configured files into new
-  // worktrees; the CLI has to supply that service the same way the server does.
-  ProjectWorktreeFileCopier.layer,
-);
+const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
 const DisconnectedLauncherChildLayer = Layer.mergeAll(
   Layer.succeed(HostProcessEnvironment, {
     ...process.env,

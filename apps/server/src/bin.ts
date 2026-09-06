@@ -21,14 +21,7 @@ import { servicePreflightCommand } from "./cli/servicePreflight.ts";
 import { themeCommand } from "./cli/theme.ts";
 import { triageCommand } from "./cli/triage.ts";
 
-import * as ProjectWorktreeFileCopier from "./project/ProjectWorktreeFileCopier.ts";
-const CliRuntimeLayer = Layer.mergeAll(
-  NodeServices.layer,
-  NetService.layer,
-  // Project commands reach GitManager, which copies configured files into new
-  // worktrees; the CLI has to supply that service the same way the server does.
-  ProjectWorktreeFileCopier.layer,
-);
+const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
 const connectPublicConfigMissingMessage =
   "T3 Connect commands are unavailable: this build is missing T3 Connect public configuration.";
