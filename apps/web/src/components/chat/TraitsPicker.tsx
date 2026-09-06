@@ -222,7 +222,7 @@ function getTraitsSectionVisibility(input: {
   prompt: string;
   modelOptions: ProviderOptions | null | undefined;
   allowPromptInjectedEffort?: boolean;
-  planModeEnabled: boolean;
+  planModeEnabled?: boolean;
 }) {
   const selected = getSelectedTraits(
     input.provider,
@@ -231,7 +231,7 @@ function getTraitsSectionVisibility(input: {
     input.prompt,
     input.modelOptions,
     input.allowPromptInjectedEffort ?? true,
-    input.planModeEnabled,
+    input.planModeEnabled ?? false,
   );
 
   const showEffort = selected.primarySelectDescriptor !== null;
@@ -264,7 +264,7 @@ export function shouldRenderTraitsControls(input: {
   prompt: string;
   modelOptions: ProviderOptions | null | undefined;
   allowPromptInjectedEffort?: boolean;
-  planModeEnabled: boolean;
+  planModeEnabled?: boolean;
 }): boolean {
   return getTraitsSectionVisibility(input).hasAnyControls;
 }
@@ -546,7 +546,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   onPromptChange,
   modelOptions,
   allowPromptInjectedEffort = true,
-  planModeEnabled,
+  planModeEnabled = false,
   triggerVariant,
   triggerClassName,
   isComposerOwned,

@@ -67,7 +67,6 @@ import { terminalEnvironment } from "../state/terminal";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
 import { useAtomCommand } from "../state/use-atom-command";
 
-import { GhosttyTerminalSurface } from "~/terminal/ghostty/surface";
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
 const MULTI_CLICK_SELECTION_ACTION_DELAY_MS = 260;
@@ -1546,86 +1545,5 @@ export default function ThreadTerminalDrawer({
         </div>
       </div>
     </aside>
-  );
-}
-
-export function writeTerminalOutputUpdate(
-  terminal: Pick<GhosttyTerminalSurface, "resetAndWrite" | "write">,
-  update: TerminalOutputUpdate,
-): void {
-  if (update.type === "reset") {
-    terminal.resetAndWrite(update.data);
-  } else if (update.type === "append") {
-    terminal.write(update.data);
-  }
-}
-
-export function terminalSelectionLineRange(position: {
-  start: { y: number };
-  end: { y: number };
-}): { lineStart: number; lineEnd: number } {
-  const lineStart = position.start.y + 1;
-  return {
-    lineStart,
-    lineEnd: Math.max(lineStart, position.end.y + 1),
-  };
-}
-
-export type TerminalContextMenuAction = "add-to-chat" | "copy" | "paste";
-
-/** Post-selection popup: available selection actions, always enabled. */
-export function terminalSelectionMenuItems(options?: {
-  canAddToChat?: boolean;
-}): ContextMenuItem<"add-to-chat" | "copy">[] {
-  return [
-    ...(options?.canAddToChat === false
-      ? []
-      : ([{ id: "add-to-chat", label: "Add to chat" }] satisfies ContextMenuItem<"add-to-chat">[])),
-    { id: "copy", label: "Copy" },
-  ];
-}
-
-/**
- * Right-click menu for the terminal canvas: the selection actions (disabled
- * until a selection exists) plus Paste. Paste is always offered: the browser
- * (and Electron's default editing menu) can only paste into an editable
- * element, so a canvas terminal never gets a usable entry from them.
- */
-export function terminalContextMenuItems(options: {
-  hasSelection: boolean;
-  canAddToChat?: boolean;
-}): ContextMenuItem<TerminalContextMenuAction>[] {
-  const { hasSelection, canAddToChat = true } = options;
-  return [
-    ...terminalSelectionMenuItems({ canAddToChat }).map((item) => ({
-      ...item,
-      disabled: !hasSelection,
-    })),
-    { id: "paste", label: "Paste" },
-  ];
-}
-
-/**
- * An empty selection change may only cancel a selection-action flow that is
- * still current: a pending popup timer, or an open popup whose request id has
- * not been superseded. A popup already superseded by a right-click keeps its
- * menu promise unsettled for a moment; treating it as active would cancel the
- * newer context-menu flow instead.
- */
-export function shouldClearTerminalSelectionAction(options: {
-  actionPending: boolean;
-  openMenuRequestId: number | null;
-  currentRequestId: number;
-}): boolean {
-  return options.actionPending || options.openMenuRequestId === options.currentRequestId;
-}
-
-export function shouldHandleTerminalExit(
-  current: TerminalSessionState["status"],
-  synchronized: TerminalSessionState["status"],
-  alreadyHandled: boolean,
-): boolean {
-  return (
-    (current === "closed" || current === "exited") && current !== synchronized && !alreadyHandled
   );
 }
