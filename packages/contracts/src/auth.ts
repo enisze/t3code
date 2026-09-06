@@ -221,6 +221,8 @@ export type AuthPairingCredentialResult = typeof AuthPairingCredentialResult.Typ
 // Read models contain metadata only. Credentials are returned by creation alone.
 export const AuthPairingLink = Schema.Struct({
   id: TrimmedNonEmptyString,
+  // The fork surfaces a shareable pairing URL built from this credential.
+  credential: TrimmedNonEmptyString,
   scopes: AuthEnvironmentScopes,
   subject: TrimmedNonEmptyString,
   label: Schema.optionalKey(TrimmedNonEmptyString),
