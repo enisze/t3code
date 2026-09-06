@@ -35,6 +35,7 @@ import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore"
 import { useClientSettings } from "./useSettings";
 import { activateWorkspaceChat } from "../workspaceContentTabsStore";
 
+import type { ThreadId } from "@t3tools/contracts";
 interface NewThreadOptions {
   branch?: string | null;
   worktreePath?: string | null;
@@ -73,7 +74,10 @@ export function useNewThreadHandler() {
   }, [router]);
 
   return useCallback(
-    (projectRef: ScopedProjectRef, options?: NewThreadOptions): Promise<void> => {
+    (
+      projectRef: ScopedProjectRef,
+      options?: NewThreadOptions,
+    ): Promise<{ readonly threadId: ThreadId } | null> => {
       const {
         addDocuments,
         addImages,
@@ -236,13 +240,14 @@ export function useNewThreadHandler() {
             currentRouteTarget?.kind === "draft" &&
             currentRouteTarget.draftId === reusableStoredDraftThread.draftId
           ) {
-            return;
+            return { threadId: reusableStoredDraftThread.threadId };
           }
           await router.navigate({
             to: "/draft/$draftId",
             params: { draftId: reusableStoredDraftThread.draftId },
             replace: options?.replace ?? false,
           });
+          return { threadId: reusableStoredDraftThread.threadId };
         })();
       }
 
@@ -276,7 +281,8 @@ export function useNewThreadHandler() {
           ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
           ...(hasStartFromOriginOption ? { startFromOrigin: options?.startFromOrigin } : {}),
         });
-        return Promise.resolve();
+        // Reusing an existing draft: it already carries its thread.
+        return Promise.resolve(null);
       }
 
       const draftId = newDraftId();
@@ -330,6 +336,7 @@ export function useNewThreadHandler() {
           params: { draftId },
           replace: options?.replace ?? false,
         });
+        return { threadId };
       })();
     },
     [getCurrentRouteTarget, primaryServerSettings, projectGroupingSettings, projects, router],

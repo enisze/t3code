@@ -349,21 +349,9 @@ export function useOpenChangeRequestLink(
         });
         return true;
       }
-      void navigate({
-        to: "/pull-requests",
-        search: {
-          involvement: "all",
-          // Every state, so the pull request being opened is also in the list behind it whether
-          // it is open, merged or closed.
-          state: "all",
-          repository: parsed.repository,
-          number: parsed.number,
-          selectedProjectId: project.id,
-          // Named so the page opens the right one of two servers holding this project.
-          selectedEnvironmentId: project.environmentId,
-        },
-      });
-      return true;
+      // Without a thread to host the panel there is nowhere in-app to show this:
+      // the fork has no standalone pull-request page, so let the link open normally.
+      return false;
     },
     [allProjects, navigate, primaryEnvironmentId, serverConfigs, threadRef],
   );
