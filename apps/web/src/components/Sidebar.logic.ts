@@ -15,6 +15,8 @@ import { resolveServerBackedAppStageLabel } from "../branding.logic";
 import { worktreeActivityKey } from "../uiStateStore";
 
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // Visible sidebar rows are prewarmed into the thread-detail cache so opening a

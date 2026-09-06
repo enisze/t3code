@@ -88,7 +88,7 @@ export async function openUrlInPreview<E>(input: {
 export async function openFileInPreview<AssetError, PreviewError>(input: {
   readonly threadRef: ScopedThreadRef;
   readonly filePath: string;
-  readonly workspaceRoot: string | undefined;
+  readonly workspaceRoot?: string | undefined;
   readonly httpBaseUrl: string;
   readonly createAssetUrl: (input: {
     readonly environmentId: EnvironmentId;

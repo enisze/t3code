@@ -70,6 +70,8 @@ function surfaceTitle(
       );
     case "plan":
       return "Plan";
+    case "pull-request":
+      return `#${surface.number}`;
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
