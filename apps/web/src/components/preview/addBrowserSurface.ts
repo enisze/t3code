@@ -9,11 +9,12 @@ import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
 import { openBrowserPreviewInChat } from "./openBrowserPreviewInChat";
 import { openPreviewSession } from "./openPreviewSession";
 
+import type { BrowserSettingsReadError } from "~/browser/openFileInPreview";
 /** Creates a new browser tab. Reopening an existing tab is a separate UI action. */
 export async function addBrowserSurface<E>(input: {
   readonly threadRef: ScopedThreadRef;
   readonly openPreview: OpenPreviewMutation<E>;
-}): Promise<AtomCommandResult<void, E>> {
+}): Promise<AtomCommandResult<void, E | BrowserSettingsReadError>> {
   const result = await openPreviewSession({
     openPreview: input.openPreview,
     threadRef: input.threadRef,

@@ -150,10 +150,20 @@ export function ProjectsSettings({
       ) : projectKey === null ? (
         <ProjectDefaultsSettings environmentId={machine?.environmentId ?? null} />
       ) : (
-        <ProjectSettingsPanel
-          projectKey={projectKey}
-          environmentId={machine?.environmentId ?? null}
-        />
+        (() => {
+          // The fork's panel is addressed by a concrete project rather than a
+          // group key, so resolve the selected group to one of its members.
+          const group = groups.find((candidate) => candidate.projectKey === projectKey);
+          const member =
+            group?.memberProjects.find(
+              (candidate) => candidate.environmentId === machine?.environmentId,
+            ) ?? group?.memberProjects[0];
+          return member ? (
+            <ProjectSettingsPanel environmentId={member.environmentId} projectId={member.id} />
+          ) : (
+            <p className="p-8 text-sm text-muted-foreground">This project is no longer available.</p>
+          );
+        })()
       )}
     </div>
   );
