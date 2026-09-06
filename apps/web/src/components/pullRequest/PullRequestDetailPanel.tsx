@@ -139,6 +139,7 @@ import {
   type PickableEnvironment,
 } from "./pullRequestProjectAssignment.logic";
 import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
+import type { ThreadId } from "@t3tools/contracts";
 import {
   PullRequestActorLabel,
   PullRequestDiffStat,
@@ -947,8 +948,13 @@ export function PullRequestDetailPanel({
   ): Promise<{ draftId: DraftId } | null> => {
     const session =
       opened ??
+      // The fork's newThread command resolves to void when it declines to open
+      // one, so narrow to the draft shape before treating it as a session.
       (await newThread(projectRef).then(
-        (result) => result,
+        (result: unknown) =>
+          result && typeof result === "object" && "draftId" in result
+            ? (result as { draftId: DraftId })
+            : null,
         () => null,
       ));
     if (session === null) return null;
@@ -1036,7 +1042,10 @@ export function PullRequestDetailPanel({
     // script only runs for a checkout that knows which thread it is for — and a worktree with no
     // dependencies installed is not something anyone can test.
     const opened = await newThread(projectRef).then(
-      (session) => session,
+      (session: unknown) =>
+        session && typeof session === "object" && "draftId" in session
+          ? (session as { draftId: DraftId; threadId: ThreadId })
+          : null,
       () => null,
     );
     if (opened === null) {
