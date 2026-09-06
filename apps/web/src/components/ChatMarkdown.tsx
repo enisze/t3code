@@ -95,12 +95,23 @@ import { TriangleAlertIcon } from "lucide-react";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
 import { MediaVideoPlayer } from "./media/MediaVideoPlayer";
 import { shouldOpenMarkdownFileLinkInBrowserByDefault } from "../markdown-links";
+import type { CSSProperties, ComponentProps } from "react";
+import { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import {
   isBrowserPreviewFile,
   openFileInPreview,
   openUrlInPreview,
   BrowserPreviewUnavailableError,
 } from "../browser/openFileInPreview";
+
+const CHAT_MARKDOWN_MEDIA_MAX_WIDTH_CLASS_NAME = "max-w-[min(100%,30rem)]";
+
+const CHAT_MARKDOWN_MEDIA_BOUNDS_CLASS_NAME = cn(
+  "max-h-[30rem]",
+  CHAT_MARKDOWN_MEDIA_MAX_WIDTH_CLASS_NAME,
+);
+const CHAT_MARKDOWN_MEDIA_FRAME_CLASS_NAME = "rounded-lg border border-border/40";
+const CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME = "inline-block!";
 
 class CodeHighlightErrorBoundary extends React.Component<
   { fallback: ReactNode; children: ReactNode },
@@ -2013,16 +2024,9 @@ const CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME = cn(
   CHAT_MARKDOWN_MEDIA_BOUNDS_CLASS_NAME,
 );
 
-const CHAT_MARKDOWN_MEDIA_BOUNDS_CLASS_NAME = cn(
-  "max-h-[30rem]",
-  CHAT_MARKDOWN_MEDIA_MAX_WIDTH_CLASS_NAME,
-);
 
-const CHAT_MARKDOWN_MEDIA_FRAME_CLASS_NAME = "rounded-lg border border-border/40";
 
-const CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME = "inline-block!";
 
-const CHAT_MARKDOWN_MEDIA_MAX_WIDTH_CLASS_NAME = "max-w-[min(100%,30rem)]";
 
 /** Inline chip for an image that sits in a line of text or can never load. */
 function ChatMarkdownImageFallback(props: {

@@ -22,6 +22,8 @@ import {
 import { environmentThreadDetails, environmentThreadShells } from "./threads";
 
 import type { OrchestrationProposedPlan } from "@t3tools/contracts";
+
+const EMPTY_PROPOSED_PLANS: ReadonlyArray<OrchestrationProposedPlan> = Object.freeze([]);
 const EMPTY_THREAD_REFS: ReadonlyArray<ScopedThreadRef> = Object.freeze([]);
 
 const EMPTY_PROJECT_ATOM = Atom.make<EnvironmentProject | null>(null).pipe(
@@ -256,4 +258,3 @@ const EMPTY_PROPOSED_PLANS_ATOM = Atom.make(EMPTY_PROPOSED_PLANS).pipe(
   Atom.withLabel("web-thread-proposed-plans:empty"),
 );
 
-const EMPTY_PROPOSED_PLANS: ReadonlyArray<OrchestrationProposedPlan> = Object.freeze([]);

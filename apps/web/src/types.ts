@@ -1,9 +1,10 @@
 
 import { videoMimeType } from "@t3tools/shared/video";
-import type { ContractChatFileAttachment, ContractChatUnknownAttachment } from "@t3tools/contracts";
 import type {
   ChatImageAttachment as ContractChatImageAttachment,
   ChatDocumentAttachment as ContractChatDocumentAttachment,
+  ChatFileAttachment as ContractChatFileAttachment,
+  ChatUnknownAttachment as ContractChatUnknownAttachment,
   OrchestrationCheckpointFile,
   OrchestrationCheckpointSummary,
   OrchestrationLatestTurn,
@@ -44,7 +45,11 @@ export interface ChatDocumentAttachment extends ContractChatDocumentAttachment {
   readonly previewUrl?: string;
 }
 
-export type ChatAttachment = ChatImageAttachment | ChatDocumentAttachment;
+export type ChatAttachment =
+  | ChatImageAttachment
+  | ChatDocumentAttachment
+  | ChatFileAttachment
+  | ChatUnknownAttachment;
 
 export interface ChatMessage extends Omit<OrchestrationMessage, "attachments"> {
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;

@@ -409,7 +409,6 @@ function AboutVersionSection() {
       const confirmed = window.confirm(
         getDesktopUpdateInstallConfirmationMessage(
           updateState ?? { availableVersion: null, downloadedVersion: null },
-          navigator.platform,
         ),
       );
       if (!confirmed) return;
@@ -595,7 +594,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar
         ? ["Auto-open task panel"]
         : []),
-      ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
+      ...(settings.enableLegacyTokenStreaming !== DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming
         ? ["Assistant output"]
         : []),
       ...(settings.enableProviderUpdateChecks !==
@@ -634,7 +633,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffTheme,
       settings.environmentIdentificationMode,
       settings.glassOpacity,
-      settings.enableAssistantStreaming,
+      settings.enableLegacyTokenStreaming,
       settings.enableProviderUpdateChecks,
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
@@ -665,7 +664,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
-      enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
+      enableLegacyTokenStreaming: DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
@@ -1321,13 +1320,13 @@ export function GeneralSettingsPanel() {
           title="Assistant output"
           description="Show token-by-token output while a response is in progress."
           resetAction={
-            settings.enableAssistantStreaming !==
-            DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming ? (
+            settings.enableLegacyTokenStreaming !==
+            DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming ? (
               <SettingResetButton
                 label="assistant output"
                 onClick={() =>
                   updateSettings({
-                    enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
+                    enableLegacyTokenStreaming: DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming,
                   })
                 }
               />
@@ -1335,9 +1334,9 @@ export function GeneralSettingsPanel() {
           }
           control={
             <Switch
-              checked={settings.enableAssistantStreaming}
+              checked={settings.enableLegacyTokenStreaming}
               onCheckedChange={(checked) =>
-                updateSettings({ enableAssistantStreaming: Boolean(checked) })
+                updateSettings({ enableLegacyTokenStreaming: Boolean(checked) })
               }
               aria-label="Stream assistant messages"
             />
@@ -1714,6 +1713,7 @@ export function GeneralSettingsPanel() {
                 model={textGenModel}
                 prompt=""
                 onPromptChange={() => {}}
+                planModeEnabled={false}
                 modelOptions={textGenModelOptions}
                 allowPromptInjectedEffort={false}
                 triggerVariant="outline"
@@ -2354,8 +2354,13 @@ export function ProviderSettingsPanel() {
         })}
       </SettingsSection>
 
-      {isAddInstanceDialogOpen ? (
-        <AddProviderInstanceDialog open onOpenChange={setIsAddInstanceDialogOpen} />
+      {isAddInstanceDialogOpen && primaryEnvironment ? (
+        <AddProviderInstanceDialog
+          open
+          environmentId={primaryEnvironment.environmentId}
+          environmentLabel={primaryEnvironment.label}
+          onOpenChange={setIsAddInstanceDialogOpen}
+        />
       ) : null}
     </SettingsPageContainer>
   );
@@ -2504,7 +2509,13 @@ export function ArchivedThreadsPanel() {
           <SettingsSection
             key={project.id}
             title={project.name}
-            icon={<ProjectFavicon environmentId={project.environmentId} cwd={project.cwd} />}
+            icon={
+              <ProjectFavicon
+                environmentId={project.environmentId}
+                cwd={project.cwd}
+                projectName={project.name}
+              />
+            }
           >
             {projectThreads.map((thread) => (
               <SettingsRow
