@@ -289,6 +289,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
           model: "gpt-5.4",
         },
         defaultThreadEnvMode: null,
+        faviconPath: null,
         autoPull: false,
         reviewModelSelection: {
           instanceId: ProviderInstanceId.make("claudeAgent"),

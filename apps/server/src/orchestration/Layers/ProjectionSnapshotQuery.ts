@@ -2746,6 +2746,12 @@ pending_approval_requests AS (
                     workspaceRoot: option.value.workspaceRoot,
                     repositoryIdentity,
                     defaultModelSelection: option.value.defaultModelSelection,
+                    gitHubAccount: option.value.gitHubAccount,
+                    worktreeBranchPrefix: option.value.worktreeBranchPrefix,
+                    defaultWorktreeBranch: option.value.defaultWorktreeBranch,
+                    reviewModelSelection: option.value.reviewModelSelection,
+                    previewPort: option.value.previewPort,
+                    worktreeCopyFiles: option.value.worktreeCopyFiles,
                     defaultThreadEnvMode: option.value.defaultThreadEnvMode,
                     autoPull: option.value.autoPull === 1,
                     faviconPath: option.value.faviconPath ?? null,
@@ -3426,7 +3432,96 @@ pending_approval_requests AS (
         ),
       );
 
+
+  const listAccountRouteRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionAccountRouteRowSchema,
+    // Union of project workspace roots and thread worktree paths that have an
+    // account attached. Threads are NOT filtered by archived_at — an archived
+    // thread's worktree still exists on disk, and a git/gh command run there
+    // must resolve to its project's account rather than silently using the
+    // machine's active account.
+    execute: () =>
+      sql`
+        SELECT workspace_root AS "path", github_account_json AS "account"
+        FROM projection_projects
+        WHERE deleted_at IS NULL
+          AND github_account_json IS NOT NULL
+        UNION ALL
+        SELECT threads.worktree_path AS "path", projects.github_account_json AS "account"
+        FROM projection_threads AS threads
+        INNER JOIN projection_projects AS projects
+          ON projects.project_id = threads.project_id
+        WHERE threads.deleted_at IS NULL
+          AND threads.worktree_path IS NOT NULL
+          AND projects.deleted_at IS NULL
+          AND projects.github_account_json IS NOT NULL
+      `,
+  });
+
+  const listModelSelectionRouteRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionModelSelectionRouteRowSchema,
+    // Union of project workspace roots and thread worktree paths for projects
+    // that have a default model selection configured. Threads are NOT filtered
+    // by archived_at — an archived thread's worktree still exists on disk, and a
+    // git/gh command run there must resolve to its project's model selection.
+    execute: () =>
+      sql`
+        SELECT workspace_root AS "path", default_model_selection_json AS "modelSelection"
+        FROM projection_projects
+        WHERE deleted_at IS NULL
+          AND default_model_selection_json IS NOT NULL
+        UNION ALL
+        SELECT threads.worktree_path AS "path", projects.default_model_selection_json AS "modelSelection"
+        FROM projection_threads AS threads
+        INNER JOIN projection_projects AS projects
+          ON projects.project_id = threads.project_id
+        WHERE threads.deleted_at IS NULL
+          AND threads.worktree_path IS NOT NULL
+          AND projects.deleted_at IS NULL
+          AND projects.default_model_selection_json IS NOT NULL
+      `,
+  });
+
+  const listAccountRoutes: ProjectionSnapshotQueryShape["listAccountRoutes"] = () =>
+    listAccountRouteRows(undefined).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.listAccountRoutes:query",
+          "ProjectionSnapshotQuery.listAccountRoutes:decodeRows",
+        ),
+      ),
+    );
+
+  const getDefaultModelSelectionForCwd: ProjectionSnapshotQueryShape["getDefaultModelSelectionForCwd"] =
+    (cwd) =>
+      listModelSelectionRouteRows(undefined).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.getDefaultModelSelectionForCwd:query",
+            "ProjectionSnapshotQuery.getDefaultModelSelectionForCwd:decodeRows",
+          ),
+        ),
+        Effect.map((routes) => {
+          let bestPathLength = -1;
+          let bestSelection: ModelSelection | null = null;
+          for (const route of routes) {
+            if (!isPathWithin(cwd, route.path)) continue;
+            if (route.path.length > bestPathLength) {
+              bestPathLength = route.path.length;
+              bestSelection = route.modelSelection;
+            }
+          }
+          return bestSelection === null
+            ? Option.none<ModelSelection>()
+            : Option.some(bestSelection);
+        }),
+      );
+
   return {
+    listAccountRoutes,
+    getDefaultModelSelectionForCwd,
     getCommandReadModel,
     getUserInputActivity,
     getSnapshot,
@@ -3449,6 +3544,33 @@ pending_approval_requests AS (
     getThreadDetailSnapshot,
   } satisfies ProjectionSnapshotQueryShape;
 });
+
+
+/**
+ * True when `cwd` is `base` itself or lives beneath it. Compares normalized,
+ * separator-terminated paths so `/a/repo` does not match `/a/repo-2`.
+ */
+function isPathWithin(cwd: string, base: string): boolean {
+  if (base.length === 0) return false;
+  const normalizedBase = base.replace(/[/\\]+$/, "");
+  if (cwd === normalizedBase) return true;
+  return cwd.startsWith(`${normalizedBase}/`) || cwd.startsWith(`${normalizedBase}\\`);
+}
+
+const ProjectionAccountRouteRowSchema = Schema.Struct({
+  path: Schema.String,
+  account: Schema.fromJsonString(GitHubAccountRef),
+});
+
+const ProjectionModelSelectionRouteRowSchema = Schema.Struct({
+  path: Schema.String,
+  modelSelection: Schema.fromJsonString(ModelSelection),
+});
+
+/**
+ * True when `cwd` is `base` itself or lives beneath it. Compares normalized,
+ * separator-terminated paths so `/a/repo` does not match `/a/repo-2`.
+ */
 
 export const OrchestrationProjectionSnapshotQueryLive = Layer.effect(
   ProjectionSnapshotQuery,
