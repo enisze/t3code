@@ -1,7 +1,5 @@
 import type {
-  ChatFileAttachment as ContractChatFileAttachment,
   ChatImageAttachment as ContractChatImageAttachment,
-  ChatUnknownAttachment as ContractChatUnknownAttachment,
   ChatDocumentAttachment as ContractChatDocumentAttachment,
   OrchestrationCheckpointFile,
   OrchestrationCheckpointSummary,
@@ -18,9 +16,6 @@ import type {
   EnvironmentThread,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import { videoMimeType } from "@t3tools/shared/video";
-
-export { videoMimeType } from "@t3tools/shared/video";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
