@@ -145,6 +145,12 @@ interface ChatMarkdownProps {
   className?: string;
   /** Treat single newlines as hard breaks — chat-style user input. */
   lineBreaks?: boolean;
+  /** Base directory for relative image/file links; defaults to cwd. */
+  imageBaseDir?: string | undefined;
+  /** Environment for asset resolution when there is no thread to take it from. */
+  environmentId?: EnvironmentId | undefined;
+  /** Extra remark plugins appended after the built-in set. */
+  extraRemarkPlugins?: ReactMarkdownOptions["remarkPlugins"];
 }
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
@@ -1326,7 +1332,16 @@ function ChatMarkdown({
   skills = EMPTY_MARKDOWN_SKILLS,
   className,
   lineBreaks = false,
+  imageBaseDir,
+  environmentId: explicitEnvironmentId,
+  extraRemarkPlugins,
 }: ChatMarkdownProps) {
+  const remarkPlugins = useMemo(() => {
+    const base = lineBreaks
+      ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS
+      : CHAT_MARKDOWN_REMARK_PLUGINS;
+    return extraRemarkPlugins ? [...base, ...extraRemarkPlugins] : base;
+  }, [lineBreaks, extraRemarkPlugins]);
   const { resolvedTheme } = useTheme();
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
@@ -1334,7 +1349,9 @@ function ChatMarkdown({
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
-  const preparedConnection = usePreparedConnection(threadRef?.environmentId ?? null);
+  const preparedConnection = usePreparedConnection(
+    threadRef?.environmentId ?? explicitEnvironmentId ?? null,
+  );
   // Preview surfaces opened from chat content belong to the shared per-worktree
   // workspace, so target the worktree representative rather than this chat.
   const workspaceThreadRef = useWorkspaceThreadRef(threadRef);
@@ -1353,7 +1370,7 @@ function ChatMarkdown({
     for (const href of extractMarkdownLinkHrefs(text)) {
       const normalizedHref = normalizeMarkdownLinkHrefKey(href);
       if (metaByHref.has(normalizedHref)) continue;
-      const meta = resolveMarkdownFileLinkMeta(normalizedHref, cwd);
+      const meta = resolveMarkdownFileLinkMeta(normalizedHref, cwd, imageBaseDir ?? cwd);
       if (meta) {
         metaByHref.set(normalizedHref, meta);
       }
@@ -1364,7 +1381,7 @@ function ChatMarkdown({
     const metaByText = new Map<string, MarkdownFileLinkMeta>();
     for (const span of extractInlineCodeSpans(text)) {
       if (metaByText.has(span)) continue;
-      const meta = resolveInlineCodeFileLinkMeta(span, cwd);
+      const meta = resolveInlineCodeFileLinkMeta(span, cwd, imageBaseDir ?? cwd);
       if (meta) {
         metaByText.set(span, meta);
       }
@@ -1672,9 +1689,7 @@ function ChatMarkdown({
       onCopy={handleCopy}
     >
       <ReactMarkdown
-        remarkPlugins={
-          lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS
-        }
+        remarkPlugins={remarkPlugins}
         rehypePlugins={CHAT_MARKDOWN_REHYPE_PLUGINS}
         components={markdownComponents}
         urlTransform={markdownUrlTransform}

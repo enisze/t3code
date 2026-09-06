@@ -168,7 +168,7 @@ export function isPermanentRightPanelSurface(surface: RightPanelSurface): boolea
 }
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal">,
+  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request">,
 ): RightPanelSurface => {
   switch (kind) {
     case "diff":

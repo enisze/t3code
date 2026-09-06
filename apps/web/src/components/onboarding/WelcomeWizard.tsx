@@ -990,12 +990,11 @@ function AgentInstallTerminal({
             terminalId={terminalId}
             terminalLabel={`Install ${driver}`}
             cwd={cwd}
-            providerInstanceId={providerInstanceId}
-            advancedTypography={advancedTypography}
             onSessionExited={onClose}
+            // The fork's terminal has no context-capture affordance in the wizard.
+            onAddTerminalContext={() => {}}
             focusRequestId={1}
             autoFocus
-            visible
             resizeEpoch={0}
             drawerHeight={256}
             keybindings={keybindings}
