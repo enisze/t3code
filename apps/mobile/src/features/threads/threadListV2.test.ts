@@ -258,28 +258,13 @@ describe("resolveThreadListV2SnoozeGateExpiryMs", () => {
 });
 
 describe("sortThreadsForListV2", () => {
-  it("orders by latest activity, newest first", () => {
+  it("orders by creation time, newest first, ignoring activity", () => {
     const sorted = sortThreadsForListV2([
-      {
-        id: "oldest",
-        createdAt: "2026-06-01T08:00:00.000Z",
-        updatedAt: "2026-06-01T08:00:00.000Z",
-        latestUserMessageAt: "2026-06-01T13:00:00.000Z",
-      },
-      {
-        id: "newest",
-        createdAt: "2026-06-01T12:00:00.000Z",
-        updatedAt: "2026-06-01T12:00:00.000Z",
-        latestUserMessageAt: null,
-      },
-      {
-        id: "middle",
-        createdAt: "2026-06-01T10:00:00.000Z",
-        updatedAt: "2026-06-01T10:00:00.000Z",
-        latestUserMessageAt: null,
-      },
+      { id: "oldest", createdAt: "2026-06-01T08:00:00.000Z" },
+      { id: "newest", createdAt: "2026-06-01T12:00:00.000Z" },
+      { id: "middle", createdAt: "2026-06-01T10:00:00.000Z" },
     ]);
-    expect(sorted.map((thread) => thread.id)).toEqual(["oldest", "newest", "middle"]);
+    expect(sorted.map((thread) => thread.id)).toEqual(["newest", "middle", "oldest"]);
   });
 
   it("surfaces an un-settled thread at the top via its re-entry stamp", () => {
@@ -339,8 +324,9 @@ describe("buildThreadListV2Items", () => {
       now: NOW,
     });
 
-    // The woken thread is BACK in the card block and the snoozed one is gone.
-    expect(layout.items.map((item) => item.thread.id)).toEqual(["woken", "active"]);
+    // Same createdAt → static sort tiebreaks by id; the point is the woken
+    // thread is BACK in the card block and the snoozed one is gone.
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["active", "woken"]);
     expect(layout.snoozedCount).toBe(1);
   });
 
@@ -632,14 +618,14 @@ describe("buildThreadListV2Items", () => {
     expect(layout.settledShelfHeaderIndex).toBe(0);
   });
 
-  it("promotes the most recently active card", () => {
+  it("keeps cards in creation order while settled sorts by recency", () => {
     const { items } = buildThreadListV2Items({
       threads: [
         makeThread({
           id: ThreadId.make("older-created"),
           title: "Older",
           createdAt: "2026-06-01T08:00:00.000Z",
-          updatedAt: NOW,
+          updatedAt: NOW, // recent activity must NOT promote it
         }),
         makeThread({
           id: ThreadId.make("newer-created"),
@@ -652,7 +638,7 @@ describe("buildThreadListV2Items", () => {
       now: NOW,
     });
 
-    expect(items.map((item) => item.thread.id)).toEqual(["older-created", "newer-created"]);
+    expect(items.map((item) => item.thread.id)).toEqual(["newer-created", "older-created"]);
   });
 
   it("sorts settled threads by their persisted settlement timestamp", () => {
@@ -765,7 +751,7 @@ describe("buildThreadListV2Items", () => {
       now: NOW,
     });
 
-    expect(items.map((item) => item.thread.id)).toEqual(["remote", "local"]);
+    expect(items.map((item) => item.thread.id)).toEqual(["local", "remote"]);
   });
 });
 

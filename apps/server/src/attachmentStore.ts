@@ -125,11 +125,12 @@ export function attachmentRelativePath(attachment: ChatAttachment): string {
     }
     case "file":
       return `${attachment.id}${attachmentFileExtension(attachment.name)}`;
-    default:
-      return null;
     case "document": {
       return `${attachment.id}${inferDocumentExtension(attachment.name)}`;
     }
+    default:
+      // The attachment union has an open member; store unknown kinds opaquely.
+      return `${attachment.id}.bin`;
   }
 }
 

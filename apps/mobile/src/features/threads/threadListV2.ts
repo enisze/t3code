@@ -1,5 +1,11 @@
-import { effectiveSettled, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
-import { sortThreads, type ThreadSortInput } from "@t3tools/client-runtime/state/thread-sort";
+import {
+  effectiveSnoozed,
+  hasQueuedTurnStart,
+  QUEUED_TURN_START_GRACE_MS,
+  resolveSnoozePresets,
+  snoozeWakeLabel,
+} from "@t3tools/client-runtime/state/thread-settled";
+import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import {
@@ -11,8 +17,6 @@ import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
-import { QUEUED_TURN_START_GRACE_MS, hasQueuedTurnStart, resolveSnoozePresets, snoozeWakeLabel } from "@t3tools/client-runtime/state/thread-settled";
-import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 export { snoozeWakeLabel };
 
 /**
@@ -146,23 +150,28 @@ function parseTimestampMs(isoDate: string): number {
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
-/** First VALID timestamp wins: a present-yet-malformed string falls through
-    to the next candidate rather than sinking the row to the epoch. */
-function firstValidTimestampMs(...candidates: ReadonlyArray<string | null | undefined>): number {
-  for (const candidate of candidates) {
-    if (candidate == null) continue;
-    const parsed = Date.parse(candidate);
-    if (!Number.isNaN(parsed)) return parsed;
-  }
-  return 0;
-}
-
-/** Keep the chats users touched most recently at the top, matching web's
-    sortThreadsForSidebarV2. */
-export function sortThreadsForListV2<T extends { readonly id: string } & ThreadSortInput>(
-  threads: readonly T[],
-): T[] {
-  return sortThreads(threads, "updated_at");
+/**
+ * v2 sort: static order, newest anchor on top. Activity NEVER reorders the
+ * list — a row holds its position between lifecycle transitions. The anchor
+ * is creation time until an un-settle re-anchors it (see
+ * activeThreadAnchorTimestampMs), so an un-settled thread surfaces at the
+ * top instead of sinking back to its creation-order slot. Mirrors web's
+ * sortThreadsForSidebar.
+ */
+export function sortThreadsForListV2<
+  T extends {
+    readonly id: string;
+    readonly createdAt: string;
+    readonly unsettledAt?: string | null | undefined;
+  },
+>(threads: readonly T[]): T[] {
+  // .sort() on a copy, not .toSorted(): Hermes doesn't ship the ES2023
+  // change-by-copy array methods.
+  return [...threads].sort(
+    (left, right) =>
+      activeThreadAnchorTimestampMs(right) - activeThreadAnchorTimestampMs(left) ||
+      left.id.localeCompare(right.id),
+  );
 }
 
 export interface ThreadListV2Item {

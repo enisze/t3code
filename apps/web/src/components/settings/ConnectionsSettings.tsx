@@ -533,21 +533,25 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   );
   const [isRevealDialogOpen, setIsRevealDialogOpen] = useState(false);
 
+  // Servers that no longer return the credential cannot offer a shareable link.
+  const credential = pairingLink.credential;
   const currentOriginPairingUrl = useMemo(
-    () => resolveCurrentOriginPairingUrl(pairingLink.credential),
-    [pairingLink.credential],
+    () => (credential === undefined ? null : resolveCurrentOriginPairingUrl(credential)),
+    [credential],
   );
   const hostedPairingUrl = useMemo(
     () =>
-      endpointUrl != null && endpointUrl !== ""
-        ? resolveHostedPairingUrl(endpointUrl, pairingLink.credential)
+      endpointUrl != null && endpointUrl !== "" && credential !== undefined
+        ? resolveHostedPairingUrl(endpointUrl, credential)
         : null,
-    [endpointUrl, pairingLink.credential],
+    [endpointUrl, credential],
   );
   const endpointPairingUrl = useMemo(() => {
     const endpoint = selectPairingEndpoint(endpoints, defaultEndpointKey);
-    return endpoint ? resolveAdvertisedEndpointPairingUrl(endpoint, pairingLink.credential) : null;
-  }, [defaultEndpointKey, endpoints, pairingLink.credential]);
+    return endpoint && credential !== undefined
+      ? resolveAdvertisedEndpointPairingUrl(endpoint, credential)
+      : null;
+  }, [defaultEndpointKey, endpoints, credential]);
   const endpointCopyOptions = useMemo(() => {
     const options: Array<{
       readonly key: string;
@@ -555,11 +559,12 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
       readonly url: string;
       readonly detail: string;
     }> = [];
+    if (credential === undefined) return options;
     for (const endpoint of endpoints) {
       if (endpoint.status === "unavailable") {
         continue;
       }
-      const url = resolveAdvertisedEndpointPairingUrl(endpoint, pairingLink.credential);
+      const url = resolveAdvertisedEndpointPairingUrl(endpoint, credential);
       options.push({
         key: endpointDefaultPreferenceKey(endpoint),
         label: endpoint.label,
@@ -568,15 +573,16 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
       });
     }
     return options;
-  }, [endpoints, pairingLink.credential]);
+  }, [endpoints, credential]);
   const shareablePairingUrl =
     endpointPairingUrl ??
     (endpointUrl != null && endpointUrl !== ""
-      ? (hostedPairingUrl ?? resolveDesktopPairingUrl(endpointUrl, pairingLink.credential))
+      ? (hostedPairingUrl ??
+        (credential === undefined ? null : resolveDesktopPairingUrl(endpointUrl, credential)))
       : isLoopbackHostname(window.location.hostname)
         ? null
         : currentOriginPairingUrl);
-  const revealValue = shareablePairingUrl ?? pairingLink.credential;
+  const revealValue = shareablePairingUrl ?? credential ?? null;
   const isShareableHostedAppPairingUrl =
     shareablePairingUrl !== null && isHostedAppPairingUrl(shareablePairingUrl);
   const localNetworkPairingHost = useMemo(
@@ -638,8 +644,9 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   );
 
   const handleCopyCode = useCallback(() => {
-    copyPairingValue(pairingLink.credential, "code");
-  }, [copyPairingValue, pairingLink.credential]);
+    if (credential === undefined) return;
+    copyPairingValue(credential, "code");
+  }, [copyPairingValue, credential]);
 
   const handleCopyDefaultLink = useCallback(() => {
     if (!shareablePairingUrl) return;
@@ -860,7 +867,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
               <DialogPanel className="space-y-4">
                 <Textarea
                   readOnly
-                  value={revealValue}
+                  value={revealValue ?? ""}
                   rows={shareablePairingUrl ? 4 : 3}
                   className="text-xs leading-relaxed"
                   onFocus={(event) => event.currentTarget.select()}

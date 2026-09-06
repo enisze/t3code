@@ -292,6 +292,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       gitHubAccount: null,
       worktreeBranchPrefix: null,
       defaultWorktreeBranch: null,
+      previewPort: null,
+      worktreeCopyFiles: [],
       scripts: [],
       createdAt: editingPendingTask.createdAt,
       updatedAt: editingPendingTask.createdAt,
