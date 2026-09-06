@@ -11,8 +11,6 @@ import type {
   ApprovalRequestId,
   CheckpointRef,
   MessageId,
-  GitHubAccountRef,
-  ModelSelection,
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationProject,
@@ -38,17 +36,6 @@ import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
 export interface ProjectionSnapshotCounts {
   readonly projectCount: number;
   readonly threadCount: number;
-}
-
-/**
- * A filesystem path that a `git`/`gh` command's cwd can be matched against to
- * discover the GitHub account it should act as. Covers both project workspace
- * roots and thread worktree paths (active AND archived — worktrees for archived
- * threads still exist on disk and must resolve to their project's account).
- */
-export interface ProjectionAccountRoute {
-  readonly path: string;
-  readonly account: GitHubAccountRef;
 }
 
 export interface ProjectionSnapshotSequence {
@@ -144,17 +131,6 @@ export interface ProjectionSnapshotQueryShape {
   ) => Effect.Effect<OrchestrationSearchThreadsResult, ProjectionRepositoryError>;
 
   /**
-   * Read every workspace-root / worktree-path → GitHub account mapping for
-   * projects that have an account attached. Used to resolve which account a
-   * `git`/`gh` command running in a given directory should act as. Includes
-   * archived (but not deleted) threads so their worktrees still resolve.
-   */
-  readonly listAccountRoutes: () => Effect.Effect<
-    ReadonlyArray<ProjectionAccountRoute>,
-    ProjectionRepositoryError
-  >;
-
-  /**
    * Read the latest projection snapshot sequence without hydrating read-model
    * entities.
    */
@@ -182,17 +158,6 @@ export interface ProjectionSnapshotQueryShape {
   readonly getActiveProjectByWorkspaceRoot: (
     workspaceRoot: string,
   ) => Effect.Effect<Option.Option<OrchestrationProject>, ProjectionRepositoryError>;
-
-  /**
-   * Resolve the `defaultModelSelection` of the project owning `cwd`, matching
-   * the longest project workspace root or thread worktree path that contains it
-   * (so a worktree checked out outside the project root still resolves). Returns
-   * `None` when `cwd` maps to no project or the owning project has no default
-   * model selection configured.
-   */
-  readonly getDefaultModelSelectionForCwd: (
-    cwd: string,
-  ) => Effect.Effect<Option.Option<ModelSelection>, ProjectionRepositoryError>;
 
   /**
    * Read a single active project shell row by id.
