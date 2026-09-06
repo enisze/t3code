@@ -25,6 +25,7 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildContinuationSummaryPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
@@ -401,10 +402,24 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
       return { title: sanitizeThreadTitle(generated.title) };
     });
 
+  const generateContinuationSummary: TextGeneration.TextGeneration["Service"]["generateContinuationSummary"] =
+    Effect.fn("AntigravityTextGeneration.generateContinuationSummary")(function* (input) {
+      const generated = yield* runAntigravityJson({
+        operation: "generateContinuationSummary",
+        ...buildContinuationSummaryPrompt({
+          sourceTitle: input.sourceTitle,
+          transcript: input.transcript,
+        }),
+        modelSelection: input.modelSelection,
+      });
+      return { summary: generated.summary.trim() };
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateContinuationSummary,
   } satisfies TextGeneration.TextGeneration["Service"];
 });
