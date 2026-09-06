@@ -1949,7 +1949,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const target = project.memberProjects[0] ?? null;
       if (!target) return;
       void navigate({
-        to: "/settings/projects/$environmentId/$projectId",
+        to: "/settings/project/$environmentId/$projectId",
         params: { environmentId: target.environmentId, projectId: target.id },
       });
     },

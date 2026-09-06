@@ -14,6 +14,6 @@ function SettingsProjectRoute() {
   );
 }
 
-export const Route = createFileRoute("/settings/projects/$environmentId/$projectId")({
+export const Route = createFileRoute("/settings/project/$environmentId/$projectId")({
   component: SettingsProjectRoute,
 });

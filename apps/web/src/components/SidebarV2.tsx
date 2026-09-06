@@ -1643,7 +1643,7 @@ export default function SidebarV2() {
       const target = projectGroup.memberProjects[0] ?? null;
       if (!target) return;
       void navigate({
-        to: "/settings/projects/$environmentId/$projectId",
+        to: "/settings/project/$environmentId/$projectId",
         params: { environmentId: target.environmentId, projectId: target.id },
       });
     },
@@ -1655,7 +1655,7 @@ export default function SidebarV2() {
   const openProjectSettingsForThread = useCallback(
     (thread: SidebarThreadSummary) => {
       void navigate({
-        to: "/settings/projects/$environmentId/$projectId",
+        to: "/settings/project/$environmentId/$projectId",
         params: { environmentId: thread.environmentId, projectId: thread.projectId },
       });
     },

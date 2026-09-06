@@ -76,7 +76,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
         setOpenMobile(false);
       }
       void navigate({
-        to: "/settings/projects/$environmentId/$projectId",
+        to: "/settings/project/$environmentId/$projectId",
         params: { environmentId, projectId },
         replace: true,
       });
