@@ -326,6 +326,7 @@ import {
   serverUpdateGuidance,
 } from "../versionSkew";
 import { useAssetUrls } from "../assets/assetUrls";
+import { isImageAttachment } from "../types";
 import {
   buildUnavailableAttachmentsToastCopy,
   reuseMessageAttachments,
@@ -2318,7 +2319,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
 
       const serverPreviewUrls = serverMessage.attachments.flatMap((attachment) =>
-        attachment.type === "image" && attachment.previewUrl ? [attachment.previewUrl] : [],
+        isImageAttachment(attachment) && attachment.previewUrl ? [attachment.previewUrl] : [],
       );
       if (
         serverPreviewUrls.length === 0 ||
@@ -2406,7 +2407,10 @@ function ChatViewContent(props: ChatViewProps) {
               }
               const handoffPreviewUrl = handoffPreviewUrls[imageIndex];
               imageIndex += 1;
-              if (!handoffPreviewUrl || attachment.previewUrl === handoffPreviewUrl) {
+              if (
+                !handoffPreviewUrl ||
+                (isImageAttachment(attachment) && attachment.previewUrl === handoffPreviewUrl)
+              ) {
                 return attachment;
               }
               changed = true;

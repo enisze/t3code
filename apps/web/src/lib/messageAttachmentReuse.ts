@@ -13,6 +13,7 @@ import type { ComposerDocumentAttachment, ComposerImageAttachment } from "../com
 import type { ChatAttachment } from "../types";
 import { randomUUID } from "./utils";
 
+import { isImageAttachment } from "../types";
 export interface ReusedMessageAttachments {
   readonly images: ComposerImageAttachment[];
   readonly documents: ComposerDocumentAttachment[];
@@ -30,7 +31,7 @@ const EMPTY_REUSED_ATTACHMENTS: ReusedMessageAttachments = {
 export type MessageAttachmentFileLoader = (attachment: ChatAttachment) => Promise<File | null>;
 
 export async function loadMessageAttachmentFile(attachment: ChatAttachment): Promise<File | null> {
-  const url = attachment.previewUrl;
+  const url = isImageAttachment(attachment) ? attachment.previewUrl : undefined;
   if (!url) {
     return null;
   }
