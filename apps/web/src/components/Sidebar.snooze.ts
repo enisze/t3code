@@ -40,7 +40,9 @@ export function resolveSnoozePresets(
 export function snoozeWakeDescription(
   snoozedUntil: string,
   now: Date,
-  timestampFormat: TimestampFormat,
+  // The fork rendered these with the locale clock; upstream made the format
+  // configurable, so default to the previous behaviour for callers that omit it.
+  timestampFormat: TimestampFormat = "locale",
 ): string {
   const wake = parseTimestampDate(snoozedUntil);
   if (wake === null) return "";

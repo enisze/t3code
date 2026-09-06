@@ -52,7 +52,7 @@ type TraitsRenderInput = {
   modelOptions: ReadonlyArray<ProviderOptionSelection> | undefined;
   prompt: string;
   onPromptChange: (prompt: string) => void;
-  planModeEnabled: boolean;
+  planModeEnabled?: boolean;
   size?: ComposerControlSize;
   hidden?: boolean;
   triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
@@ -131,7 +131,7 @@ function renderTraitsControl(
     modelOptions,
     prompt,
     onPromptChange,
-    planModeEnabled,
+    planModeEnabled = false,
     size,
     hidden,
     triggerVariant,
