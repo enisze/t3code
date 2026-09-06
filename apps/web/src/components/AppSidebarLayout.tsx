@@ -14,13 +14,14 @@ import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalSt
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
-import { useEnvironmentIdentificationMode } from "../hooks/useSettings";
+import { useEnvironmentIdentificationMode, useSidebarV2Enabled } from "../hooks/useSettings";
 import {
   PanelAnimationSuppressionProvider,
   usePanelAnimationSettings,
   usePanelNavigationSuppression,
 } from "../panelAnimations";
 import ThreadSidebar from "./Sidebar";
+import ThreadSidebarV2 from "./SidebarV2";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import {
@@ -150,6 +151,9 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const panelAnimationsSuppressed = usePanelNavigationSuppression(pathname);
   const routePanelAnimationsActive = panelAnimationsActive && !panelAnimationsSuppressed;
   const isOnSettings = pathname === "/settings" || pathname.startsWith("/settings/");
+  const sidebarV2Enabled = useSidebarV2Enabled();
+  // v2 is a chats-list replacement; settings keeps its own nav.
+  const useSidebarV2 = sidebarV2Enabled && !isOnSettings;
   const isMacosDesktop = isElectron && isMacPlatform(navigator.platform);
   const [sidebarWidth, setSidebarWidth] = useState(readInitialThreadSidebarWidth);
   // Subscribed rather than read once: the clamp must track live window size,
@@ -245,6 +249,8 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
               <SidebarChromeHeader isElectron={isElectron} />
               <SettingsSidebarNav pathname={pathname} />
             </>
+          ) : useSidebarV2 ? (
+            <ThreadSidebarV2 />
           ) : (
             <ThreadSidebar />
           )}
