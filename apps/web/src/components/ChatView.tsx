@@ -2056,7 +2056,7 @@ function ChatViewContent(props: ChatViewProps) {
           <>
             Client {versionMismatch.clientVersion} is connected to {versionMismatchServerLabel}{" "}
             {versionMismatch.serverVersion}.{" "}
-            {serverUpdateGuidance(versionMismatchSelfUpdate, versionMismatchServerLabel)}
+            {versionMismatchSelfUpdate ? serverUpdateGuidance(versionMismatchSelfUpdate) : null}
           </>
         ),
         // The desktop-managed guidance is already the description; the action
