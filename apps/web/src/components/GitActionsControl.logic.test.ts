@@ -88,7 +88,42 @@ describe("when: ref is clean and has an open PR", () => {
         icon: "pr",
         kind: "open_pr",
       },
+      {
+        id: "merge",
+        label: "Merge PR",
+        disabled: false,
+        icon: "merge",
+        kind: "merge_pr",
+      },
     ]);
+  });
+
+  it("offers conflict resolution instead of attempting to merge a conflicting PR", () => {
+    const items = buildMenuItems(
+      status({
+        pr: {
+          number: 12,
+          title: "Conflicting PR",
+          url: "https://example.com/pr/12",
+          baseRef: "main",
+          headRef: "feature/test",
+          state: "open",
+          mergeability: "conflicting",
+        },
+      }),
+      false,
+    );
+
+    assert.deepEqual(
+      items.find((item) => item.id === "merge"),
+      {
+        id: "merge",
+        label: "Resolve conflicts",
+        disabled: false,
+        icon: "resolve",
+        kind: "resolve_conflicts",
+      },
+    );
   });
 });
 
@@ -208,6 +243,13 @@ describe("when: ref is clean, ahead, and has an open PR", () => {
         disabled: false,
         icon: "pr",
         kind: "open_pr",
+      },
+      {
+        id: "merge",
+        label: "Merge PR",
+        disabled: false,
+        icon: "merge",
+        kind: "merge_pr",
       },
     ]);
   });
@@ -346,7 +388,7 @@ describe("when: ref is behind upstream", () => {
     assert.deepInclude(quick, { kind: "run_pull", label: "Pull", disabled: false });
   });
 
-  it("buildMenuItems disables push and create PR", () => {
+  it("buildMenuItems disables push and create PR but offers resolve conflicts", () => {
     const items = buildMenuItems(status({ behindCount: 1, pr: null }), false);
     assert.deepEqual(items, [
       {
@@ -373,7 +415,19 @@ describe("when: ref is behind upstream", () => {
         kind: "open_dialog",
         dialogAction: "create_pr",
       },
+      {
+        id: "resolve",
+        label: "Resolve conflicts",
+        disabled: false,
+        icon: "resolve",
+        kind: "resolve_conflicts",
+      },
     ]);
+  });
+
+  it("buildMenuItems omits resolve conflicts without an upstream", () => {
+    const items = buildMenuItems(status({ behindCount: 1, pr: null, hasUpstream: false }), false);
+    assert.isUndefined(items.find((item) => item.id === "resolve"));
   });
 });
 
@@ -578,6 +632,13 @@ describe("when: working tree has local changes and ref is behind upstream", () =
         icon: "pr",
         kind: "open_dialog",
         dialogAction: "create_pr",
+      },
+      {
+        id: "resolve",
+        label: "Resolve conflicts",
+        disabled: false,
+        icon: "resolve",
+        kind: "resolve_conflicts",
       },
     ]);
   });

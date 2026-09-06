@@ -59,24 +59,13 @@ it.effect("reports implemented tools separately from locally available executabl
       if (input.command === "gh" && input.args[0] === "--version") {
         return Effect.succeed(processOutput("gh version 2.83.0\n"));
       }
-      if (input.command === "gh" && input.args.join(" ") === "auth status --json hosts") {
+      if (input.command === "gh" && input.args.join(" ") === "auth status") {
         return Effect.succeed(
-          processOutput(
-            JSON.stringify({
-              hosts: {
-                "github.com": [
-                  {
-                    state: "success",
-                    active: true,
-                    host: "github.com",
-                    login: "juliusmarminge",
-                    tokenSource: "keyring",
-                    gitProtocol: "ssh",
-                  },
-                ],
-              },
-            }),
-          ),
+          processOutput(`github.com
+  ✓ Logged in to github.com account juliusmarminge (keyring)
+  - Active account: true
+  - Git operations protocol: ssh
+`),
         );
       }
       return Effect.fail(
@@ -175,24 +164,13 @@ it.effect("probes provider authentication without exposing token details", () =>
       if (input.args[0] === "--version") {
         return Effect.succeed(processOutput(`${input.command} version test\n`));
       }
-      if (input.command === "gh" && input.args.join(" ") === "auth status --json hosts") {
+      if (input.command === "gh" && input.args.join(" ") === "auth status") {
         return Effect.succeed(
-          processOutput(
-            JSON.stringify({
-              hosts: {
-                "github.com": [
-                  {
-                    state: "success",
-                    active: true,
-                    host: "github.com",
-                    login: "octocat",
-                    tokenSource: "keyring",
-                    gitProtocol: "ssh",
-                  },
-                ],
-              },
-            }),
-          ),
+          processOutput(`github.com
+  ✓ Logged in to github.com account octocat (keyring)
+  - Active account: true
+  - Git operations protocol: ssh
+`),
         );
       }
       if (input.command === "glab" && input.args.join(" ") === "auth status") {

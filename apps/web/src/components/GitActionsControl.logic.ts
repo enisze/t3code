@@ -10,16 +10,16 @@ import {
   type ChangeRequestTerminology,
 } from "../sourceControlPresentation";
 
-export type GitActionIconName = "commit" | "push" | "pr";
+export type GitActionIconName = "commit" | "push" | "pr" | "merge" | "resolve";
 
 export type GitDialogAction = "commit" | "push" | "create_pr";
 
 export interface GitActionMenuItem {
-  id: "commit" | "push" | "pr";
+  id: "commit" | "push" | "pr" | "merge" | "resolve";
   label: string;
   disabled: boolean;
   icon: GitActionIconName;
-  kind: "open_dialog" | "open_pr";
+  kind: "open_dialog" | "open_pr" | "merge_pr" | "resolve_conflicts";
   dialogAction?: GitDialogAction;
 }
 
@@ -102,6 +102,7 @@ export function buildMenuItems(
   const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
   const hasOpenPr = gitStatus.pr?.state === "open";
+  const hasConflictingPr = hasOpenPr && gitStatus.pr?.mergeability === "conflicting";
   const isBehind = gitStatus.behindCount > 0;
   const hasDefaultBranchDelta = (gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) > 0;
   const canPushWithoutUpstream = hasPrimaryRemote && !gitStatus.hasUpstream;
@@ -121,6 +122,7 @@ export function buildMenuItems(
     !isBehind &&
     (gitStatus.hasUpstream || canPushWithoutUpstream);
   const canOpenPr = !isBusy && hasOpenPr;
+  const canMergePr = !isBusy && hasOpenPr;
 
   const commitItem: GitActionMenuItem = {
     id: "commit",
@@ -135,32 +137,64 @@ export function buildMenuItems(
     return [commitItem];
   }
 
+  const pushItem: GitActionMenuItem = {
+    id: "push",
+    label: "Push",
+    disabled: !canPush,
+    icon: "push",
+    kind: "open_dialog",
+    dialogAction: "push",
+  };
+
+  // Offer an AI-assisted "Resolve conflicts" action whenever the branch has
+  // diverged from (or fallen behind) its upstream, i.e. when merging origin
+  // back in may produce conflicts. The action itself is never gated on
+  // `isBusy` because it only hands a prompt to the agent.
+  const resolveItem: GitActionMenuItem | null =
+    hasBranch && gitStatus.hasUpstream && isBehind
+      ? {
+          id: "resolve",
+          label: "Resolve conflicts",
+          disabled: false,
+          icon: "resolve",
+          kind: "resolve_conflicts",
+        }
+      : null;
+
+  if (hasOpenPr) {
+    return [
+      commitItem,
+      pushItem,
+      {
+        id: "pr",
+        label: `View ${terminology.shortLabel}`,
+        disabled: !canOpenPr,
+        icon: "pr",
+        kind: "open_pr",
+      },
+      {
+        id: "merge",
+        label: hasConflictingPr ? "Resolve conflicts" : `Merge ${terminology.shortLabel}`,
+        disabled: !canMergePr,
+        icon: hasConflictingPr ? "resolve" : "merge",
+        kind: hasConflictingPr ? "resolve_conflicts" : "merge_pr",
+      },
+      ...(resolveItem ? [resolveItem] : []),
+    ];
+  }
+
   return [
     commitItem,
+    pushItem,
     {
-      id: "push",
-      label: "Push",
-      disabled: !canPush,
-      icon: "push",
+      id: "pr",
+      label: `Create ${terminology.shortLabel}`,
+      disabled: !canCreatePr,
+      icon: "pr",
       kind: "open_dialog",
-      dialogAction: "push",
+      dialogAction: "create_pr",
     },
-    hasOpenPr
-      ? {
-          id: "pr",
-          label: `View ${terminology.shortLabel}`,
-          disabled: !canOpenPr,
-          icon: "pr",
-          kind: "open_pr",
-        }
-      : {
-          id: "pr",
-          label: `Create ${terminology.shortLabel}`,
-          disabled: !canCreatePr,
-          icon: "pr",
-          kind: "open_dialog",
-          dialogAction: "create_pr",
-        },
+    ...(resolveItem ? [resolveItem] : []),
   ];
 }
 

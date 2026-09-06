@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import * as NodeOS from "node:os";
 
 import type { ClaudeSettings } from "@t3tools/contracts";
@@ -13,6 +14,46 @@ export const resolveClaudeHomePath = Effect.fn("resolveClaudeHomePath")(function
   const homePath = config.homePath.trim();
   return path.resolve(homePath.length > 0 ? expandHomePath(homePath) : NodeOS.homedir());
 });
+
+/**
+ * Resolve the effective `CLAUDE_CONFIG_DIR` for an instance. This is the
+ * directory Claude Code reads/writes its `.claude.json`, `.credentials.json`
+ * and session state from. A custom `homePath` maps to it directly; an empty
+ * `homePath` maps to the CLI default `~/.claude` (note: NOT `resolveClaudeHomePath`,
+ * which returns the plain home dir for the empty case).
+ */
+export const resolveClaudeConfigDir = Effect.fn("resolveClaudeConfigDir")(function* (
+  config: Pick<ClaudeSettings, "homePath">,
+): Effect.fn.Return<string, never, Path.Path> {
+  const path = yield* Path.Path;
+  const homePath = config.homePath.trim();
+  return homePath.length > 0
+    ? path.resolve(expandHomePath(homePath))
+    : path.join(NodeOS.homedir(), ".claude");
+});
+
+/** Base macOS keychain service name Claude Code stores OAuth credentials under. */
+export const CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials";
+
+/**
+ * The macOS login-keychain service name that holds an instance's OAuth
+ * credentials. Claude Code stores the default `~/.claude` account under the
+ * bare {@link CLAUDE_KEYCHAIN_SERVICE}, but every non-default `CLAUDE_CONFIG_DIR`
+ * gets its own entry suffixed with the first 8 hex chars of `sha256(configDir)`.
+ * Without this suffix, every instance whose credentials live only in the
+ * keychain (the macOS default — no on-disk `.credentials.json`) would read the
+ * default account's token and report identical usage/limits.
+ */
+export const makeClaudeCredentialsServiceName = Effect.fn("makeClaudeCredentialsServiceName")(
+  function* (config: Pick<ClaudeSettings, "homePath">): Effect.fn.Return<string, never, Path.Path> {
+    const path = yield* Path.Path;
+    const configDir = yield* resolveClaudeConfigDir(config);
+    const defaultConfigDir = path.join(NodeOS.homedir(), ".claude");
+    if (configDir === defaultConfigDir) return CLAUDE_KEYCHAIN_SERVICE;
+    const suffix = createHash("sha256").update(configDir).digest("hex").slice(0, 8);
+    return `${CLAUDE_KEYCHAIN_SERVICE}-${suffix}`;
+  },
+);
 
 export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function* (
   config: Pick<ClaudeSettings, "homePath">,

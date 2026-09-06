@@ -20,8 +20,10 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 
 export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
+  projectHiddenById?: Record<string, boolean>;
   projectOrder?: string[];
   threadLastVisitedAtById?: Record<string, string>;
+  worktreeLastActivityAtByKey?: Record<string, string>;
   collapsedProjectCwds?: string[];
   expandedProjectCwds?: string[];
   projectOrderCwds?: string[];
@@ -33,6 +35,13 @@ export interface PersistedUiState {
 
 export interface UiProjectState {
   projectExpandedById: Record<string, boolean>;
+  // Which project groups the user has hidden from the sidebar. Keyed by the
+  // same preference keys as expansion so a group stays hidden across grouping
+  // modes and legacy cwd fallbacks.
+  projectHiddenById: Record<string, boolean>;
+  // Ephemeral reveal toggle for hidden projects — never persisted, so hidden
+  // projects start hidden again on every reload.
+  showHiddenProjects: boolean;
   projectOrder: string[];
   // Logical project key the sidebar list is scoped to, or null for "all
   // projects". Lives here so routes that unmount the sidebar (Settings)
@@ -42,6 +51,11 @@ export interface UiProjectState {
 
 export interface UiThreadState {
   threadLastVisitedAtById: Record<string, string>;
+  // Last time the user interacted with a worktree in a way the server-side
+  // thread timestamps don't capture — currently closing one of its chats.
+  // Keyed by `worktreeActivityKey`, it keeps the collapsed worktree row from
+  // sinking when its newest chat is closed. See `sortThreadsForSidebarV2`.
+  worktreeLastActivityAtByKey: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
 }
 
@@ -53,12 +67,21 @@ export interface UiState extends UiProjectState, UiThreadState, UiEndpointState 
 
 const initialState: UiState = {
   projectExpandedById: {},
+  projectHiddenById: {},
+  showHiddenProjects: false,
   projectOrder: [],
   sidebarProjectScopeKey: null,
   threadLastVisitedAtById: {},
+  worktreeLastActivityAtByKey: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
 };
+
+// Group key for a worktree's local activity, matching the key
+// `collapseWorktreeSiblings` uses to fold a worktree's chats into one row.
+export function worktreeActivityKey(environmentId: string, worktreePath: string): string {
+  return `${environmentId}\0${worktreePath}`;
+}
 
 const LEGACY_PROJECT_CWD_PREFERENCE_PREFIX = "legacy-project-cwd:";
 const LEGACY_PROJECT_EXPANSION_DEFAULT_KEY = "legacy-project-expansion-default";
@@ -135,8 +158,11 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
 
   return {
     projectExpandedById,
+    projectHiddenById: sanitizeBooleanRecord(parsed.projectHiddenById),
+    showHiddenProjects: false,
     projectOrder,
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
+    worktreeLastActivityAtByKey: sanitizeTimestampRecord(parsed.worktreeLastActivityAtByKey),
     threadChangedFilesExpandedById:
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
         ? sanitizePersistedThreadChangedFilesExpanded(parsed.threadChangedFilesExpandedById)
@@ -210,8 +236,10 @@ export function persistState(state: UiState): void {
       PERSISTED_STATE_KEY,
       JSON.stringify({
         projectExpandedById,
+        projectHiddenById: state.projectHiddenById,
         projectOrder: state.projectOrder,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
+        worktreeLastActivityAtByKey: state.worktreeLastActivityAtByKey,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         sidebarProjectScopeKey: state.sidebarProjectScopeKey,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
@@ -250,6 +278,28 @@ export function markThreadVisited(state: UiState, threadId: string, visitedAt: s
     threadLastVisitedAtById: {
       ...state.threadLastVisitedAtById,
       [threadId]: visitedAt,
+    },
+  };
+}
+
+export function markWorktreeActive(state: UiState, worktreeKey: string, activeAt: string): UiState {
+  if (worktreeKey.length === 0) {
+    return state;
+  }
+  const activeAtMs = Date.parse(activeAt);
+  if (!Number.isFinite(activeAtMs)) {
+    return state;
+  }
+  const previousActiveAt = state.worktreeLastActivityAtByKey[worktreeKey];
+  const previousActiveAtMs = previousActiveAt ? Date.parse(previousActiveAt) : NaN;
+  if (Number.isFinite(previousActiveAtMs) && previousActiveAtMs >= activeAtMs) {
+    return state;
+  }
+  return {
+    ...state,
+    worktreeLastActivityAtByKey: {
+      ...state.worktreeLastActivityAtByKey,
+      [worktreeKey]: activeAt,
     },
   };
 }
@@ -357,6 +407,49 @@ export function setProjectExpanded(
   };
 }
 
+export function resolveProjectHidden(
+  projectHiddenById: Readonly<Record<string, boolean>>,
+  preferenceKeys: readonly string[],
+): boolean {
+  for (const key of preferenceKeys) {
+    const hidden = projectHiddenById[key];
+    if (hidden !== undefined) {
+      return hidden;
+    }
+  }
+  return false;
+}
+
+export function setProjectHidden(
+  state: UiState,
+  projectIds: string | readonly string[],
+  hidden: boolean,
+): UiState {
+  const ids = typeof projectIds === "string" ? [projectIds] : projectIds;
+  const nextEntries = ids.filter((projectId) => state.projectHiddenById[projectId] !== hidden);
+  if (nextEntries.length === 0) {
+    return state;
+  }
+  const projectHiddenById = { ...state.projectHiddenById };
+  for (const projectId of nextEntries) {
+    projectHiddenById[projectId] = hidden;
+  }
+  return {
+    ...state,
+    projectHiddenById,
+  };
+}
+
+export function setShowHiddenProjects(state: UiState, show: boolean): UiState {
+  if (state.showHiddenProjects === show) {
+    return state;
+  }
+  return {
+    ...state,
+    showHiddenProjects: show,
+  };
+}
+
 export function reorderProjects(
   state: UiState,
   currentProjectOrder: readonly string[],
@@ -403,11 +496,14 @@ export function reorderProjects(
 
 interface UiStateStore extends UiState {
   markThreadVisited: (threadId: string, visitedAt: string) => void;
+  markWorktreeActive: (worktreeKey: string, activeAt: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   setSidebarProjectScopeKey: (projectKey: string | null) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
+  setProjectHidden: (projectIds: string | readonly string[], hidden: boolean) => void;
+  setShowHiddenProjects: (show: boolean) => void;
   reorderProjects: (
     currentProjectOrder: readonly string[],
     draggedProjectIds: readonly string[],
@@ -419,6 +515,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   ...readPersistedState(),
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
+  markWorktreeActive: (worktreeKey, activeAt) =>
+    set((state) => markWorktreeActive(state, worktreeKey, activeAt)),
   markThreadUnread: (threadId, latestTurnCompletedAt) =>
     set((state) => markThreadUnread(state, threadId, latestTurnCompletedAt)),
   setThreadChangedFilesExpanded: (threadId, turnId, expanded) =>
@@ -429,6 +527,9 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setSidebarProjectScopeKey(state, projectKey)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
+  setProjectHidden: (projectIds, hidden) =>
+    set((state) => setProjectHidden(state, projectIds, hidden)),
+  setShowHiddenProjects: (show) => set((state) => setShowHiddenProjects(state, show)),
   reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>
     set((state) =>
       reorderProjects(state, currentProjectOrder, draggedProjectIds, targetProjectIds),

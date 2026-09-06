@@ -888,6 +888,9 @@ export function useThreadOutboxDrain(): void {
           branch: creation.branch,
           worktreePath: creation.worktreePath,
           startFromOrigin: creation.startFromOrigin ?? false,
+          // Queued creations don't carry the project's prefix; this is only the
+          // temporary branch, which the server renames to the project's
+          // configured `<prefix>/<slug>` on the first turn.
           worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
         }),
       });

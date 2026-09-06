@@ -1,0 +1,247 @@
+# Claude
+
+This guide is for people who want to use more than one Claude setup in T3 Code.
+
+Common reasons:
+
+- use separate work and personal Claude accounts
+- try a different Claude Code configuration without disturbing your main setup
+- run Claude through a router such as Claude Code Router
+- use external providers exposed through a Claude-compatible workflow
+
+## I Only Use One Claude Account
+
+Use the default provider.
+
+Log in with Claude Code normally:
+
+```bash
+claude auth login
+```
+
+In T3 Code Settings, your Claude provider can stay like this:
+
+```text
+Display name: Claude
+Binary path: claude
+CLAUDE_CONFIG_DIR path: empty
+```
+
+An empty `CLAUDE_CONFIG_DIR path` means T3 Code uses Claude Code's normal config directory
+(`~/.claude`).
+
+## I Want Work And Personal Claude Accounts
+
+Use a different Claude config directory for each account. T3 Code isolates an instance with
+`CLAUDE_CONFIG_DIR`, not with `HOME`, so log each account in with the same variable. Claude Code
+stores each config directory's credentials separately (on macOS, as its own keychain entry), so both
+accounts stay logged in side by side.
+
+Example:
+
+```text
+~/.claude              work account (default)
+~/.claude-personal     personal account
+```
+
+### Set Up The First Account
+
+Log in normally:
+
+```bash
+claude auth login
+```
+
+In T3 Code Settings:
+
+```text
+Display name: Claude Work
+Binary path: claude
+CLAUDE_CONFIG_DIR path: empty
+```
+
+### Set Up The Second Account
+
+Log in with a separate config directory:
+
+```bash
+mkdir -p ~/.claude-personal
+CLAUDE_CONFIG_DIR=~/.claude-personal claude auth login
+```
+
+Then add another Claude provider in T3 Code with the
+<kbd>+</kbd> button in Settings → Providers:
+
+```text
+Display name: Claude Personal
+Binary path: claude
+CLAUDE_CONFIG_DIR path: ~/.claude-personal
+```
+
+Use the email shown in Settings to confirm each provider is using the intended account. Emails are
+blurred by default; click the blurred email to reveal it.
+
+To check an account outside T3 Code, ask the CLI which account a config directory holds:
+
+```bash
+claude auth status
+CLAUDE_CONFIG_DIR=~/.claude-personal claude auth status
+```
+
+Each command prints the email and subscription for that config directory. If the second command
+reports that you are not logged in, the login did not land in that directory — repeat the login with
+`CLAUDE_CONFIG_DIR` set, and make sure the path in Settings matches it exactly.
+
+Do not use `HOME=~/some-dir claude auth login` for this. That writes the login to
+`~/some-dir/.claude`, which is not the path T3 Code passes as `CLAUDE_CONFIG_DIR`, so the instance
+reports no account.
+
+## Can I Switch Claude Accounts In An Existing Thread?
+
+Usually, no.
+
+T3 Code only offers Claude providers that use the same Claude config directory for an existing
+thread. A different config directory is treated as a different Claude environment.
+
+This is different from the recommended Codex setup. Claude Code keeps account and local state across
+multiple files under its config directory, so T3 Code keeps separate Claude config directories
+isolated instead of trying to share part of the state.
+
+To pick an account for new threads in a project, open the project's
+Project settings → Default agent.
+
+## I Want To Use OpenRouter
+
+Use this when you want Claude Code to talk to OpenRouter directly, without running a local router.
+This is the simplest external-provider setup.
+
+OpenRouter provides a Claude Code integration through Claude's Anthropic-compatible environment
+variables.
+
+### Configure A Claude OpenRouter Provider
+
+Add or edit a Claude provider in T3 Code Settings:
+
+```text
+Display name: Claude OpenRouter
+Binary path: claude
+CLAUDE_CONFIG_DIR path: ~/.claude-openrouter
+```
+
+In that provider's Environment variables section, add:
+
+```text
+ANTHROPIC_BASE_URL   https://openrouter.ai/api
+ANTHROPIC_AUTH_TOKEN sk-or-...                Sensitive
+ANTHROPIC_API_KEY                              Empty value
+```
+
+Mark `ANTHROPIC_AUTH_TOKEN` as sensitive. T3 Code stores the value as a server secret and does not
+send it back to the app after saving.
+
+If you want this setup isolated from your normal Claude account, create that config directory first:
+
+```bash
+mkdir -p ~/.claude-openrouter
+```
+
+If you previously used the same config directory with a normal Anthropic login, run `/logout` in a
+Claude Code session for it before using OpenRouter. Otherwise Claude Code may keep using cached
+Anthropic credentials instead of the OpenRouter token.
+
+### Pick OpenRouter Models
+
+OpenRouter can route Claude Code's default model roles to OpenRouter model IDs.
+
+Example:
+
+```text
+ANTHROPIC_DEFAULT_OPUS_MODEL    anthropic/claude-opus-4.6
+ANTHROPIC_DEFAULT_SONNET_MODEL  anthropic/claude-sonnet-4.6
+ANTHROPIC_DEFAULT_HAIKU_MODEL   anthropic/claude-haiku-4.5
+CLAUDE_CODE_SUBAGENT_MODEL      anthropic/claude-sonnet-4.6
+```
+
+Add those to the same provider's Environment variables section if you want stable model choices.
+
+### Verify OpenRouter Is Being Used
+
+Open a Claude session and run:
+
+```text
+/status
+```
+
+You should see the Anthropic base URL set to:
+
+```text
+https://openrouter.ai/api
+```
+
+You can also check the OpenRouter activity dashboard for requests from your API key.
+
+### Common OpenRouter Mistakes
+
+- Use `https://openrouter.ai/api`, not `https://openrouter.ai/api/v1`, for Claude Code.
+- Set `ANTHROPIC_AUTH_TOKEN` to your OpenRouter API key.
+- Set `ANTHROPIC_API_KEY` to an empty string so Claude Code does not try to use an Anthropic login.
+- Put these variables on the Claude provider instance, not in global shell startup files.
+
+OpenRouter's setup can change over time. Use its upstream Claude Code guide for the current details:
+<https://openrouter.ai/docs/guides/guides/claude-code-integration>.
+
+## I Want To Use Claude Code Router
+
+Claude Code Router is useful when you want a local routing layer with more control than a direct
+OpenRouter setup.
+
+T3 Code does not need a special Claude Code Router provider. Treat the router as a Claude
+environment.
+
+Use this when you want Claude Code Router to decide which upstream model or provider handles Claude
+requests.
+
+High-level flow:
+
+1. Start Claude Code Router.
+2. Add or configure a Claude provider in T3 Code.
+3. Put the router's required variables on that provider instance.
+
+Configure a Claude provider:
+
+```text
+Display name: Claude Router
+Binary path: claude
+CLAUDE_CONFIG_DIR path: ~/.claude-router
+```
+
+Then copy the variables that `ccr activate` would export into the provider's Environment variables
+section. Mark tokens and API keys as sensitive.
+
+If you want the router-backed setup to stay separate from your normal Claude account, create and log
+in with a dedicated config directory first:
+
+```bash
+mkdir -p ~/.claude-router
+ccr start
+ccr activate
+CLAUDE_CONFIG_DIR=~/.claude-router claude auth login
+```
+
+Claude Code Router's setup can change over time. Use its upstream README for the current install and
+configuration steps: <https://github.com/musistudio/claude-code-router>.
+
+## I Want Different Claude Settings, Not A Different Account
+
+Create another Claude provider with the same account if you want a named preset.
+
+Examples:
+
+- "Claude Default"
+- "Claude Router"
+- "Claude Experimental"
+
+If the preset needs different Claude files, give it a different `CLAUDE_CONFIG_DIR path`. If it needs
+different API keys, base URLs, or router settings, use Environment variables.
+
+Do not put environment variable assignments in `Launch arguments`.

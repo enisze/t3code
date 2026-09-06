@@ -34,7 +34,8 @@ export type SourceControlActionKind =
   | "pull"
   | "publishRepository"
   | "runStackedAction"
-  | "preparePullRequestThread";
+  | "preparePullRequestThread"
+  | "mergePullRequest";
 
 export interface SourceControlActionScope {
   readonly environmentId: EnvironmentId | null;
@@ -61,6 +62,7 @@ const ACTION_OPERATION = {
   publishRepository: "publish_repository",
   runStackedAction: "run_change_request",
   preparePullRequestThread: "prepare_pull_request_thread",
+  mergePullRequest: "merge_pull_request",
 } as const satisfies Record<SourceControlActionKind, VcsActionOperation>;
 
 function useAction<
@@ -215,6 +217,7 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
     async (input: {
       actionId: string;
       action: GitStackedAction;
+      baseBranch?: string;
       commitMessage?: string;
       featureBranch?: boolean;
       filePaths?: string[];
@@ -234,6 +237,7 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
       return runStackedAction({
         actionId: input.actionId,
         action: input.action,
+        ...(input.baseBranch ? { baseBranch: input.baseBranch } : {}),
         ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
         ...(input.featureBranch ? { featureBranch: true } : {}),
         ...(input.filePaths?.length ? { filePaths: input.filePaths } : {}),
@@ -243,7 +247,7 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
     [runStackedAction, scope],
   );
 
-  return useAction({
+  const trackedAction = useAction({
     kind: "runStackedAction",
     label: "Running source control action",
     scope,
@@ -251,6 +255,10 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
     onSuccess: status.refresh,
     managedExternally: true,
   });
+  return {
+    ...trackedAction,
+    cancel: () => vcsActionManager.cancelStackedAction(appAtomRegistry, scope),
+  };
 }
 
 export function useSourceControlPublishRepositoryAction(scope: SourceControlActionScope) {
@@ -339,6 +347,51 @@ export function usePreparePullRequestThreadAction(scope: SourceControlActionScop
     label: "Preparing pull request thread",
     scope,
     action,
+  });
+}
+
+export function useGitMergePullRequestAction(scope: SourceControlActionScope) {
+  const mergePullRequest = useAtomCommand(gitEnvironment.mergePullRequest, {
+    reportFailure: false,
+  });
+  const status = useEnvironmentQuery(
+    scope.environmentId !== null && scope.cwd !== null
+      ? vcsEnvironment.status({
+          environmentId: scope.environmentId,
+          input: { cwd: scope.cwd },
+        })
+      : null,
+  );
+  const action = useCallback(
+    async (input: { reference: string }) => {
+      const target = resolveScope(scope);
+      if (target === null) {
+        return AsyncResult.failure<never, VcsActionUnavailableError>(
+          Cause.fail(
+            new VcsActionUnavailableError({
+              operation: "merge_pull_request",
+              environmentId: scope.environmentId,
+              cwd: scope.cwd,
+            }),
+          ),
+        );
+      }
+      return mergePullRequest({
+        environmentId: target.environmentId,
+        input: {
+          cwd: target.cwd,
+          reference: input.reference,
+        },
+      });
+    },
+    [mergePullRequest, scope],
+  );
+  return useAction({
+    kind: "mergePullRequest",
+    label: "Merging pull request",
+    scope,
+    action,
+    onSuccess: status.refresh,
   });
 }
 

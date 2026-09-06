@@ -342,6 +342,11 @@ describe("OrchestrationEngine", () => {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
+          gitHubAccount: null,
+          worktreeBranchPrefix: null,
+          defaultWorktreeBranch: null,
+          previewPort: null,
+          worktreeCopyFiles: [],
           scripts: [],
           createdAt: "2026-03-03T00:00:00.000Z",
           updatedAt: "2026-03-03T00:00:01.000Z",
@@ -405,6 +410,7 @@ describe("OrchestrationEngine", () => {
               threads: [],
               updatedAt: projectionSnapshot.updatedAt,
             }),
+          listAccountRoutes: () => Effect.die("unused"),
           getArchivedShellSnapshot: () =>
             Effect.succeed({
               snapshotSequence: projectionSnapshot.snapshotSequence,
@@ -417,6 +423,7 @@ describe("OrchestrationEngine", () => {
           getCounts: () => Effect.succeed({ projectCount: 1, threadCount: 1 }),
           getEventReplayStats: () => Effect.die("unused"),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+          getDefaultModelSelectionForCwd: () => Effect.succeed(Option.none()),
           getProjectShellById: () => Effect.succeed(Option.none()),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
           getImportedAgentSessionSources: () => Effect.die("unused"),

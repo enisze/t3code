@@ -37,6 +37,7 @@ export const VcsActionOperation = Schema.Literals([
   "init",
   "publish_repository",
   "prepare_pull_request_thread",
+  "merge_pull_request",
 ]);
 export type VcsActionOperation = typeof VcsActionOperation.Type;
 
@@ -73,6 +74,7 @@ export interface BeginVcsActionInput {
 export interface RunVcsStackedActionInput {
   readonly actionId: string;
   readonly action: GitStackedAction;
+  readonly baseBranch?: string;
   readonly commitMessage?: string;
   readonly featureBranch?: boolean;
   readonly filePaths?: ReadonlyArray<string>;
@@ -436,6 +438,7 @@ export function createVcsActionManager<R, E>(
       label: `vcs-action:run-stacked:${commandKey}`,
       scheduler: vcsCommandScheduler,
       concurrency: { mode: "serial", key: () => commandKey },
+      cancellable: true,
       execute: (input: RunVcsStackedActionInput, registry) => {
         if (target === null) {
           return Effect.fail(
@@ -460,6 +463,7 @@ export function createVcsActionManager<R, E>(
           actionId: transportActionId,
           cwd: target.cwd,
           action: input.action,
+          ...(input.baseBranch ? { baseBranch: input.baseBranch } : {}),
           ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
           ...(input.featureBranch ? { featureBranch: true } : {}),
           ...(input.filePaths?.length ? { filePaths: [...input.filePaths] } : {}),
@@ -526,6 +530,10 @@ export function createVcsActionManager<R, E>(
   return {
     stateAtom: getVcsActionStateAtom,
     runStackedAction: (target: VcsActionTarget) => getRunStackedActionCommand(target),
+    cancelStackedAction: (registry: AtomRegistry.AtomRegistry, target: VcsActionTarget) => {
+      getRunStackedActionCommand(target).cancel?.(registry);
+      setState(registry, target, () => EMPTY_VCS_ACTION_STATE);
+    },
     track: async <A, E>(
       registry: AtomRegistry.AtomRegistry,
       target: VcsActionTarget,

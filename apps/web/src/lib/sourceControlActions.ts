@@ -1,5 +1,6 @@
 export {
   readCachedPullRequestResolution,
+  useGitMergePullRequestAction,
   useGitStackedAction,
   usePreparePullRequestThreadAction,
   usePullRequestResolutionState as usePullRequestResolution,

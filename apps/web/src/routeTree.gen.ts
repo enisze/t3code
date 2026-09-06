@@ -31,6 +31,7 @@ import { Route as ConnectCallbackRouteImport } from './routes/connect_.callback'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
+import { Route as SettingsProjectsEnvironmentIdProjectIdRouteImport } from './routes/settings.projects.$environmentId.$projectId'
 
 const WelcomeRoute = WelcomeRouteImport.update({
   id: '/welcome',
@@ -142,6 +143,12 @@ const ChatEnvironmentIdThreadIdRoute =
     path: '/$environmentId/$threadId',
     getParentRoute: () => ChatRoute,
   } as any)
+const SettingsProjectsEnvironmentIdProjectIdRoute =
+  SettingsProjectsEnvironmentIdProjectIdRouteImport.update({
+    id: '/projects/$environmentId/$projectId',
+    path: '/projects/$environmentId/$projectId',
+    getParentRoute: () => SettingsRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
@@ -165,6 +172,7 @@ export interface FileRoutesByFullPath {
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/settings/projects/$environmentId/$projectId': typeof SettingsProjectsEnvironmentIdProjectIdRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
@@ -188,6 +196,7 @@ export interface FileRoutesByTo {
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/settings/projects/$environmentId/$projectId': typeof SettingsProjectsEnvironmentIdProjectIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -213,6 +222,7 @@ export interface FileRoutesById {
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/settings/projects/$environmentId/$projectId': typeof SettingsProjectsEnvironmentIdProjectIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -238,6 +248,7 @@ export interface FileRouteTypes {
     | '/settings/source-control'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/settings/projects/$environmentId/$projectId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
@@ -261,6 +272,7 @@ export interface FileRouteTypes {
     | '/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/settings/projects/$environmentId/$projectId'
   id:
     | '__root__'
     | '/_chat'
@@ -285,6 +297,7 @@ export interface FileRouteTypes {
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
+    | '/settings/projects/$environmentId/$projectId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -454,6 +467,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatEnvironmentIdThreadIdRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/settings/projects/$environmentId/$projectId': {
+      id: '/settings/projects/$environmentId/$projectId'
+      path: '/projects/$environmentId/$projectId'
+      fullPath: '/settings/projects/$environmentId/$projectId'
+      preLoaderRoute: typeof SettingsProjectsEnvironmentIdProjectIdRouteImport
+      parentRoute: typeof SettingsRoute
+    }
   }
 }
 
@@ -484,6 +504,7 @@ interface SettingsRouteChildren {
   SettingsProjectsRoute: typeof SettingsProjectsRoute
   SettingsProvidersRoute: typeof SettingsProvidersRoute
   SettingsSourceControlRoute: typeof SettingsSourceControlRoute
+  SettingsProjectsEnvironmentIdProjectIdRoute: typeof SettingsProjectsEnvironmentIdProjectIdRoute
 }
 
 const SettingsRouteChildren: SettingsRouteChildren = {
@@ -497,6 +518,8 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsProjectsRoute: SettingsProjectsRoute,
   SettingsProvidersRoute: SettingsProvidersRoute,
   SettingsSourceControlRoute: SettingsSourceControlRoute,
+  SettingsProjectsEnvironmentIdProjectIdRoute:
+    SettingsProjectsEnvironmentIdProjectIdRoute,
 }
 
 const SettingsRouteWithChildren = SettingsRoute._addFileChildren(

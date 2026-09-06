@@ -14,6 +14,7 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
+import { useWorkspaceThreadRef } from "../lib/workspaceThreadRef";
 import { resolveShortcutCommand } from "../keybindings";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
@@ -42,17 +43,21 @@ function ChatRouteGlobalShortcuts() {
       }).length,
     [primaryEnvironmentId, projectGroupingSettings, projects],
   );
+  // Terminal/preview open-state is shared across a worktree, so the shortcut
+  // context resolves the route thread to its worktree representative.
+  const workspaceThreadRef = useWorkspaceThreadRef(routeThreadRef);
   const terminalOpen = useTerminalUiStateStore((state) =>
-    routeThreadRef
-      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
+    workspaceThreadRef
+      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, workspaceThreadRef)
+          .terminalOpen
       : false,
   );
   // The `previewOpen` shortcut-context flag here uses the store-only value;
   // the URL-aware arbitration lives inside ChatView's `onTogglePreview`,
   // which we invoke via the action bus to avoid duplicating the rule.
   const previewOpen = useRightPanelStore((state) =>
-    routeThreadRef
-      ? selectActiveRightPanel(state.byThreadKey, routeThreadRef) === "preview"
+    workspaceThreadRef
+      ? selectActiveRightPanel(state.byThreadKey, workspaceThreadRef) === "preview"
       : false,
   );
   useEffect(() => {

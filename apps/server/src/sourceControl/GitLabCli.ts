@@ -142,6 +142,10 @@ export class GitLabCliCommandError extends Schema.TaggedErrorClass<GitLabCliComm
           case "rate-limited":
             return new GitLabCliRateLimitError({ ...context, cause });
           case "not-found":
+          case "repository-not-found":
+          case "permission-denied":
+          case "merge-blocked":
+          case "provider-unavailable":
           case "command-failed":
           case undefined:
             return new GitLabCliCommandError({ ...context, cause });
@@ -315,6 +319,11 @@ export class GitLabCli extends Context.Service<
       readonly cwd: string;
       readonly reference: string;
       readonly force?: boolean;
+    }) => Effect.Effect<void, GitLabCliError>;
+
+    readonly mergeMergeRequest: (input: {
+      readonly cwd: string;
+      readonly reference: string;
     }) => Effect.Effect<void, GitLabCliError>;
   }
 >()("t3/sourceControl/GitLabCli") {}
@@ -653,6 +662,12 @@ export const make = Effect.gen(function* () {
         cwd: input.cwd,
         reference: input.reference,
         args: ["mr", "checkout", input.reference],
+      }).pipe(Effect.asVoid),
+    mergeMergeRequest: (input) =>
+      executeMergeRequest({
+        cwd: input.cwd,
+        reference: input.reference,
+        args: ["mr", "merge", input.reference, "--yes"],
       }).pipe(Effect.asVoid),
   });
 });

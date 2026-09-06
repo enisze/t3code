@@ -249,6 +249,74 @@ export function SourceControlWritingSettingsSection() {
           </div>
         }
       />
+
+      <SettingsRow
+        title="Review prompt"
+        description="Text submitted automatically when you choose Review beside the Git actions."
+        resetAction={
+          settings.reviewPrompt !== DEFAULT_UNIFIED_SETTINGS.reviewPrompt ? (
+            <SettingResetButton
+              label="review prompt"
+              onClick={() =>
+                updateSettings({ reviewPrompt: DEFAULT_UNIFIED_SETTINGS.reviewPrompt })
+              }
+            />
+          ) : null
+        }
+      >
+        <div className="mt-3 max-w-2xl pb-3.5">
+          <Textarea
+            key={settings.reviewPrompt}
+            defaultValue={settings.reviewPrompt}
+            onBlur={(event) => {
+              const reviewPrompt = event.target.value.trim();
+              if (reviewPrompt.length === 0) {
+                event.target.value = settings.reviewPrompt;
+                return;
+              }
+              if (reviewPrompt !== settings.reviewPrompt) {
+                updateSettings({ reviewPrompt });
+              }
+            }}
+            rows={4}
+            aria-label="Review prompt"
+          />
+        </div>
+      </SettingsRow>
+
+      <SettingsRow
+        title="Resolve prompt"
+        description="Text submitted automatically when you choose Resolve conflicts in the Git actions menu."
+        resetAction={
+          settings.resolvePrompt !== DEFAULT_UNIFIED_SETTINGS.resolvePrompt ? (
+            <SettingResetButton
+              label="resolve prompt"
+              onClick={() =>
+                updateSettings({ resolvePrompt: DEFAULT_UNIFIED_SETTINGS.resolvePrompt })
+              }
+            />
+          ) : null
+        }
+      >
+        <div className="mt-3 max-w-2xl pb-3.5">
+          <Textarea
+            key={settings.resolvePrompt}
+            defaultValue={settings.resolvePrompt}
+            onBlur={(event) => {
+              const resolvePrompt = event.target.value.trim();
+              if (resolvePrompt.length === 0) {
+                event.target.value = settings.resolvePrompt;
+                return;
+              }
+              if (resolvePrompt !== settings.resolvePrompt) {
+                updateSettings({ resolvePrompt });
+              }
+            }}
+            rows={4}
+            aria-label="Resolve prompt"
+          />
+        </div>
+      </SettingsRow>
     </SettingsSection>
   );
 }

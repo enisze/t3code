@@ -73,6 +73,23 @@ const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFai
     return "authentication";
   }
 
+  // The command ran, but its working directory couldn't be resolved to a
+  // repository the provider can act on: not a git repository, no remotes, or no
+  // remote pointing at the provider's host. The CLIs word this as "not a git
+  // repository", "no git remotes found", or (gh) "none of the git remotes …
+  // point to a known GitHub host". Classified above `not-found` so a bare
+  // "not found" in these messages can't misroute it to the PR-missing bucket.
+  if (
+    normalized.includes("not a git repository") ||
+    normalized.includes("no git remote") ||
+    normalized.includes("none of the git remotes") ||
+    normalized.includes("no github remotes found") ||
+    normalized.includes("no gitlab remotes found") ||
+    normalized.includes("no default remote repository")
+  ) {
+    return "repository-not-found";
+  }
+
   if (
     normalized.includes("api rate limit") ||
     normalized.includes("rate limit exceeded") ||
@@ -98,6 +115,53 @@ const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFai
       (normalized.includes("not found") || normalized.includes("does not exist")))
   ) {
     return "not-found";
+  }
+
+  // Valid identity, insufficient rights — the common multi-account footgun,
+  // where the account chosen for a project isn't a collaborator on its repo.
+  if (
+    normalized.includes("permission") ||
+    normalized.includes("must have write access") ||
+    normalized.includes("must have admin") ||
+    normalized.includes("forbidden") ||
+    normalized.includes("403") ||
+    normalized.includes("resource not accessible") ||
+    normalized.includes("not authorized")
+  ) {
+    return "permission-denied";
+  }
+
+  // The change request exists and the caller may merge, but the platform
+  // refuses this merge right now.
+  if (
+    normalized.includes("not mergeable") ||
+    normalized.includes("is not mergeable") ||
+    normalized.includes("merge conflict") ||
+    normalized.includes("has conflicts") ||
+    normalized.includes("not allowed") ||
+    normalized.includes("merge commits are not allowed") ||
+    normalized.includes("squash merges are not allowed") ||
+    normalized.includes("rebase merges are not allowed") ||
+    normalized.includes("required status") ||
+    normalized.includes("branch protection") ||
+    normalized.includes("at least") || // "at least N approving review(s)"
+    normalized.includes("changes must be made through a pull request") ||
+    normalized.includes("base branch was modified") ||
+    normalized.includes("not up to date")
+  ) {
+    return "merge-blocked";
+  }
+
+  if (
+    /\bhttp (?:500|502|503|504)\b/.test(normalized) ||
+    normalized.includes("internal server error") ||
+    normalized.includes("server is currently unavailable") ||
+    normalized.includes("temporarily unavailable") ||
+    normalized.includes("service unavailable") ||
+    normalized.includes("bad gateway") ||
+    normalized.includes("gateway timeout")
+  ) {
+    return "provider-unavailable";
   }
 
   return "command-failed";

@@ -8,9 +8,12 @@ import {
 import {
   buildProjectScript,
   commandForProjectScript,
+  isTaskTerminalId,
   nextProjectScriptId,
   primaryProjectScript,
   projectScriptIdFromCommand,
+  TASK_SHELL_TERMINAL_ID,
+  taskTerminalId,
 } from "./projectScripts";
 
 describe("projectScripts helpers", () => {
@@ -128,5 +131,13 @@ describe("projectScripts helpers", () => {
         worktreePath: null,
       }),
     ).toBe("/repo");
+  });
+
+  it("derives stable task terminal ids and recognizes them", () => {
+    expect(taskTerminalId("dev")).toBe("task-dev");
+    expect(taskTerminalId("setup")).toBe("task-setup");
+    expect(isTaskTerminalId(taskTerminalId("dev"))).toBe(true);
+    expect(isTaskTerminalId(TASK_SHELL_TERMINAL_ID)).toBe(true);
+    expect(isTaskTerminalId("term-1")).toBe(false);
   });
 });

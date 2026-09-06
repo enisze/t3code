@@ -19,6 +19,11 @@ const makeProject = (scripts: OrchestrationProject["scripts"]): OrchestrationPro
   title: "Project",
   workspaceRoot: "/repo/project",
   defaultModelSelection: null,
+  gitHubAccount: null,
+  worktreeBranchPrefix: null,
+  defaultWorktreeBranch: null,
+  previewPort: null,
+  worktreeCopyFiles: [],
   scripts,
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
@@ -31,6 +36,7 @@ const makeProjectionSnapshotQueryLayer = (project: OrchestrationProject) =>
     getCommandReadModel: () => Effect.die("unused"),
     getSnapshot: () => Effect.die("unused"),
     getShellSnapshot: () => Effect.die("unused"),
+    listAccountRoutes: () => Effect.die("unused"),
     getArchivedShellSnapshot: () => Effect.die("unused"),
     getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 1 }),
     getCounts: () => Effect.die("unused"),
@@ -39,6 +45,7 @@ const makeProjectionSnapshotQueryLayer = (project: OrchestrationProject) =>
       Effect.succeed(
         workspaceRoot === project.workspaceRoot ? Option.some(project) : Option.none(),
       ),
+    getDefaultModelSelectionForCwd: () => Effect.die("unused"),
     getProjectShellById: (projectId) =>
       Effect.succeed(projectId === project.id ? Option.some(project) : Option.none()),
     getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
