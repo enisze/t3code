@@ -138,6 +138,7 @@ import * as RelayClient from "@t3tools/shared/relayClient";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
 import { forkParked, ServerActivation } from "./serverActivation.ts";
 
+import { layer as projectWorktreeFileCopierLayer } from "./project/ProjectWorktreeFileCopier.ts";
 // MCP handoff thread IDs include escaped provenance and can exceed find-my-way's
 // 100-character default for one path segment.
 export const HTTP_ROUTER_CONFIG = {
@@ -326,7 +327,7 @@ const GitManagerLayerLive = GitManager.layer.pipe(
   // copier here so the server graph resolves it. Layer.suspend defers the
   // reference past module init — the copier module is part of an import cycle,
   // so touching it eagerly leaves the binding in its temporal dead zone.
-  Layer.provideMerge(Layer.suspend(() => ProjectWorktreeFileCopier.layer)),
+  Layer.provideMerge(projectWorktreeFileCopierLayer),
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
   Layer.provideMerge(TextGeneration.layer),
