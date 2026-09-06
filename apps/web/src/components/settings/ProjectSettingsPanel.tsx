@@ -39,6 +39,8 @@ import { mapAtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { decodeProjectScriptKeybindingRule, keybindingValueForCommand } from "../../lib/projectScriptKeybindings";
 import { buildProjectScript, commandForProjectScript, nextProjectScriptId } from "../../projectScripts";
+import type { ProjectScript, ResolvedKeybindingsConfig, ServerSettings } from "@t3tools/contracts";
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 /**
  * Per-project settings page. Hosts every project-scoped setting (name, git
  * defaults, files copied into new worktrees, agents, scripts, preview) in the
