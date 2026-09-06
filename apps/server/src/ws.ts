@@ -37,6 +37,8 @@ import {
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
   type OrchestrationShellStreamItem,
+  type OrchestrationThreadStreamItem,
+  OrchestrationGenerateContinuationSummaryError,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
   OrchestrationSearchThreadsError,
@@ -85,12 +87,8 @@ import {
   projectActivityEvent,
   projectThreadDetailSnapshot,
 } from "./orchestration/ActivityPayloadProjection.ts";
-import { makeThreadLiveEventCoalescer } from "./orchestration/ThreadLiveEventCoalescer.ts";
-import { makeLiveStreamBudget, type RetainedLiveItem } from "./orchestration/LiveStreamBudget.ts";
-import {
-  cleanupFailedUploadedAttachments,
-  normalizeDispatchCommand,
-} from "./orchestration/Normalizer.ts";
+import { isThreadAlreadyExistsInvariantError } from "./orchestration/commandInvariants.ts";
+import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
@@ -110,6 +108,7 @@ import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -127,6 +126,7 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import { importRecentAgentThreads } from "./project/AgentSessionImporter.ts";
+import * as ProjectWorktreeFileCopier from "./project/ProjectWorktreeFileCopier.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
@@ -465,6 +465,50 @@ function readClientAnalyticsProps(request: HttpServerRequest.HttpServerRequest) 
   };
 }
 
+/** Max characters of role-tagged transcript fed to the continuation summarizer. */
+const CONTINUATION_TRANSCRIPT_MAX_CHARS = 24_000;
+
+/**
+ * Build a compact role-tagged transcript for the continuation summarizer.
+ *
+ * When the conversation is long, keep the opening message (the original goal)
+ * plus the most recent exchanges rather than shipping the entire transcript to
+ * the model — the summary needs intent and current state, not every turn, and
+ * this keeps the one-time generation cost bounded.
+ */
+function buildContinuationTranscript(
+  messages: ReadonlyArray<{ readonly role: string; readonly text: string }>,
+): string {
+  const lines = messages
+    .map((message) => {
+      const text = message.text.trim();
+      if (text.length === 0) return null;
+      const label =
+        message.role === "user"
+          ? "User"
+          : message.role === "assistant"
+            ? "Assistant"
+            : message.role;
+      return `${label}: ${text}`;
+    })
+    .filter((line): line is string => line !== null);
+  if (lines.length === 0) return "";
+
+  const joined = lines.join("\n\n");
+  if (joined.length <= CONTINUATION_TRANSCRIPT_MAX_CHARS) return joined;
+
+  const head = lines[0] ?? "";
+  let budget = CONTINUATION_TRANSCRIPT_MAX_CHARS - head.length;
+  const tail: string[] = [];
+  for (let index = lines.length - 1; index >= 1; index--) {
+    const line = lines[index] ?? "";
+    if (budget - line.length < 0) break;
+    budget -= line.length;
+    tail.unshift(line);
+  }
+  return [head, "[… earlier conversation omitted …]", ...tail].join("\n\n");
+}
+
 const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   clientOrigin: OrchestrationClientOrigin,
@@ -530,6 +574,7 @@ const makeWsRpcLayer = (
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const textGeneration = yield* TextGeneration.TextGeneration;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -571,6 +616,7 @@ const makeWsRpcLayer = (
       });
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
+      const projectWorktreeFileCopier = yield* ProjectWorktreeFileCopier.ProjectWorktreeFileCopier;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -1092,63 +1138,107 @@ const makeWsRpcLayer = (
                 );
             });
 
+          // Copy the project's configured local files (e.g. `.env.local`) into the
+          // fresh worktree before the setup script runs, so the script can rely on
+          // them. Copy problems are logged per file and never fail the bootstrap.
+          const runCopyProjectFilesProgram = () =>
+            Effect.gen(function* () {
+              if (!bootstrap?.runSetupScript || !targetWorktreePath) {
+                return;
+              }
+              yield* projectWorktreeFileCopier
+                .copyForThread({
+                  threadId: command.threadId,
+                  ...(targetProjectId ? { projectId: targetProjectId } : {}),
+                  ...(targetProjectCwd ? { projectCwd: targetProjectCwd } : {}),
+                  worktreePath: targetWorktreePath,
+                })
+                .pipe(
+                  Effect.tapError((error) =>
+                    Effect.logWarning("Failed to copy project files into worktree", {
+                      threadId: command.threadId,
+                      worktreePath: targetWorktreePath,
+                      detail: error.message,
+                    }),
+                  ),
+                  Effect.ignore,
+                );
+            });
+
           const bootstrapProgram = Effect.gen(function* () {
             if (bootstrap?.createThread) {
-              const created = yield* dispatchFromClient({
-                type: "thread.create",
-                commandId: yield* serverCommandId("bootstrap-thread-create"),
-                threadId: command.threadId,
-                projectId: bootstrap.createThread.projectId,
-                title: bootstrap.createThread.title,
-                modelSelection: bootstrap.createThread.modelSelection,
-                runtimeMode: bootstrap.createThread.runtimeMode,
-                interactionMode: bootstrap.createThread.interactionMode,
-                branch: bootstrap.createThread.branch,
-                worktreePath: bootstrap.createThread.worktreePath,
-                createdAt: bootstrap.createThread.createdAt,
-              });
-              // The successful create is a fence in the engine command queue:
-              // every delete for the prior incarnation committed before it.
-              // Drain through that event before setup or turn start can own
-              // terminals and provider sessions under the reused thread id.
-              yield* threadDeletionReactor.drainThrough(created.sequence);
-              createdThread = true;
+              // Bootstrapping a draft is a "create if absent" operation: the
+              // client generated this threadId before the thread existed, so a
+              // duplicate send (or a draft that was already promoted) can target
+              // a threadId the server already has. Treat that specific invariant
+              // as a no-op and continue with the turn against the existing
+              // thread instead of failing the whole send — the client then
+              // navigates to the already-created chat. `createdThread` stays
+              // false so cleanup never deletes a thread we did not create.
+              const created = yield* orchestrationEngine
+                .dispatch({
+                  type: "thread.create",
+                  commandId: yield* serverCommandId("bootstrap-thread-create"),
+                  threadId: command.threadId,
+                  projectId: bootstrap.createThread.projectId,
+                  title: bootstrap.createThread.title,
+                  modelSelection: bootstrap.createThread.modelSelection,
+                  runtimeMode: bootstrap.createThread.runtimeMode,
+                  interactionMode: bootstrap.createThread.interactionMode,
+                  branch: bootstrap.createThread.branch,
+                  worktreePath: bootstrap.createThread.worktreePath,
+                  createdAt: bootstrap.createThread.createdAt,
+                })
+                .pipe(
+                  Effect.as(true),
+                  Effect.catchTag("OrchestrationCommandInvariantError", (error) =>
+                    isThreadAlreadyExistsInvariantError(error, command.threadId)
+                      ? Effect.succeed(false)
+                      : Effect.fail(error),
+                  ),
+                );
+              createdThread = created;
             }
 
             if (bootstrap?.prepareWorktree) {
-              let worktreeBaseRef = bootstrap.prepareWorktree.baseBranch;
-              // "Start from origin" is a stored default; repos without the
-              // requested remote branch fall back to the local base branch.
-              const startFromOrigin =
-                bootstrap.prepareWorktree.startFromOrigin === true &&
-                (yield* gitWorkflow.remoteExists({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  remoteName: "origin",
-                }));
-              if (startFromOrigin) {
-                yield* gitWorkflow.fetchRemote({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  remoteName: "origin",
-                });
-                const remoteBaseExists = yield* gitWorkflow.remoteBranchExists({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  refName: bootstrap.prepareWorktree.baseBranch,
-                  remoteName: "origin",
-                });
-                if (remoteBaseExists) {
+              const prepareWorktree = bootstrap.prepareWorktree;
+              let worktreeBaseRef = prepareWorktree.baseBranch;
+              if (prepareWorktree.startFromOrigin) {
+                // Basing the new worktree on the freshest origin commit is a
+                // best-effort optimization. If origin is unreachable (offline,
+                // auth failure, no remote), `git fetch origin` errors — but that
+                // must not block getting into the worktree. Fall back to the
+                // local base branch and continue instead of failing the turn.
+                worktreeBaseRef = yield* Effect.gen(function* () {
+                  yield* gitWorkflow.fetchRemote({
+                    cwd: prepareWorktree.projectCwd,
+                    remoteName: "origin",
+                  });
                   const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
-                    cwd: bootstrap.prepareWorktree.projectCwd,
-                    refName: bootstrap.prepareWorktree.baseBranch,
+                    cwd: prepareWorktree.projectCwd,
+                    refName: prepareWorktree.baseBranch,
                     fallbackRemoteName: "origin",
                   });
-                  worktreeBaseRef = resolvedRemoteBase.commitSha;
-                }
+                  return resolvedRemoteBase.commitSha;
+                }).pipe(
+                  Effect.catch((error) =>
+                    Effect.logWarning(
+                      "bootstrap turn start could not start worktree from origin; using local base branch instead",
+                      {
+                        threadId: command.threadId,
+                        projectCwd: prepareWorktree.projectCwd,
+                        baseBranch: prepareWorktree.baseBranch,
+                        detail: error.message,
+                      },
+                    ).pipe(Effect.as(prepareWorktree.baseBranch)),
+                  ),
+                );
               }
               const worktree = yield* gitWorkflow.createWorktree({
-                cwd: bootstrap.prepareWorktree.projectCwd,
+                cwd: prepareWorktree.projectCwd,
                 refName: worktreeBaseRef,
-                newRefName: bootstrap.prepareWorktree.branch,
-                baseRefName: bootstrap.prepareWorktree.baseBranch,
+                newRefName: prepareWorktree.branch,
+                baseRefName: prepareWorktree.baseBranch,
                 path: null,
               });
               targetWorktreePath = worktree.worktree.path;
@@ -1162,6 +1252,7 @@ const makeWsRpcLayer = (
               yield* refreshGitStatus(targetWorktreePath);
             }
 
+            yield* runCopyProjectFilesProgram();
             yield* runSetupProgram();
 
             return yield* dispatchFromClient(finalTurnStartCommand);
@@ -1596,6 +1687,95 @@ const makeWsRpcLayer = (
                   }),
               ),
             ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.generateContinuationSummary]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.generateContinuationSummary,
+            Effect.gen(function* () {
+              const threadOption = yield* projectionSnapshotQuery
+                .getThreadDetailById(input.threadId)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationGenerateContinuationSummaryError({
+                        message: "Failed to load thread",
+                        cause,
+                      }),
+                  ),
+                );
+              if (Option.isNone(threadOption)) {
+                return yield* new OrchestrationGenerateContinuationSummaryError({
+                  message: "Thread not found",
+                });
+              }
+              const thread = threadOption.value;
+
+              const projectOption = yield* projectionSnapshotQuery
+                .getProjectShellById(thread.projectId)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationGenerateContinuationSummaryError({
+                        message: "Failed to load project",
+                        cause,
+                      }),
+                  ),
+                );
+              const cwd =
+                thread.worktreePath ??
+                (Option.isSome(projectOption) ? projectOption.value.workspaceRoot : null);
+              if (cwd === null) {
+                return yield* new OrchestrationGenerateContinuationSummaryError({
+                  message: "Project not found for thread",
+                });
+              }
+
+              const transcript = buildContinuationTranscript(thread.messages);
+              if (transcript.trim().length === 0) {
+                return yield* new OrchestrationGenerateContinuationSummaryError({
+                  message: "Thread has no conversation to summarize",
+                });
+              }
+
+              const { textGenerationModelSelection } = yield* serverSettings.getSettings.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationGenerateContinuationSummaryError({
+                      message: "Failed to load server settings",
+                      cause,
+                    }),
+                ),
+              );
+              const generated = yield* textGeneration
+                .generateContinuationSummary({
+                  cwd,
+                  sourceTitle: thread.title,
+                  transcript,
+                  modelSelection: textGenerationModelSelection,
+                })
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationGenerateContinuationSummaryError({
+                        message: "Failed to generate continuation summary",
+                        cause,
+                      }),
+                  ),
+                );
+              const summary = generated.summary.trim();
+              if (summary.length === 0) {
+                return yield* new OrchestrationGenerateContinuationSummaryError({
+                  message: "Generated summary was empty",
+                });
+              }
+
+              return {
+                sourceThreadId: thread.id,
+                sourceTitle: thread.title,
+                summary,
+              };
+            }),
             { "rpc.aggregate": "orchestration" },
           ),
         [ORCHESTRATION_WS_METHODS.subscribeThread]: (input) =>
@@ -2492,22 +2672,27 @@ const makeWsRpcLayer = (
           observeRpcStream(
             WS_METHODS.gitRunStackedAction,
             Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
-              gitWorkflow
-                .runStackedAction(input, {
-                  actionId: input.actionId,
-                  progressReporter: {
-                    publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
-                  },
-                })
-                .pipe(
-                  Effect.matchCauseEffect({
-                    onFailure: (cause) => Queue.failCause(queue, cause),
-                    onSuccess: () =>
-                      refreshGitStatus(input.cwd).pipe(
-                        Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
-                      ),
+              projectionSnapshotQuery.getDefaultModelSelectionForCwd(input.cwd).pipe(
+                // A projection read failure must not break the git action; fall
+                // back to the server-wide source-control writer selection.
+                Effect.catch(() => Effect.succeedNone),
+                Effect.flatMap((projectModelSelection) =>
+                  gitWorkflow.runStackedAction(input, {
+                    actionId: input.actionId,
+                    projectModelSelection: Option.getOrNull(projectModelSelection),
+                    progressReporter: {
+                      publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
+                    },
                   }),
                 ),
+                Effect.matchCauseEffect({
+                  onFailure: (cause) => Queue.failCause(queue, cause),
+                  onSuccess: () =>
+                    refreshGitStatus(input.cwd).pipe(
+                      Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
+                    ),
+                }),
+              ),
             ),
             { "rpc.aggregate": "vcs" },
           ),
@@ -2518,6 +2703,12 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "git",
             },
+          ),
+        [WS_METHODS.gitMergePullRequest]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitMergePullRequest,
+            gitWorkflow.mergePullRequest(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "git" },
           ),
         [WS_METHODS.gitPreparePullRequestThread]: (input) =>
           observeRpcEffect(

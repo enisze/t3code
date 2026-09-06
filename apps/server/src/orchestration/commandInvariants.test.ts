@@ -11,7 +11,15 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import { listThreadsByProjectId, requireThread, requireThreadAbsent } from "./commandInvariants.ts";
+import {
+  findThreadById,
+  isThreadAlreadyExistsInvariantError,
+  listThreadsByProjectId,
+  requireNonNegativeInteger,
+  requireThread,
+  requireThreadAbsent,
+} from "./commandInvariants.ts";
+import { OrchestrationCommandInvariantError } from "./Errors.ts";
 
 const now = "2026-01-01T00:00:00.000Z";
 
@@ -27,6 +35,11 @@ const readModel: OrchestrationReadModel = {
         instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5-codex",
       },
+      gitHubAccount: null,
+      worktreeBranchPrefix: null,
+      defaultWorktreeBranch: null,
+      previewPort: null,
+      worktreeCopyFiles: [],
       scripts: [],
       createdAt: now,
       updatedAt: now,
@@ -40,6 +53,11 @@ const readModel: OrchestrationReadModel = {
         instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5-codex",
       },
+      gitHubAccount: null,
+      worktreeBranchPrefix: null,
+      defaultWorktreeBranch: null,
+      previewPort: null,
+      worktreeCopyFiles: [],
       scripts: [],
       createdAt: now,
       updatedAt: now,
@@ -193,28 +211,63 @@ describe("commandInvariants", () => {
     ).rejects.toThrow("already exists");
   });
 
-  it("lets a draft retry re-create a thread id after its first attempt was deleted", async () => {
-    const threadId = ThreadId.make("thread-1");
-    const firstAttempt = readModel.threads.find((thread) => thread.id === threadId)!;
-    const afterRollback: OrchestrationReadModel = {
-      ...readModel,
-      threads: readModel.threads.map((thread) =>
-        thread.id === threadId ? { ...thread, deletedAt: now, updatedAt: now } : thread,
+  it("detects the thread-already-exists invariant so bootstrap can treat it as idempotent", async () => {
+    const error = await Effect.runPromise(
+      Effect.flip(
+        requireThreadAbsent({
+          readModel,
+          command: {
+            type: "thread.create",
+            commandId: CommandId.make("cmd-4"),
+            threadId: ThreadId.make("thread-1"),
+            projectId: ProjectId.make("project-a"),
+            title: "dup",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+          },
+          threadId: ThreadId.make("thread-1"),
+        }),
       ),
-    };
-    const retry: OrchestrationCommand = {
-      type: "thread.create",
-      commandId: CommandId.make("cmd-retry"),
-      threadId,
-      projectId: firstAttempt.projectId,
-      title: firstAttempt.title,
-      modelSelection: firstAttempt.modelSelection,
-      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-      runtimeMode: "approval-required",
-      branch: null,
-      worktreePath: null,
-      createdAt: now,
-    };
+    );
+
+    expect(isThreadAlreadyExistsInvariantError(error, ThreadId.make("thread-1"))).toBe(true);
+    // A different threadId or a different invariant must not be mistaken for it.
+    expect(isThreadAlreadyExistsInvariantError(error, ThreadId.make("thread-3"))).toBe(false);
+    expect(
+      isThreadAlreadyExistsInvariantError(
+        new OrchestrationCommandInvariantError({
+          commandType: "thread.create",
+          detail: "Project 'project-a' does not exist for command 'thread.create'.",
+        }),
+        ThreadId.make("thread-1"),
+      ),
+    ).toBe(false);
+    expect(
+      isThreadAlreadyExistsInvariantError(
+        new OrchestrationCommandInvariantError({
+          commandType: "thread.turn.start",
+          detail: "Thread 'thread-1' already exists and cannot be created twice.",
+        }),
+        ThreadId.make("thread-1"),
+      ),
+    ).toBe(false);
+  });
+
+  it("requires non-negative integers", async () => {
+    await Effect.runPromise(
+      requireNonNegativeInteger({
+        commandType: "thread.checkpoint.revert",
+        field: "turnCount",
+        value: 0,
+      }),
+    );
 
     await expect(
       Effect.runPromise(

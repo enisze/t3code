@@ -11,7 +11,13 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { createModelCapabilities } from "@t3tools/shared/model";
+import { HttpClient } from "effect/unstable/http";
+import {
+  createModelCapabilities,
+  getModelSelectionStringOptionValue,
+  getProviderOptionCurrentValue,
+  getProviderOptionDescriptors,
+} from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
   query as claudeQuery,
@@ -47,6 +53,7 @@ import {
   formatClaudeVersionUpgradeMessage,
   resolveClaudeModelsForVersion,
 } from "../ClaudeModelCatalog.ts";
+import { fetchClaudeAccountUsage } from "../providerUsage.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -428,7 +435,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+  | ChildProcessSpawner.ChildProcessSpawner
+  | FileSystem.FileSystem
+  | Path.Path
+  | HttpClient.HttpClient
 > {
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
@@ -567,6 +577,28 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
           checkedAt,
         })
       : claudeUsageResponseToLimits({ response: capabilities.usage, checkedAt }).limits;
+
+  // Subscription usage windows come from the claude.ai OAuth usage endpoint
+  // and are meaningful for any first-party OAuth login. We deliberately do
+  // NOT gate on `capabilities.subscriptionType`: the CLI init payload often
+  // omits it for genuine OAuth subscriptions, which previously hid usage even
+  // though the account had 5-hour/weekly caps (Codex, gated differently, still
+  // showed — the visible asymmetry). Skip only API-key auth and third-party
+  // backends (Bedrock / Vertex), which have no OAuth usage endpoint. The fetch
+  // is best-effort and resolves to `undefined` when no OAuth token is present,
+  // so attempting it for a non-subscription first-party account is harmless.
+  const isApiKeyAuth = normalizeClaudeAuthMethod(capabilities.tokenSource) === "apiKey";
+  const isThirdPartyBackend =
+    capabilities.apiProvider === "bedrock" || capabilities.apiProvider === "vertex";
+  const usage =
+    !isApiKeyAuth && !isThirdPartyBackend
+      ? yield* fetchClaudeAccountUsage({
+          claudeSettings,
+          cliVersion: parsedVersion,
+          fetchedAt: checkedAt,
+        }).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+      : undefined;
+
   return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,
     enabled: claudeSettings.enabled,
@@ -574,6 +606,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     models,
     slashCommands: dedupedSlashCommands,
     skills,
+    ...(usage ? { usage } : {}),
     probe: {
       installed: true,
       version: parsedVersion,

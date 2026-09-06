@@ -228,12 +228,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           projectId: command.projectId,
           title: command.title,
           workspaceRoot: command.workspaceRoot,
-          // Project creation has no user model choice. Older clients sent an
-          // automatic seed here, but only a metadata update records an
-          // explicit project default.
-          defaultModelSelection: null,
-          faviconPath: null,
-          projectIcon: null,
+          defaultModelSelection: command.defaultModelSelection ?? null,
+          reviewModelSelection: command.reviewModelSelection ?? null,
+          gitHubAccount: command.gitHubAccount ?? null,
+          worktreeBranchPrefix: command.worktreeBranchPrefix ?? null,
+          defaultWorktreeBranch: command.defaultWorktreeBranch ?? null,
+          previewPort: command.previewPort ?? null,
+          worktreeCopyFiles: command.worktreeCopyFiles ?? [],
           scripts: [],
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
@@ -277,6 +278,20 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.autoPull !== undefined ? { autoPull: command.autoPull } : {}),
           ...(command.faviconPath !== undefined ? { faviconPath: command.faviconPath } : {}),
           ...(command.projectIcon !== undefined ? { projectIcon: command.projectIcon } : {}),
+          ...(command.reviewModelSelection !== undefined
+            ? { reviewModelSelection: command.reviewModelSelection }
+            : {}),
+          ...(command.gitHubAccount !== undefined ? { gitHubAccount: command.gitHubAccount } : {}),
+          ...(command.worktreeBranchPrefix !== undefined
+            ? { worktreeBranchPrefix: command.worktreeBranchPrefix }
+            : {}),
+          ...(command.defaultWorktreeBranch !== undefined
+            ? { defaultWorktreeBranch: command.defaultWorktreeBranch }
+            : {}),
+          ...(command.previewPort !== undefined ? { previewPort: command.previewPort } : {}),
+          ...(command.worktreeCopyFiles !== undefined
+            ? { worktreeCopyFiles: command.worktreeCopyFiles }
+            : {}),
           ...(command.scripts !== undefined ? { scripts: command.scripts } : {}),
           updatedAt: occurredAt,
         },

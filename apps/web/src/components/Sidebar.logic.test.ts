@@ -1,44 +1,40 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
-import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
 import {
-  animatePinnedLayoutChanges,
   archiveSelectedThreadEntries,
-  buildBulkTitleRegenerationContextMenuItem,
-  buildBulkUnpinContextMenuItem,
   buildMultiSelectThreadContextMenuItems,
+  collapseWorktreeSiblings,
+  collectWorktreeSiblingThreads,
+  resolveWorktreeActiveThread,
+  resolveWorktreeWorkspaceRepresentative,
   createThreadJumpHintVisibilityController,
-  deleteSelectedThreadEntries,
-  filterSidebarProjectScopeItems,
   getSidebarThreadIdsToPrewarm,
+  getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
-  reduceSidebarProjectScopeMenuState,
   getFallbackThreadIdAfterDelete,
+  getFallbackThreadAfterArchive,
+  groupSidebarThreadsByProject,
+  getVisibleThreadsForProject,
   getProjectSortTimestamp,
   hasUnseenCompletion,
   isContextMenuPointerDown,
-  isSidebarNestedLinkClick,
   isTrailingDoubleClick,
+  mergeWorktreeSiblingRunningStatus,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
+  resolveSidebarStageBadgeLabel,
+  resolveSidebarThreadBranch,
+  resolveSidebarV2Status,
   resolveThreadRowClassName,
-  resolveSidebarThreadStatus,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
-  searchSidebarThreadsByTitle,
   formatWorkingDurationLabel,
+  shouldNavigateAfterProjectRemoval,
   shouldClearThreadSelectionOnMouseDown,
-  shouldRecedeSidebarThread,
   sortLogicalProjectsForSidebar,
-  sortSettledThreadsForSidebar,
-  pinOrderKeyBetween,
-  planPinnedReorder,
-  sortPinnedThreadsForSidebar,
-  sortThreadsForSidebar,
+  sortSettledThreadsForSidebarV2,
+  sortThreadsForSidebarV2,
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
-  shouldCreateNewThreadInCurrentProject,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
 } from "./Sidebar.logic";
 import {
@@ -58,125 +54,85 @@ import {
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 
-describe("animatePinnedLayoutChanges", () => {
-  const baseArgs: Parameters<AnimateLayoutChanges>[0] = {
-    active: null,
-    containerId: "pinned-threads",
-    isDragging: false,
-    isSorting: false,
-    id: "thread-a",
-    index: 1,
-    items: ["thread-b", "thread-a"],
-    newIndex: 0,
-    previousItems: ["thread-a", "thread-b"],
-    previousContainerId: "pinned-threads",
-    transition: { duration: 200, easing: "ease" },
-    wasDragging: true,
-  };
-
-  it("does not replay layout movement after the pointer is released", () => {
-    expect(defaultAnimateLayoutChanges(baseArgs)).toBe(true);
-    expect(animatePinnedLayoutChanges(baseArgs)).toBe(false);
+describe("resolveSidebarThreadBranch", () => {
+  it("shows the branch currently checked out in a dedicated worktree", () => {
+    expect(
+      resolveSidebarThreadBranch({
+        worktreePath: "/repo/.worktrees/feature-next",
+        threadBranch: "feature/previous",
+        currentGitBranch: "feature/next",
+      }),
+    ).toBe("feature/next");
   });
 
-  it("keeps layout movement while the user is sorting", () => {
-    expect(animatePinnedLayoutChanges({ ...baseArgs, isSorting: true })).toBe(true);
+  it("keeps the recorded branch for a local-checkout thread", () => {
+    expect(
+      resolveSidebarThreadBranch({
+        worktreePath: null,
+        threadBranch: "feature/thread",
+        currentGitBranch: "feature/local-checkout",
+      }),
+    ).toBe("feature/thread");
+  });
+
+  it("falls back to the recorded branch while worktree status is unavailable", () => {
+    expect(
+      resolveSidebarThreadBranch({
+        worktreePath: "/repo/.worktrees/feature",
+        threadBranch: "feature/thread",
+        currentGitBranch: null,
+      }),
+    ).toBe("feature/thread");
   });
 });
 
-describe("deleteSelectedThreadEntries", () => {
-  const entries = [{ threadKey: "one" }, { threadKey: "two" }, { threadKey: "three" }] as const;
-  const success = AsyncResult.success(undefined);
-  const failure = AsyncResult.failure(Cause.fail(new Error("Delete failed")));
-  const interrupted = AsyncResult.failure(Cause.interrupt());
+describe("shouldNavigateAfterProjectRemoval", () => {
+  const projectThreads = [{ environmentId: "environment-local", id: "thread-1" }];
 
-  it("waits for each delete and excludes only earlier successes from worktree checks", async () => {
-    let resolveDelete!: (result: typeof success) => void;
-    const pendingDelete = new Promise<typeof success>((resolve) => {
-      resolveDelete = resolve;
-    });
-    const worktreeChecks: { threadKey: string; deletedThreadKeys: string[] }[] = [];
-    const deletion = deleteSelectedThreadEntries({
-      entries,
-      delete: async ({ threadKey }, deletedThreadKeys) => {
-        worktreeChecks.push({ threadKey, deletedThreadKeys: [...deletedThreadKeys] });
-        return threadKey === "one" ? pendingDelete : success;
-      },
-    });
-
-    expect(worktreeChecks).toEqual([{ threadKey: "one", deletedThreadKeys: [] }]);
-    resolveDelete(success);
-    const outcome = await deletion;
-
-    expect(worktreeChecks).toEqual([
-      { threadKey: "one", deletedThreadKeys: [] },
-      { threadKey: "two", deletedThreadKeys: ["one"] },
-      { threadKey: "three", deletedThreadKeys: ["one", "two"] },
-    ]);
-    expect(outcome).toEqual({
-      deletedThreadKeys: new Set(["one", "two", "three"]),
-      firstFailure: null,
-    });
+  it("navigates away from a draft route owned by the removed project", () => {
+    expect(
+      shouldNavigateAfterProjectRemoval({
+        routeTarget: { kind: "draft", draftId: "draft-1" as never },
+        projectThreads,
+        projectDraftId: "draft-1",
+      }),
+    ).toBe(true);
   });
 
-  it("continues after ordinary failures and keeps the first failure", async () => {
-    const laterFailure = AsyncResult.failure(Cause.fail(new Error("Later failure")));
-    const deletedKeysAtLastEntry: string[][] = [];
-    const outcome = await deleteSelectedThreadEntries({
-      entries: [...entries, { threadKey: "four" }],
-      delete: async ({ threadKey }, deletedThreadKeys) => {
-        if (threadKey === "one") return failure;
-        if (threadKey === "three") return laterFailure;
-        if (threadKey === "four") deletedKeysAtLastEntry.push([...deletedThreadKeys]);
-        return success;
-      },
-    });
-
-    expect(deletedKeysAtLastEntry).toEqual([["two"]]);
-    expect(outcome).toEqual({
-      deletedThreadKeys: new Set(["two", "four"]),
-      firstFailure: failure,
-    });
+  it("does not navigate away from a different draft route", () => {
+    expect(
+      shouldNavigateAfterProjectRemoval({
+        routeTarget: { kind: "draft", draftId: "draft-2" as never },
+        projectThreads,
+        projectDraftId: "draft-1",
+      }),
+    ).toBe(false);
   });
 
-  it.each([
-    { firstResult: success, deletedThreadKeys: new Set(["one"]), firstFailure: null },
-    { firstResult: failure, deletedThreadKeys: new Set<string>(), firstFailure: failure },
-  ])("stops on interruption and preserves earlier results %#", async (testCase) => {
-    const attemptedThreadKeys: string[] = [];
-    const outcome = await deleteSelectedThreadEntries({
-      entries,
-      delete: async ({ threadKey }) => {
-        attemptedThreadKeys.push(threadKey);
-        return threadKey === "one" ? testCase.firstResult : interrupted;
-      },
-    });
-
-    expect(attemptedThreadKeys).toEqual(["one", "two"]);
-    expect(outcome).toEqual({
-      deletedThreadKeys: testCase.deletedThreadKeys,
-      firstFailure: testCase.firstFailure,
-    });
+  it("navigates away from a server thread owned by the removed project", () => {
+    expect(
+      shouldNavigateAfterProjectRemoval({
+        routeTarget: {
+          kind: "server",
+          threadRef: {
+            environmentId: EnvironmentId.make("environment-local"),
+            threadId: ThreadId.make("thread-1"),
+          },
+        },
+        projectThreads,
+        projectDraftId: null,
+      }),
+    ).toBe(true);
   });
 
-  it("does not count a skipped entry as deleted", async () => {
-    const visibleEntries = new Set(entries.map(({ threadKey }) => threadKey));
-    const worktreeChecks: string[][] = [];
-    const outcome = await deleteSelectedThreadEntries({
-      entries,
-      delete: async ({ threadKey }, deletedThreadKeys) => {
-        if (!visibleEntries.has(threadKey)) return null;
-        worktreeChecks.push([...deletedThreadKeys]);
-        visibleEntries.delete("two");
-        return success;
-      },
-    });
-
-    expect(worktreeChecks).toEqual([[], ["one"]]);
-    expect(outcome).toEqual({
-      deletedThreadKeys: new Set(["one", "three"]),
-      firstFailure: null,
-    });
+  it("does not navigate from an unrelated route", () => {
+    expect(
+      shouldNavigateAfterProjectRemoval({
+        routeTarget: null,
+        projectThreads,
+        projectDraftId: null,
+      }),
+    ).toBe(false);
   });
 });
 
@@ -233,55 +189,6 @@ describe("archiveSelectedThreadEntries", () => {
   });
 });
 
-describe("buildBulkUnpinContextMenuItem", () => {
-  it("counts only the pinned rows of a mixed selection", () => {
-    expect(buildBulkUnpinContextMenuItem({ pinnedCount: 2 })).toEqual({
-      id: "unpin",
-      label: "Unpin (2)",
-    });
-  });
-
-  it("omits the action when nothing selected is pinned", () => {
-    expect(buildBulkUnpinContextMenuItem({ pinnedCount: 0 })).toBeNull();
-  });
-});
-
-describe("buildBulkTitleRegenerationContextMenuItem", () => {
-  it("counts only threads that can start a new regeneration", () => {
-    expect(
-      buildBulkTitleRegenerationContextMenuItem({
-        supportedCount: 4,
-        actionableCount: 3,
-      }),
-    ).toEqual({
-      id: "regenerate-title",
-      label: "Regenerate titles (3)",
-    });
-  });
-
-  it("shows a disabled progress item when every supported thread is pending", () => {
-    expect(
-      buildBulkTitleRegenerationContextMenuItem({
-        supportedCount: 2,
-        actionableCount: 0,
-      }),
-    ).toEqual({
-      id: "regenerate-title",
-      label: "Regenerating… (2)",
-      disabled: true,
-    });
-  });
-
-  it("omits the action when no selected environment supports it", () => {
-    expect(
-      buildBulkTitleRegenerationContextMenuItem({
-        supportedCount: 0,
-        actionableCount: 0,
-      }),
-    ).toBeNull();
-  });
-});
-
 describe("buildMultiSelectThreadContextMenuItems", () => {
   it("offers bulk archive with the selected count", () => {
     expect(
@@ -293,6 +200,44 @@ describe("buildMultiSelectThreadContextMenuItems", () => {
     expect(
       buildMultiSelectThreadContextMenuItems({ count: 2, hasRunningThread: true }),
     ).toContainEqual({ id: "archive", label: "Archive (2)", disabled: true });
+  });
+});
+
+describe("resolveSidebarStageBadgeLabel", () => {
+  it("returns Nightly for nightly primary server versions", () => {
+    expect(
+      resolveSidebarStageBadgeLabel({
+        primaryServerVersion: "0.0.28-nightly.20260616.12",
+        fallbackStageLabel: "Alpha",
+      }),
+    ).toBe("Nightly");
+  });
+
+  it("returns the fallback label for stable primary server versions", () => {
+    expect(
+      resolveSidebarStageBadgeLabel({
+        primaryServerVersion: "0.0.27",
+        fallbackStageLabel: "Alpha",
+      }),
+    ).toBe("Alpha");
+  });
+
+  it("returns the fallback label when the primary server version is missing", () => {
+    expect(
+      resolveSidebarStageBadgeLabel({
+        primaryServerVersion: null,
+        fallbackStageLabel: "Dev",
+      }),
+    ).toBe("Dev");
+  });
+
+  it("returns the fallback label for malformed nightly prerelease versions", () => {
+    expect(
+      resolveSidebarStageBadgeLabel({
+        primaryServerVersion: "0.0.28-nightly.20260616",
+        fallbackStageLabel: "Alpha",
+      }),
+    ).toBe("Alpha");
   });
 });
 
@@ -339,51 +284,6 @@ describe("hasUnseenCompletion", () => {
         session: null,
       }),
     ).toBe(false);
-  });
-});
-
-describe("shouldRecedeSidebarThread", () => {
-  it.each(["working", "monitoring"] as const)(
-    "recedes an inactive %s thread even when it is unread and woke",
-    (status) => {
-      expect(
-        shouldRecedeSidebarThread({
-          status,
-          isUnread: true,
-          isWoke: true,
-          isActive: false,
-          isSelected: false,
-        }),
-      ).toBe(true);
-    },
-  );
-
-  it.each(["ready", "approval", "input"] as const)(
-    "keeps an unread %s thread prominent",
-    (status) => {
-      expect(
-        shouldRecedeSidebarThread({
-          status,
-          isUnread: true,
-          isWoke: false,
-          isActive: false,
-          isSelected: false,
-        }),
-      ).toBe(false);
-    },
-  );
-
-  it("keeps active and selected working threads prominent", () => {
-    const input = {
-      status: "working" as const,
-      isUnread: true,
-      isWoke: true,
-      isActive: false,
-      isSelected: false,
-    };
-
-    expect(shouldRecedeSidebarThread({ ...input, isActive: true })).toBe(false);
-    expect(shouldRecedeSidebarThread({ ...input, isSelected: true })).toBe(false);
   });
 });
 
@@ -506,42 +406,6 @@ describe("isTrailingDoubleClick", () => {
 
   it("ignores further clicks of a triple-click", () => {
     expect(isTrailingDoubleClick(3)).toBe(true);
-  });
-});
-
-describe("isSidebarNestedLinkClick", () => {
-  const linkTarget = {
-    closest: (selector: string) => (selector === "a[href]" ? ({} as Element) : null),
-  } as unknown as EventTarget;
-
-  it("ignores row clicks that originated on a nested link", () => {
-    expect(isSidebarNestedLinkClick(linkTarget)).toBe(true);
-  });
-
-  it("walks up from a text node to the enclosing link", () => {
-    expect(isSidebarNestedLinkClick({ parentElement: linkTarget } as unknown as EventTarget)).toBe(
-      true,
-    );
-  });
-
-  it("leaves ordinary row clicks alone", () => {
-    expect(isSidebarNestedLinkClick({ closest: () => null } as unknown as EventTarget)).toBe(false);
-    expect(isSidebarNestedLinkClick(null)).toBe(false);
-  });
-});
-
-describe("shouldCreateNewThreadInCurrentProject", () => {
-  it("creates directly on shift+click in a multi-project setup", () => {
-    expect(shouldCreateNewThreadInCurrentProject(true, 2)).toBe(true);
-  });
-
-  it("opens the picker on a plain click in a multi-project setup", () => {
-    expect(shouldCreateNewThreadInCurrentProject(false, 2)).toBe(false);
-  });
-
-  it("creates directly on any click with a single project", () => {
-    expect(shouldCreateNewThreadInCurrentProject(false, 1)).toBe(true);
-    expect(shouldCreateNewThreadInCurrentProject(true, 1)).toBe(true);
   });
 });
 
@@ -690,6 +554,46 @@ describe("resolveAdjacentThreadId", () => {
   });
 });
 
+describe("getVisibleSidebarThreadIds", () => {
+  it("returns only the rendered visible thread order across projects", () => {
+    expect(
+      getVisibleSidebarThreadIds([
+        {
+          renderedThreadIds: [
+            ThreadId.make("thread-12"),
+            ThreadId.make("thread-11"),
+            ThreadId.make("thread-10"),
+          ],
+        },
+        {
+          renderedThreadIds: [ThreadId.make("thread-8"), ThreadId.make("thread-6")],
+        },
+      ]),
+    ).toEqual([
+      ThreadId.make("thread-12"),
+      ThreadId.make("thread-11"),
+      ThreadId.make("thread-10"),
+      ThreadId.make("thread-8"),
+      ThreadId.make("thread-6"),
+    ]);
+  });
+
+  it("skips threads from collapsed projects whose thread panels are not shown", () => {
+    expect(
+      getVisibleSidebarThreadIds([
+        {
+          shouldShowThreadPanel: false,
+          renderedThreadIds: [ThreadId.make("thread-hidden-2"), ThreadId.make("thread-hidden-1")],
+        },
+        {
+          shouldShowThreadPanel: true,
+          renderedThreadIds: [ThreadId.make("thread-12"), ThreadId.make("thread-11")],
+        },
+      ]),
+    ).toEqual([ThreadId.make("thread-12"), ThreadId.make("thread-11")]);
+  });
+});
+
 describe("isContextMenuPointerDown", () => {
   it("treats secondary-button presses as context menu gestures on all platforms", () => {
     expect(
@@ -722,7 +626,7 @@ describe("isContextMenuPointerDown", () => {
   });
 });
 
-describe("resolveSidebarThreadStatus", () => {
+describe("resolveSidebarV2Status", () => {
   const session = {
     threadId: ThreadId.make("thread-1"),
     status: "running" as const,
@@ -737,17 +641,15 @@ describe("resolveSidebarThreadStatus", () => {
   const idle = { hasPendingApprovals: false, hasPendingUserInput: false };
 
   it("prioritizes approval over a running session", () => {
-    expect(resolveSidebarThreadStatus({ ...idle, hasPendingApprovals: true, session })).toBe(
+    expect(resolveSidebarV2Status({ ...idle, hasPendingApprovals: true, session })).toBe(
       "approval",
     );
   });
 
   it("prioritizes awaiting input over a running session, below approval", () => {
-    expect(resolveSidebarThreadStatus({ ...idle, hasPendingUserInput: true, session })).toBe(
-      "input",
-    );
+    expect(resolveSidebarV2Status({ ...idle, hasPendingUserInput: true, session })).toBe("input");
     expect(
-      resolveSidebarThreadStatus({
+      resolveSidebarV2Status({
         ...idle,
         hasPendingApprovals: true,
         hasPendingUserInput: true,
@@ -757,9 +659,9 @@ describe("resolveSidebarThreadStatus", () => {
   });
 
   it("reports working for running and starting sessions", () => {
-    expect(resolveSidebarThreadStatus({ ...idle, session })).toBe("working");
+    expect(resolveSidebarV2Status({ ...idle, session })).toBe("working");
     expect(
-      resolveSidebarThreadStatus({
+      resolveSidebarV2Status({
         ...idle,
         session: { ...session, status: "starting" as const },
       }),
@@ -768,19 +670,19 @@ describe("resolveSidebarThreadStatus", () => {
 
   it("reports failed only while the session status is error", () => {
     expect(
-      resolveSidebarThreadStatus({
+      resolveSidebarV2Status({
         ...idle,
         session: { ...session, status: "error" as const, lastError: "boom" },
       }),
     ).toBe("failed");
     expect(
-      resolveSidebarThreadStatus({
+      resolveSidebarV2Status({
         ...idle,
         session: { ...session, status: "stopped" as const, lastError: "persisted" },
       }),
     ).toBe("ready");
     expect(
-      resolveSidebarThreadStatus({
+      resolveSidebarV2Status({
         ...idle,
         session: { ...session, status: "ready" as const, lastError: "persisted" },
       }),
@@ -788,277 +690,75 @@ describe("resolveSidebarThreadStatus", () => {
   });
 
   it("defaults to ready with no session", () => {
-    expect(resolveSidebarThreadStatus({ ...idle, session: null })).toBe("ready");
+    expect(resolveSidebarV2Status({ ...idle, session: null })).toBe("ready");
   });
 });
 
-describe("searchSidebarThreadsByTitle", () => {
-  const threads = [
-    { id: "thread-1", title: "Fix workspace search", project: "Alpha" },
-    { id: "thread-2", title: "Review providers", project: "Workspace" },
-    { id: "thread-3", title: "WORKTREE cleanup", project: "Beta" },
-  ];
-
-  it("matches thread titles case-insensitively and preserves their order", () => {
-    expect(searchSidebarThreadsByTitle(threads, "work")).toEqual([threads[0], threads[2]]);
-  });
-
-  it("does not match project metadata", () => {
-    expect(searchSidebarThreadsByTitle(threads, "workspace")).toEqual([threads[0]]);
-  });
-
-  it("returns no results for an empty query", () => {
-    expect(searchSidebarThreadsByTitle(threads, "   ")).toEqual([]);
-  });
-});
-
-describe("filterSidebarProjectScopeItems", () => {
-  const items = [
-    { value: "all", label: "All projects" },
-    { value: "alpha", label: "Alpha workspace" },
-    { value: "beta", label: "Beta tools" },
-  ] as const;
-  const filter = (activeScopeKey: string | null, query: string) =>
-    filterSidebarProjectScopeItems({
-      items,
-      activeScopeKey,
-      query,
-      matches: (item, candidate) =>
-        item.label.toLocaleLowerCase().includes(candidate.toLocaleLowerCase()),
-    });
-
-  it("omits the reset row when the sidebar is already unscoped", () => {
-    expect(filter(null, "")).toEqual(items.slice(1));
-  });
-
-  it("shows the reset row first while a project scope is active", () => {
-    expect(filter("alpha", "")).toEqual(items);
-  });
-
-  it("hides the reset row while filtering an active scope", () => {
-    expect(filter("alpha", "all")).toEqual([]);
-  });
-
-  it("returns matching projects in source order and supports no-match results", () => {
-    expect(filter(null, "WORK")).toEqual([items[1]]);
-    expect(filter(null, "missing")).toEqual([]);
-  });
-});
-
-describe("reduceSidebarProjectScopeMenuState", () => {
-  const queriedOpenState = { open: true, query: "alpha" };
-
-  it("clears the query when the combobox closes through onOpenChange", () => {
-    expect(
-      reduceSidebarProjectScopeMenuState(queriedOpenState, {
-        type: "open-changed",
-        open: false,
-      }),
-    ).toEqual({ open: false, query: "" });
-  });
-
-  it("clears the query when project settings closes the combobox", () => {
-    expect(
-      reduceSidebarProjectScopeMenuState(queriedOpenState, {
-        type: "project-settings-opened",
-      }),
-    ).toEqual({ open: false, query: "" });
-  });
-
-  it("keeps the popup open while the query changes", () => {
-    expect(
-      reduceSidebarProjectScopeMenuState(
-        { open: true, query: "" },
-        { type: "query-changed", query: "beta" },
-      ),
-    ).toEqual({ open: true, query: "beta" });
-  });
-});
-
-describe("sortThreadsForSidebar", () => {
-  const sortable = (input: { id: string; createdAt: string }) => ({
+describe("sortThreadsForSidebarV2", () => {
+  const sortable = (input: { id: string; createdAt: string; latestUserMessageAt?: string }) => ({
     id: input.id,
     createdAt: input.createdAt,
+    updatedAt: input.createdAt,
+    latestUserMessageAt: input.latestUserMessageAt ?? null,
   });
 
-  it("orders by creation time, newest first, ignoring activity", () => {
-    const sorted = sortThreadsForSidebar([
-      sortable({ id: "oldest", createdAt: "2026-03-09T08:00:00.000Z" }),
+  it("orders by latest activity within the project", () => {
+    const sorted = sortThreadsForSidebarV2([
+      sortable({
+        id: "oldest",
+        createdAt: "2026-03-09T08:00:00.000Z",
+        latestUserMessageAt: "2026-03-09T13:00:00.000Z",
+      }),
       sortable({ id: "newest", createdAt: "2026-03-09T12:00:00.000Z" }),
       sortable({ id: "middle", createdAt: "2026-03-09T10:00:00.000Z" }),
     ]);
 
-    expect(sorted.map((thread) => thread.id)).toEqual(["newest", "middle", "oldest"]);
+    expect(sorted.map((thread) => thread.id)).toEqual(["oldest", "newest", "middle"]);
   });
 
-  it("breaks creation-time ties by id so the order is stable", () => {
-    const sorted = sortThreadsForSidebar([
+  it("breaks activity ties by id so the order is stable", () => {
+    const sorted = sortThreadsForSidebarV2([
       sortable({ id: "b", createdAt: "2026-03-09T10:00:00.000Z" }),
       sortable({ id: "a", createdAt: "2026-03-09T10:00:00.000Z" }),
     ]);
 
-    expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
+    expect(sorted.map((thread) => thread.id)).toEqual(["b", "a"]);
   });
 
-  it("surfaces an un-settled thread at the top via its re-entry stamp", () => {
-    const sorted = sortThreadsForSidebar([
-      {
-        id: "old-unsettled",
-        createdAt: "2026-03-09T08:00:00.000Z",
-        unsettledAt: "2026-03-09T13:00:00.000Z",
-      },
-      sortable({ id: "newest", createdAt: "2026-03-09T12:00:00.000Z" }),
-      sortable({ id: "middle", createdAt: "2026-03-09T10:00:00.000Z" }),
+  it("lifts a chat by its worktree's recorded activity so a closed sibling doesn't sink the row", () => {
+    // `wt-old` is a surviving chat in a worktree whose newer sibling was just
+    // closed; `other` is a more recently active chat in a different worktree.
+    // Without the recorded close activity, `wt-old` would sort below `other`.
+    const wtOld = {
+      id: "wt-old",
+      environmentId: "env",
+      worktreePath: "/repo/wt",
+      createdAt: "2026-03-09T08:00:00.000Z",
+      updatedAt: "2026-03-09T08:00:00.000Z",
+      latestUserMessageAt: "2026-03-09T09:00:00.000Z",
+    };
+    const other = {
+      id: "other",
+      environmentId: "env",
+      worktreePath: "/repo/other",
+      createdAt: "2026-03-09T10:00:00.000Z",
+      updatedAt: "2026-03-09T10:00:00.000Z",
+      latestUserMessageAt: "2026-03-09T11:00:00.000Z",
+    };
+
+    expect(sortThreadsForSidebarV2([wtOld, other]).map((thread) => thread.id)).toEqual([
+      "other",
+      "wt-old",
     ]);
-
-    expect(sorted.map((thread) => thread.id)).toEqual(["old-unsettled", "newest", "middle"]);
-  });
-
-  it("ignores a re-entry stamp older than the thread's creation", () => {
-    const sorted = sortThreadsForSidebar([
-      {
-        id: "stale-stamp",
-        createdAt: "2026-03-09T10:00:00.000Z",
-        unsettledAt: "2026-03-09T09:00:00.000Z",
-      },
-      sortable({ id: "newest", createdAt: "2026-03-09T12:00:00.000Z" }),
-    ]);
-
-    expect(sorted.map((thread) => thread.id)).toEqual(["newest", "stale-stamp"]);
+    expect(
+      sortThreadsForSidebarV2([wtOld, other], {
+        "env\0/repo/wt": "2026-03-09T12:00:00.000Z",
+      }).map((thread) => thread.id),
+    ).toEqual(["wt-old", "other"]);
   });
 });
 
-describe("pinOrderKeyBetween", () => {
-  it("produces keys that sort between their bounds", () => {
-    const middle = pinOrderKeyBetween(null, null)!;
-    const top = pinOrderKeyBetween(null, middle)!;
-    const bottom = pinOrderKeyBetween(middle, null)!;
-    expect(top < middle).toBe(true);
-    expect(middle < bottom).toBe(true);
-
-    const between = pinOrderKeyBetween(top, middle)!;
-    expect(top < between && between < middle).toBe(true);
-  });
-
-  it("extends into new digits when bounds are adjacent", () => {
-    const key = pinOrderKeyBetween("g", "h")!;
-    expect("g" < key && key < "h").toBe(true);
-  });
-
-  it("stays strictly ordered under repeated top insertion", () => {
-    // Every new pin lands at the head of the arranged run; keys must keep
-    // sorting before the previous head without ever bottoming out.
-    let head: string | null = null;
-    const keys: string[] = [];
-    for (let i = 0; i < 100; i += 1) {
-      const key: string = pinOrderKeyBetween(null, head)!;
-      expect(key).not.toBeNull();
-      if (head !== null) expect(key < head).toBe(true);
-      keys.push(key);
-      head = key;
-    }
-    expect(new Set(keys).size).toBe(100);
-  });
-
-  it("stays strictly ordered under repeated middle insertion", () => {
-    let low = pinOrderKeyBetween(null, null)!;
-    let high = pinOrderKeyBetween(low, null)!;
-    for (let i = 0; i < 100; i += 1) {
-      const key: string = pinOrderKeyBetween(low, high)!;
-      expect(low < key && key < high).toBe(true);
-      if (i % 2 === 0) low = key;
-      else high = key;
-    }
-  });
-
-  it("returns null for corrupt or out-of-order bounds instead of throwing", () => {
-    expect(pinOrderKeyBetween("z", "a")).toBeNull();
-    expect(pinOrderKeyBetween("A!", null)).toBeNull();
-    expect(pinOrderKeyBetween(null, "ma")).toBeNull();
-    expect(pinOrderKeyBetween("m", "m")).toBeNull();
-  });
-});
-
-describe("planPinnedReorder", () => {
-  it("writes only the moved thread when neighbors are keyed", () => {
-    const assignments = planPinnedReorder({
-      orderedIds: ["a", "c", "b"],
-      keysById: new Map([
-        ["a", "f"],
-        ["b", "m"],
-        ["c", "t"],
-      ]),
-      movedId: "c",
-    });
-    expect(assignments).toHaveLength(1);
-    expect(assignments[0]!.id).toBe("c");
-    expect(assignments[0]!.orderKey > "f" && assignments[0]!.orderKey < "m").toBe(true);
-  });
-
-  it("treats list edges as open bounds", () => {
-    const assignments = planPinnedReorder({
-      orderedIds: ["b", "a"],
-      keysById: new Map([
-        ["a", "m"],
-        ["b", null],
-      ]),
-      movedId: "b",
-    });
-    expect(assignments).toHaveLength(1);
-    expect(assignments[0]!.orderKey < "m").toBe(true);
-  });
-
-  it("materializes keys for the whole section when a neighbor is keyless", () => {
-    const assignments = planPinnedReorder({
-      orderedIds: ["b", "a", "c"],
-      keysById: new Map([
-        ["a", null],
-        ["b", "m"],
-        ["c", null],
-      ]),
-      movedId: "b",
-    });
-    expect(assignments.map((entry) => entry.id)).toEqual(["b", "a", "c"]);
-    const keys = assignments.map((entry) => entry.orderKey);
-    expect([...keys].sort()).toEqual(keys);
-    expect(new Set(keys).size).toBe(keys.length);
-  });
-});
-
-describe("sortPinnedThreadsForSidebar", () => {
-  const pinnable = (input: { id: string; createdAt: string; pinOrderKey?: string | null }) => ({
-    id: input.id,
-    createdAt: input.createdAt,
-    pinOrderKey: input.pinOrderKey ?? null,
-  });
-
-  it("sorts keyed threads by key ahead of keyless threads in creation order", () => {
-    const sorted = sortPinnedThreadsForSidebar([
-      pinnable({ id: "keyless-old", createdAt: "2026-03-09T08:00:00.000Z" }),
-      pinnable({ id: "second", createdAt: "2026-03-09T09:00:00.000Z", pinOrderKey: "t" }),
-      pinnable({ id: "keyless-new", createdAt: "2026-03-09T12:00:00.000Z" }),
-      pinnable({ id: "first", createdAt: "2026-03-09T07:00:00.000Z", pinOrderKey: "g" }),
-    ]);
-
-    expect(sorted.map((thread) => thread.id)).toEqual([
-      "first",
-      "second",
-      "keyless-new",
-      "keyless-old",
-    ]);
-  });
-
-  it("breaks equal keys by id so raced writes render identically everywhere", () => {
-    const sorted = sortPinnedThreadsForSidebar([
-      pinnable({ id: "b", createdAt: "2026-03-09T10:00:00.000Z", pinOrderKey: "m" }),
-      pinnable({ id: "a", createdAt: "2026-03-09T11:00:00.000Z", pinOrderKey: "m" }),
-    ]);
-
-    expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
-  });
-});
-
-describe("sortSettledThreadsForSidebar", () => {
+describe("sortSettledThreadsForSidebarV2", () => {
   const settled = (input: {
     id: string;
     settledAt?: string | null;
@@ -1074,7 +774,7 @@ describe("sortSettledThreadsForSidebar", () => {
   });
 
   it("orders by settle time, most recently settled first", () => {
-    const sorted = sortSettledThreadsForSidebar([
+    const sorted = sortSettledThreadsForSidebarV2([
       settled({
         id: "settled-first",
         settledAt: "2026-03-09T10:00:00.000Z",
@@ -1092,7 +792,7 @@ describe("sortSettledThreadsForSidebar", () => {
   });
 
   it("falls back to last activity for auto-settled threads without a settledAt stamp", () => {
-    const sorted = sortSettledThreadsForSidebar([
+    const sorted = sortSettledThreadsForSidebarV2([
       settled({ id: "auto-old", latestUserMessageAt: "2026-03-09T08:00:00.000Z" }),
       settled({ id: "explicit", settledAt: "2026-03-09T10:00:00.000Z" }),
       settled({ id: "auto-recent", latestUserMessageAt: "2026-03-09T11:00:00.000Z" }),
@@ -1104,7 +804,7 @@ describe("sortSettledThreadsForSidebar", () => {
   it("counts a turn completion as activity for auto-settled threads", () => {
     // The message came in before the other thread's, but its turn finished
     // after: completion time is the real "work ended" moment.
-    const sorted = sortSettledThreadsForSidebar([
+    const sorted = sortSettledThreadsForSidebarV2([
       settled({ id: "message-only", latestUserMessageAt: "2026-03-09T10:04:00.000Z" }),
       settled({
         id: "completed-later",
@@ -1117,7 +817,7 @@ describe("sortSettledThreadsForSidebar", () => {
   });
 
   it("breaks timestamp ties by id so the order is stable", () => {
-    const sorted = sortSettledThreadsForSidebar([
+    const sorted = sortSettledThreadsForSidebarV2([
       settled({ id: "b", settledAt: "2026-03-09T10:00:00.000Z" }),
       settled({ id: "a", settledAt: "2026-03-09T10:00:00.000Z" }),
     ]);
@@ -1368,8 +1068,567 @@ describe("resolveProjectStatusIndicator", () => {
   });
 });
 
+describe("getVisibleThreadsForProject", () => {
+  it("includes the active thread even when it falls below the folded preview", () => {
+    const threads = Array.from({ length: 8 }, (_, index) =>
+      makeThread({
+        id: ThreadId.make(`thread-${index + 1}`),
+        title: `Thread ${index + 1}`,
+      }),
+    );
+
+    const result = getVisibleThreadsForProject({
+      threads,
+      activeThreadId: ThreadId.make("thread-8"),
+      isThreadListExpanded: false,
+      previewLimit: 6,
+    });
+
+    expect(result.hasHiddenThreads).toBe(true);
+    expect(result.visibleThreads.map((thread) => thread.id)).toEqual([
+      ThreadId.make("thread-1"),
+      ThreadId.make("thread-2"),
+      ThreadId.make("thread-3"),
+      ThreadId.make("thread-4"),
+      ThreadId.make("thread-5"),
+      ThreadId.make("thread-6"),
+      ThreadId.make("thread-8"),
+    ]);
+    expect(result.hiddenThreads.map((thread) => thread.id)).toEqual([ThreadId.make("thread-7")]);
+  });
+
+  it("returns all threads when the list is expanded", () => {
+    const threads = Array.from({ length: 8 }, (_, index) =>
+      makeThread({
+        id: ThreadId.make(`thread-${index + 1}`),
+      }),
+    );
+
+    const result = getVisibleThreadsForProject({
+      threads,
+      activeThreadId: ThreadId.make("thread-8"),
+      isThreadListExpanded: true,
+      previewLimit: 6,
+    });
+
+    expect(result.hasHiddenThreads).toBe(true);
+    expect(result.visibleThreads.map((thread) => thread.id)).toEqual(
+      threads.map((thread) => thread.id),
+    );
+    expect(result.hiddenThreads).toEqual([]);
+  });
+});
+
+describe("collapseWorktreeSiblings", () => {
+  type CollapsibleThread = {
+    id: string;
+    environmentId: string;
+    worktreePath: string | null;
+    createdAt: string;
+  };
+  const keyOf = (thread: CollapsibleThread) => `${thread.environmentId}:${thread.id}`;
+  const make = (
+    id: string,
+    worktreePath: string | null,
+    createdAt: string,
+    environmentId = "env-1",
+  ): CollapsibleThread => ({ id, environmentId, worktreePath, createdAt });
+
+  it("keeps the earliest-created representative at the newest sibling's position", () => {
+    const threads = [
+      make("newer", "/wt/a", "2026-03-09T12:00:00.000Z"),
+      make("standalone", null, "2026-03-09T11:00:00.000Z"),
+      make("older", "/wt/a", "2026-03-09T10:00:00.000Z"),
+    ];
+
+    const { threads: collapsed } = collapseWorktreeSiblings(threads, keyOf);
+
+    // "older" survives as the stable route, but the group occupies "newer"'s
+    // first-place position so recent activity in any sibling promotes it.
+    expect(collapsed.map((thread) => thread.id)).toEqual(["older", "standalone"]);
+  });
+
+  it("promotes a worktree when a collapsed sibling is newer than another chat", () => {
+    const sortedByActivity = [
+      make("new-worktree-chat", "/wt/a", "2026-03-09T12:00:00.000Z"),
+      make("other-worktree", "/wt/b", "2026-03-09T11:00:00.000Z"),
+      make("worktree-representative", "/wt/a", "2026-03-09T10:00:00.000Z"),
+    ];
+
+    const { threads: collapsed } = collapseWorktreeSiblings(sortedByActivity, keyOf);
+
+    expect(collapsed.map((thread) => thread.id)).toEqual([
+      "worktree-representative",
+      "other-worktree",
+    ]);
+  });
+
+  it("never collapses threads without a worktree", () => {
+    const threads = [
+      make("a", null, "2026-03-09T10:00:00.000Z"),
+      make("b", null, "2026-03-09T10:00:00.000Z"),
+    ];
+
+    const { threads: collapsed } = collapseWorktreeSiblings(threads, keyOf);
+
+    expect(collapsed.map((thread) => thread.id)).toEqual(["a", "b"]);
+  });
+
+  it("does not merge same-path worktrees across environments", () => {
+    const threads = [
+      make("a", "/wt/shared", "2026-03-09T10:00:00.000Z", "env-1"),
+      make("b", "/wt/shared", "2026-03-09T11:00:00.000Z", "env-2"),
+    ];
+
+    const { threads: collapsed } = collapseWorktreeSiblings(threads, keyOf);
+
+    expect(collapsed.map((thread) => thread.id)).toEqual(["a", "b"]);
+  });
+
+  it("maps every sibling and the representative to the representative's key", () => {
+    const threads = [
+      make("older", "/wt/a", "2026-03-09T10:00:00.000Z"),
+      make("newer", "/wt/a", "2026-03-09T12:00:00.000Z"),
+      make("solo", null, "2026-03-09T11:00:00.000Z"),
+    ];
+
+    const { representativeKeyByThreadKey } = collapseWorktreeSiblings(threads, keyOf);
+
+    expect(representativeKeyByThreadKey.get("env-1:newer")).toBe("env-1:older");
+    expect(representativeKeyByThreadKey.get("env-1:older")).toBe("env-1:older");
+    expect(representativeKeyByThreadKey.get("env-1:solo")).toBe("env-1:solo");
+  });
+
+  it("breaks createdAt ties deterministically by id", () => {
+    const threads = [
+      make("beta", "/wt/a", "2026-03-09T10:00:00.000Z"),
+      make("alpha", "/wt/a", "2026-03-09T10:00:00.000Z"),
+    ];
+
+    const { threads: collapsed } = collapseWorktreeSiblings(threads, keyOf);
+
+    expect(collapsed.map((thread) => thread.id)).toEqual(["alpha"]);
+  });
+});
+
+describe("resolveWorktreeWorkspaceRepresentative", () => {
+  type WorkspaceThread = {
+    id: string;
+    environmentId: string;
+    worktreePath: string | null;
+    createdAt: string;
+    archivedAt: string | null;
+  };
+  const make = (
+    id: string,
+    worktreePath: string | null,
+    createdAt: string,
+    overrides: { environmentId?: string; archivedAt?: string | null } = {},
+  ): WorkspaceThread => ({
+    id,
+    environmentId: overrides.environmentId ?? "env-1",
+    worktreePath,
+    createdAt,
+    archivedAt: overrides.archivedAt ?? null,
+  });
+
+  it("returns the earliest-created live sibling sharing the worktree", () => {
+    const threads = [
+      make("newer", "/wt/a", "2026-03-09T12:00:00.000Z"),
+      make("older", "/wt/a", "2026-03-09T10:00:00.000Z"),
+      make("other-wt", "/wt/b", "2026-03-09T08:00:00.000Z"),
+    ];
+
+    const representative = resolveWorktreeWorkspaceRepresentative({
+      threads,
+      target: { environmentId: "env-1", worktreePath: "/wt/a" },
+    });
+
+    expect(representative?.id).toBe("older");
+  });
+
+  it("returns null for threads with no worktree so the caller keeps its own ref", () => {
+    const threads = [make("solo", null, "2026-03-09T10:00:00.000Z")];
+
+    expect(
+      resolveWorktreeWorkspaceRepresentative({
+        threads,
+        target: { environmentId: "env-1", worktreePath: null },
+      }),
+    ).toBeNull();
+  });
+
+  it("skips archived siblings when choosing the representative", () => {
+    const threads = [
+      make("archived-oldest", "/wt/a", "2026-03-09T09:00:00.000Z", {
+        archivedAt: "2026-03-09T13:00:00.000Z",
+      }),
+      make("live-older", "/wt/a", "2026-03-09T10:00:00.000Z"),
+      make("live-newer", "/wt/a", "2026-03-09T12:00:00.000Z"),
+    ];
+
+    const representative = resolveWorktreeWorkspaceRepresentative({
+      threads,
+      target: { environmentId: "env-1", worktreePath: "/wt/a" },
+    });
+
+    expect(representative?.id).toBe("live-older");
+  });
+
+  it("does not cross environments for the same worktree path", () => {
+    const threads = [
+      make("other-env", "/wt/shared", "2026-03-09T08:00:00.000Z", { environmentId: "env-2" }),
+      make("mine", "/wt/shared", "2026-03-09T10:00:00.000Z", { environmentId: "env-1" }),
+    ];
+
+    const representative = resolveWorktreeWorkspaceRepresentative({
+      threads,
+      target: { environmentId: "env-1", worktreePath: "/wt/shared" },
+    });
+
+    expect(representative?.id).toBe("mine");
+  });
+
+  it("breaks createdAt ties by id", () => {
+    const threads = [
+      make("beta", "/wt/a", "2026-03-09T10:00:00.000Z"),
+      make("alpha", "/wt/a", "2026-03-09T10:00:00.000Z"),
+    ];
+
+    const representative = resolveWorktreeWorkspaceRepresentative({
+      threads,
+      target: { environmentId: "env-1", worktreePath: "/wt/a" },
+    });
+
+    expect(representative?.id).toBe("alpha");
+  });
+
+  const runningSession = (id: string) =>
+    ({
+      threadId: ThreadId.make(id),
+      status: "running" as const,
+      providerName: "Codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      runtimeMode: DEFAULT_RUNTIME_MODE,
+      activeTurnId: "turn-1" as never,
+      lastError: null,
+      updatedAt: "2026-03-09T12:01:00.000Z",
+    }) satisfies NonNullable<Thread["session"]>;
+
+  // The collapse merge reads the shell-only pending flags, so tests build
+  // shell-shaped rows: a full Thread plus the two attention booleans.
+  const mergeThread = (
+    overrides: Partial<Thread>,
+    flags: { hasPendingApprovals?: boolean; hasPendingUserInput?: boolean } = {},
+  ) => ({
+    ...makeThread(overrides),
+    hasPendingApprovals: flags.hasPendingApprovals ?? false,
+    hasPendingUserInput: flags.hasPendingUserInput ?? false,
+  });
+
+  it("projects a running sibling's status onto the representative row", () => {
+    const representative = mergeThread({
+      id: ThreadId.make("older"),
+      worktreePath: "/wt/a",
+      createdAt: "2026-03-09T10:00:00.000Z",
+    });
+    const runningSibling = mergeThread({
+      id: ThreadId.make("newer"),
+      worktreePath: "/wt/a",
+      createdAt: "2026-03-09T12:00:00.000Z",
+      session: runningSession("newer"),
+    });
+
+    const { threads: collapsed } = collapseWorktreeSiblings(
+      [representative, runningSibling],
+      (thread) => `${thread.environmentId}:${thread.id}`,
+      mergeWorktreeSiblingRunningStatus,
+    );
+
+    expect(collapsed).toHaveLength(1);
+    expect(collapsed[0]?.id).toBe("older");
+    const representativeStatus = { ...collapsed[0]!, hasActionableProposedPlan: false };
+    expect(resolveSidebarV2Status(representativeStatus)).toBe("working");
+    expect(resolveThreadStatusPill({ thread: representativeStatus })?.label).toBe("Working");
+  });
+
+  it("surfaces a sibling awaiting input as Input over the running Working state", () => {
+    // Representative is idle; one sibling is running, another is waiting on the
+    // user. The row must read "Input" — needing the user beats "Working".
+    const representative = mergeThread({
+      id: ThreadId.make("older"),
+      worktreePath: "/wt/a",
+      createdAt: "2026-03-09T10:00:00.000Z",
+    });
+    const runningSibling = mergeThread({
+      id: ThreadId.make("running"),
+      worktreePath: "/wt/a",
+      createdAt: "2026-03-09T11:00:00.000Z",
+      session: runningSession("running"),
+    });
+    const inputSibling = mergeThread(
+      {
+        id: ThreadId.make("waiting"),
+        worktreePath: "/wt/a",
+        createdAt: "2026-03-09T12:00:00.000Z",
+        session: runningSession("waiting"),
+      },
+      { hasPendingUserInput: true },
+    );
+
+    const { threads: collapsed } = collapseWorktreeSiblings(
+      [representative, runningSibling, inputSibling],
+      (thread) => `${thread.environmentId}:${thread.id}`,
+      mergeWorktreeSiblingRunningStatus,
+    );
+
+    expect(collapsed).toHaveLength(1);
+    expect(collapsed[0]?.id).toBe("older");
+    const representativeStatus = { ...collapsed[0]!, hasActionableProposedPlan: false };
+    expect(resolveSidebarV2Status(representativeStatus)).toBe("input");
+    expect(resolveThreadStatusPill({ thread: representativeStatus })?.label).toBe("Awaiting Input");
+  });
+
+  it("surfaces a sibling pending approval as Approval over Input and Working", () => {
+    const representative = mergeThread({
+      id: ThreadId.make("older"),
+      worktreePath: "/wt/a",
+      createdAt: "2026-03-09T10:00:00.000Z",
+    });
+    const inputSibling = mergeThread(
+      {
+        id: ThreadId.make("waiting"),
+        worktreePath: "/wt/a",
+        createdAt: "2026-03-09T11:00:00.000Z",
+        session: runningSession("waiting"),
+      },
+      { hasPendingUserInput: true },
+    );
+    const approvalSibling = mergeThread(
+      {
+        id: ThreadId.make("approve"),
+        worktreePath: "/wt/a",
+        createdAt: "2026-03-09T12:00:00.000Z",
+        session: runningSession("approve"),
+      },
+      { hasPendingApprovals: true },
+    );
+
+    const { threads: collapsed } = collapseWorktreeSiblings(
+      [representative, inputSibling, approvalSibling],
+      (thread) => `${thread.environmentId}:${thread.id}`,
+      mergeWorktreeSiblingRunningStatus,
+    );
+
+    expect(collapsed).toHaveLength(1);
+    const representativeStatus = { ...collapsed[0]!, hasActionableProposedPlan: false };
+    expect(resolveSidebarV2Status(representativeStatus)).toBe("approval");
+  });
+});
+
+describe("collectWorktreeSiblingThreads", () => {
+  type SiblingThread = {
+    id: string;
+    environmentId: string;
+    worktreePath: string | null;
+    createdAt: string;
+    archivedAt: string | null;
+  };
+  const make = (
+    id: string,
+    worktreePath: string | null,
+    overrides: Partial<SiblingThread> = {},
+  ): SiblingThread => ({
+    id,
+    environmentId: "env-1",
+    worktreePath,
+    createdAt: "2026-03-09T10:00:00.000Z",
+    archivedAt: null,
+    ...overrides,
+  });
+
+  it("returns every non-archived chat sharing the target's worktree", () => {
+    const threads = [
+      make("a", "/wt/a"),
+      make("b", "/wt/a"),
+      make("c", "/wt/other"),
+      make("solo", null),
+    ];
+
+    const collected = collectWorktreeSiblingThreads({ threads, target: threads[0]! });
+
+    // Both /wt/a chats archive together; unrelated worktrees stay untouched.
+    expect(collected.map((thread) => thread.id)).toEqual(["a", "b"]);
+  });
+
+  it("preserves input order so navigation and toasts stay stable", () => {
+    const threads = [make("b", "/wt/a"), make("a", "/wt/a")];
+
+    const collected = collectWorktreeSiblingThreads({ threads, target: threads[1]! });
+
+    expect(collected.map((thread) => thread.id)).toEqual(["b", "a"]);
+  });
+
+  it("skips already-archived siblings", () => {
+    const threads = [
+      make("a", "/wt/a"),
+      make("b", "/wt/a", { archivedAt: "2026-03-09T11:00:00.000Z" }),
+    ];
+
+    const collected = collectWorktreeSiblingThreads({ threads, target: threads[0]! });
+
+    expect(collected.map((thread) => thread.id)).toEqual(["a"]);
+  });
+
+  it("archives only the target itself when it has no worktree", () => {
+    const threads = [make("solo", null), make("other", null)];
+
+    const collected = collectWorktreeSiblingThreads({ threads, target: threads[0]! });
+
+    expect(collected.map((thread) => thread.id)).toEqual(["solo"]);
+  });
+
+  it("never crosses environment boundaries for a shared worktree path", () => {
+    const threads = [
+      make("a", "/wt/shared", { environmentId: "env-1" }),
+      make("b", "/wt/shared", { environmentId: "env-2" }),
+    ];
+
+    const collected = collectWorktreeSiblingThreads({ threads, target: threads[0]! });
+
+    expect(collected.map((thread) => thread.id)).toEqual(["a"]);
+  });
+});
+
+describe("resolveWorktreeActiveThread", () => {
+  type ActiveThread = {
+    id: string;
+    environmentId: string;
+    worktreePath: string | null;
+    createdAt: string;
+    archivedAt: string | null;
+    settledAt: string | null;
+    latestUserMessageAt: string | null;
+    latestTurn: null;
+    updatedAt: string;
+  };
+  const keyOf = (thread: ActiveThread) => `${thread.environmentId}:${thread.id}`;
+  const make = (
+    id: string,
+    worktreePath: string | null,
+    createdAt: string,
+    overrides: Partial<ActiveThread> = {},
+  ): ActiveThread => ({
+    id,
+    environmentId: "env-1",
+    worktreePath,
+    createdAt,
+    archivedAt: null,
+    settledAt: null,
+    latestUserMessageAt: null,
+    latestTurn: null,
+    updatedAt: createdAt,
+    ...overrides,
+  });
+
+  it("returns the clicked thread when it has no worktree", () => {
+    const clicked = make("solo", null, "2026-03-09T10:00:00.000Z");
+    const result = resolveWorktreeActiveThread({
+      threads: [clicked],
+      clicked,
+      keyOf,
+      lastVisitedAtByKey: {},
+    });
+    expect(result.id).toBe("solo");
+  });
+
+  it("opens the sibling the user visited most recently", () => {
+    const older = make("older", "/wt/a", "2026-03-09T10:00:00.000Z");
+    const newer = make("newer", "/wt/a", "2026-03-09T12:00:00.000Z");
+    const result = resolveWorktreeActiveThread({
+      threads: [older, newer],
+      clicked: older,
+      keyOf,
+      lastVisitedAtByKey: {
+        "env-1:older": "2026-03-09T13:00:00.000Z",
+        "env-1:newer": "2026-03-09T14:00:00.000Z",
+      },
+    });
+    expect(result.id).toBe("newer");
+  });
+
+  it("falls back to server activity for chats never visited", () => {
+    const older = make("older", "/wt/a", "2026-03-09T10:00:00.000Z");
+    const newer = make("newer", "/wt/a", "2026-03-09T12:00:00.000Z", {
+      latestUserMessageAt: "2026-03-09T15:00:00.000Z",
+      updatedAt: "2026-03-09T15:00:00.000Z",
+    });
+    const result = resolveWorktreeActiveThread({
+      threads: [older, newer],
+      clicked: older,
+      keyOf,
+      lastVisitedAtByKey: {},
+    });
+    expect(result.id).toBe("newer");
+  });
+
+  it("prefers the chat the user opened over a sibling with newer server activity", () => {
+    const opened = make("opened", "/wt/a", "2026-03-09T10:00:00.000Z");
+    const busier = make("busier", "/wt/a", "2026-03-09T12:00:00.000Z", {
+      latestUserMessageAt: "2026-03-09T18:00:00.000Z",
+      updatedAt: "2026-03-09T18:00:00.000Z",
+    });
+    const result = resolveWorktreeActiveThread({
+      threads: [opened, busier],
+      clicked: opened,
+      keyOf,
+      lastVisitedAtByKey: {
+        "env-1:opened": "2026-03-09T13:00:00.000Z",
+      },
+    });
+    expect(result.id).toBe("opened");
+  });
+
+  it("ignores archived siblings and siblings in other worktrees", () => {
+    const clicked = make("clicked", "/wt/a", "2026-03-09T10:00:00.000Z");
+    const archived = make("archived", "/wt/a", "2026-03-09T11:00:00.000Z", {
+      archivedAt: "2026-03-09T20:00:00.000Z",
+      updatedAt: "2026-03-09T20:00:00.000Z",
+    });
+    const otherWorktree = make("other", "/wt/b", "2026-03-09T11:00:00.000Z", {
+      updatedAt: "2026-03-09T21:00:00.000Z",
+    });
+    const result = resolveWorktreeActiveThread({
+      threads: [clicked, archived, otherWorktree],
+      clicked,
+      keyOf,
+      lastVisitedAtByKey: {
+        "env-1:archived": "2026-03-09T22:00:00.000Z",
+        "env-1:other": "2026-03-09T23:00:00.000Z",
+      },
+    });
+    expect(result.id).toBe("clicked");
+  });
+
+  it("keeps the earliest-created chat when siblings share the same activity", () => {
+    const older = make("older", "/wt/a", "2026-03-09T10:00:00.000Z", {
+      updatedAt: "2026-03-09T18:00:00.000Z",
+    });
+    const newer = make("newer", "/wt/a", "2026-03-09T12:00:00.000Z", {
+      updatedAt: "2026-03-09T18:00:00.000Z",
+    });
+    const result = resolveWorktreeActiveThread({
+      threads: [newer, older],
+      clicked: newer,
+      keyOf,
+      lastVisitedAtByKey: {},
+    });
+    expect(result.id).toBe("older");
+  });
+});
+
 function makeProject(overrides: Partial<Project> = {}): Project {
-  const { defaultModelSelection, ...rest } = overrides;
+  const { defaultModelSelection, reviewModelSelection = null, ...rest } = overrides;
   return {
     id: ProjectId.make("project-1"),
     environmentId: localEnvironmentId,
@@ -1381,9 +1640,15 @@ function makeProject(overrides: Partial<Project> = {}): Project {
       model: "gpt-5.4",
       ...defaultModelSelection,
     },
+    reviewModelSelection,
     createdAt: "2026-03-09T10:00:00.000Z",
     updatedAt: "2026-03-09T10:00:00.000Z",
     scripts: [],
+    gitHubAccount: null,
+    worktreeBranchPrefix: null,
+    defaultWorktreeBranch: null,
+    previewPort: null,
+    worktreeCopyFiles: [],
     ...rest,
   };
 }
@@ -1483,6 +1748,153 @@ describe("getFallbackThreadIdAfterDelete", () => {
     });
 
     expect(fallbackThreadId).toBe(ThreadId.make("thread-next"));
+  });
+});
+
+describe("getFallbackThreadAfterArchive", () => {
+  it("prefers another active thread in the archived thread's project", () => {
+    const fallback = getFallbackThreadAfterArchive({
+      threads: [
+        makeThread({
+          id: ThreadId.make("thread-active"),
+          projectId: ProjectId.make("project-1"),
+          createdAt: "2026-03-09T10:05:00.000Z",
+          messages: [],
+        }),
+        makeThread({
+          id: ThreadId.make("thread-same-project"),
+          projectId: ProjectId.make("project-1"),
+          createdAt: "2026-03-09T10:10:00.000Z",
+          messages: [],
+        }),
+        makeThread({
+          id: ThreadId.make("thread-other-project"),
+          projectId: ProjectId.make("project-2"),
+          createdAt: "2026-03-09T10:20:00.000Z",
+          messages: [],
+        }),
+      ],
+      archivedThreadId: ThreadId.make("thread-active"),
+      archivedThreadEnvironmentId: localEnvironmentId,
+      sortOrder: "created_at",
+    });
+
+    expect(fallback?.id).toBe(ThreadId.make("thread-same-project"));
+  });
+
+  it("falls back across projects instead of creating an empty draft", () => {
+    const fallback = getFallbackThreadAfterArchive({
+      threads: [
+        makeThread({
+          id: ThreadId.make("thread-active"),
+          projectId: ProjectId.make("project-1"),
+          createdAt: "2026-03-09T10:05:00.000Z",
+          messages: [],
+        }),
+        makeThread({
+          id: ThreadId.make("thread-existing"),
+          environmentId: EnvironmentId.make("environment-remote"),
+          projectId: ProjectId.make("project-2"),
+          createdAt: "2026-03-09T10:20:00.000Z",
+          messages: [],
+        }),
+      ],
+      archivedThreadId: ThreadId.make("thread-active"),
+      archivedThreadEnvironmentId: localEnvironmentId,
+      sortOrder: "created_at",
+    });
+
+    expect(fallback?.id).toBe(ThreadId.make("thread-existing"));
+  });
+
+  it("returns null when archiving the last active thread", () => {
+    const fallback = getFallbackThreadAfterArchive({
+      threads: [
+        makeThread({
+          id: ThreadId.make("thread-active"),
+          projectId: ProjectId.make("project-1"),
+          createdAt: "2026-03-09T10:05:00.000Z",
+          messages: [],
+        }),
+      ],
+      archivedThreadId: ThreadId.make("thread-active"),
+      archivedThreadEnvironmentId: localEnvironmentId,
+      sortOrder: "created_at",
+    });
+
+    expect(fallback).toBeNull();
+  });
+});
+describe("groupSidebarThreadsByProject", () => {
+  const resolveProjectKey = (thread: { projectKey: string | null }) => thread.projectKey;
+
+  it("emits sections in projectOrder, preserving thread order within each", () => {
+    const threads = [
+      { id: "a", projectKey: "p2" },
+      { id: "b", projectKey: "p1" },
+      { id: "c", projectKey: "p2" },
+      { id: "d", projectKey: "p1" },
+    ];
+
+    const sections = groupSidebarThreadsByProject({
+      threads,
+      projectOrder: ["p1", "p2"],
+      resolveProjectKey,
+    });
+
+    expect(sections).toEqual([
+      {
+        projectKey: "p1",
+        threads: [
+          { id: "b", projectKey: "p1" },
+          { id: "d", projectKey: "p1" },
+        ],
+      },
+      {
+        projectKey: "p2",
+        threads: [
+          { id: "a", projectKey: "p2" },
+          { id: "c", projectKey: "p2" },
+        ],
+      },
+    ]);
+  });
+
+  it("omits projects with no threads so no empty header renders", () => {
+    const sections = groupSidebarThreadsByProject({
+      threads: [{ id: "a", projectKey: "p2" }],
+      projectOrder: ["p1", "p2", "p3"],
+      resolveProjectKey,
+    });
+
+    expect(sections.map((section) => section.projectKey)).toEqual(["p2"]);
+  });
+
+  it("collects threads with an unknown or null project into a trailing null section", () => {
+    const threads = [
+      { id: "a", projectKey: "p1" },
+      { id: "b", projectKey: "missing" },
+      { id: "c", projectKey: null },
+    ];
+
+    const sections = groupSidebarThreadsByProject({
+      threads,
+      projectOrder: ["p1"],
+      resolveProjectKey,
+    });
+
+    expect(sections).toEqual([
+      { projectKey: "p1", threads: [{ id: "a", projectKey: "p1" }] },
+      {
+        projectKey: null,
+        threads: [
+          { id: "b", projectKey: "missing" },
+          { id: "c", projectKey: null },
+        ],
+      },
+    ]);
+    // No thread is dropped: the flattened order still covers every input.
+    expect(sections.flatMap((section) => section.threads)).toHaveLength(threads.length);
   });
 });
 describe("sortProjectsForSidebar", () => {
@@ -1597,7 +2009,7 @@ describe("sortProjectsForSidebar", () => {
     ]);
   });
 
-  it("ignores archived threads when sorting projects", () => {
+  it("keeps a project's position when its most recent thread is archived", () => {
     const sorted = sortProjectsForSidebar(
       [
         makeProject({
@@ -1607,7 +2019,7 @@ describe("sortProjectsForSidebar", () => {
         }),
         makeProject({
           id: ProjectId.make("project-2"),
-          title: "Archived-only project",
+          title: "Recently archived project",
           updatedAt: "2026-03-09T10:00:00.000Z",
         }),
       ],
@@ -1618,19 +2030,21 @@ describe("sortProjectsForSidebar", () => {
           updatedAt: "2026-03-09T10:02:00.000Z",
           archivedAt: null,
         }),
+        // Archived, but its activity is still the most recent, so archiving it
+        // must not push project-2 below project-1.
         makeThread({
           id: ThreadId.make("thread-archived"),
           projectId: ProjectId.make("project-2"),
           updatedAt: "2026-03-09T10:10:00.000Z",
           archivedAt: "2026-03-09T10:11:00.000Z",
         }),
-      ].filter((thread) => thread.archivedAt === null),
+      ],
       "updated_at",
     );
 
     expect(sorted.map((project) => project.id)).toEqual([
-      ProjectId.make("project-1"),
       ProjectId.make("project-2"),
+      ProjectId.make("project-1"),
     ]);
   });
 
@@ -1679,7 +2093,7 @@ describe("sortScopedProjectsForSidebar", () => {
     expect(sorted.map((project) => project.title)).toEqual(["Remote project", "Local project"]);
   });
 
-  it("does not use archived threads as project activity", () => {
+  it("keeps a project's position when its most recent thread is archived", () => {
     const projects = [
       makeProject({
         id: ProjectId.make("project-visible"),
@@ -1688,7 +2102,7 @@ describe("sortScopedProjectsForSidebar", () => {
       }),
       makeProject({
         id: ProjectId.make("project-archived"),
-        title: "Archived-only project",
+        title: "Recently archived project",
         updatedAt: "2026-03-09T10:00:00.000Z",
       }),
     ];
@@ -1698,6 +2112,8 @@ describe("sortScopedProjectsForSidebar", () => {
         projectId: ProjectId.make("project-visible"),
         updatedAt: "2026-03-09T10:02:00.000Z",
       }),
+      // Archiving this thread must not reorder the projects: its activity is
+      // still the most recent, so its project stays on top.
       makeThread({
         id: ThreadId.make("thread-archived"),
         projectId: ProjectId.make("project-archived"),
@@ -1709,8 +2125,8 @@ describe("sortScopedProjectsForSidebar", () => {
     const sorted = sortScopedProjectsForSidebar(projects, threads, "updated_at");
 
     expect(sorted.map((project) => project.title)).toEqual([
+      "Recently archived project",
       "Visible project",
-      "Archived-only project",
     ]);
   });
 });

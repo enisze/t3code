@@ -36,6 +36,10 @@ import {
   parseRemoteNamesInGitOrder,
   parseRemoteRefWithRemoteNames,
 } from "../git/remoteRefs.ts";
+import {
+  GitHubAccountResolver,
+  gitHubAccountAuthEnv,
+} from "../sourceControl/GitHubAccountResolver.ts";
 import { ServerConfig } from "../config.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -50,14 +54,15 @@ const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES = 49_000;
 const RANGE_COMMIT_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_PATCH_MAX_OUTPUT_BYTES = 59_000;
-const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
-const REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES = 80_000;
-const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
-// Patches the clients render are parsed against git's default a/ and b/ path
-// prefixes. A repository or global diff.noprefix or diff.mnemonicPrefix would
-// otherwise leak into the patch and leave every parsed file unnamed.
-export const PATCH_RENDER_PREFIX_ARGS = ["--src-prefix=a/", "--dst-prefix=b/"] as const;
-const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 120_000;
+// The working-tree and branch review previews back the diff panel's default
+// scopes, so they must render as completely as the per-turn checkpoint diff
+// (capped at 10 MB in GitVcsDriver.ts). The old 120 KB / 80 KB caps truncated
+// large branches well before the turn diff did, so the panel showed a
+// "truncated" banner and dropped files that the turn diff still listed. Match
+// the checkpoint diff budget so a full branch's changes fit.
+const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 10_000_000;
+const REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
+const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 10_000_000;
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
 
@@ -247,15 +252,22 @@ function paginateBranches(input: {
   };
 }
 
-function parseWorktreeBranchPaths(stdout: string): ReadonlyMap<string, string> {
-  const worktreePaths = new Map<string, string>();
+interface WorktreeBranchEntry {
+  readonly path: string;
+  /** null for a detached worktree, which still owns its directory. */
+  readonly branch: string | null;
+  readonly prunable: boolean;
+}
+
+function parseWorktreeBranchEntries(stdout: string): ReadonlyArray<WorktreeBranchEntry> {
+  const entries: WorktreeBranchEntry[] = [];
   let currentPath: string | null = null;
   let currentBranch: string | null = null;
   let currentPrunable = false;
 
   const flush = () => {
-    if (currentPath !== null && currentBranch !== null && !currentPrunable) {
-      worktreePaths.set(currentBranch, currentPath);
+    if (currentPath !== null) {
+      entries.push({ path: currentPath, branch: currentBranch, prunable: currentPrunable });
     }
     currentPath = null;
     currentBranch = null;
@@ -274,6 +286,16 @@ function parseWorktreeBranchPaths(stdout: string): ReadonlyMap<string, string> {
     }
   }
   flush();
+
+  return entries;
+}
+
+function parseWorktreeBranchPaths(stdout: string): ReadonlyMap<string, string> {
+  const worktreePaths = new Map<string, string>();
+  for (const entry of parseWorktreeBranchEntries(stdout)) {
+    if (entry.prunable || entry.branch === null) continue;
+    worktreePaths.set(entry.branch, entry.path);
+  }
 
   return worktreePaths;
 }
@@ -394,6 +416,67 @@ function gitCommandContext(
     cwd: input.cwd,
     argumentCount: input.args.length,
   } as const;
+}
+
+// Git writes the actionable reason for a failed remote op (push/fetch) to
+// stderr — "Permission denied", "403", "could not read Username", "remote:
+// Repository not found". Surfacing it turns the opaque "exited with a non-zero
+// status" into something a user can act on (e.g. the selected GitHub account
+// lacks push access). Callers gate this to commands whose args are constructed
+// internally (remote/branch names, never user input), so — unlike the general
+// executeGit path, which stays redacted because git echoes argument values into
+// stderr — there is no argument secret to leak. The account token is passed via
+// the credential helper's stdin protocol and git redacts URL credentials, so
+// the token never appears in this output either.
+function appendGitOutputToDetail(baseDetail: string, stdout: string, stderr: string): string {
+  const gitOutput = stderr.trim() || stdout.trim();
+  return gitOutput.length > 0 ? `${baseDetail}\n${gitOutput}` : baseDetail;
+}
+
+/**
+ * Explain the remote rejections whose raw git output doesn't tell the user what
+ * to actually do. These all hinge on *which account* the command authenticated
+ * as, which is invisible in git's output — so the caller pairs this with
+ * {@link describeAuthAccountForCwd}.
+ *
+ * Returns null when git's own output is already the clearest explanation.
+ */
+export function describeGitRemoteRejection(output: string): string | null {
+  const normalized = output.toLowerCase();
+
+  // GitHub refuses to accept a push that adds/changes anything under
+  // .github/workflows/ unless the token carries the `workflow` OAuth scope. The
+  // `repo` scope alone is not enough, so this bites accounts that otherwise
+  // have full push access.
+  if (
+    normalized.includes("without `workflow` scope") ||
+    normalized.includes("without 'workflow' scope") ||
+    (normalized.includes("workflow") &&
+      normalized.includes("scope") &&
+      normalized.includes("refusing to allow"))
+  ) {
+    return "GitHub rejected the push because the account it authenticated as is missing the `workflow` OAuth scope, which is required to add or change files under `.github/workflows/`. Run `gh auth refresh -s workflow` for that account, then push again.";
+  }
+
+  if (normalized.includes("protected branch") || normalized.includes("refusing to allow")) {
+    return "GitHub rejected the push because a branch protection rule or a missing permission on the authenticated account blocks it.";
+  }
+
+  if (normalized.includes("non-fast-forward") || normalized.includes("fetch first")) {
+    return "The remote branch has commits this branch doesn't. Pull or rebase onto the remote branch, then push again.";
+  }
+
+  return null;
+}
+
+/**
+ * A push was rejected only because the remote moved ahead of us (the classic
+ * "non-fast-forward" / "fetch first" rejection). This is the recoverable case
+ * the push path auto-rebases and retries; auth/protection failures are not.
+ */
+export function isNonFastForwardRejection(error: GitCommandError): boolean {
+  const normalized = error.detail.toLowerCase();
+  return normalized.includes("non-fast-forward") || normalized.includes("fetch first");
 }
 
 function parseDefaultBranchFromRemoteHeadRef(value: string, remoteName: string): string | null {
@@ -935,6 +1018,150 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   ): Effect.Effect<void, GitCommandError> =>
     executeGit(operation, cwd, args, options).pipe(Effect.asVoid);
 
+  /**
+   * Resolve the env that authenticates git/gh as the project's selected GitHub
+   * account for `cwd`. Returns `{}` when no account is attached or the resolver
+   * isn't provided (tests/minimal layers), leaving ambient auth untouched.
+   *
+   * Fails with a `GitCommandError` when the project HAS an account attached but
+   * its token can't be minted (the account isn't logged in to `gh`) — pushing
+   * or fetching as the machine's active account would act as the wrong user, so
+   * we refuse instead of silently falling back.
+   */
+  const resolveAccountAuthEnv = (
+    operation: string,
+    cwd: string,
+  ): Effect.Effect<NodeJS.ProcessEnv, GitCommandError> =>
+    Effect.gen(function* () {
+      const resolverOption = yield* Effect.serviceOption(GitHubAccountResolver);
+      if (Option.isNone(resolverOption)) {
+        return {};
+      }
+      const resolution = yield* resolverOption.value.resolveForCwd(cwd);
+      if (resolution._tag === "unavailable") {
+        return yield* Effect.fail(
+          new GitCommandError({
+            operation,
+            command: "git",
+            cwd,
+            detail: `The GitHub account "${resolution.account.login}" is selected for this project but isn't logged in to the GitHub CLI on ${resolution.account.host}. Run \`gh auth login\` for that account, or change the account in the project's settings.`,
+          }),
+        );
+      }
+      return resolution._tag === "resolved" ? gitHubAccountAuthEnv(resolution, process.env) : {};
+    });
+
+  /**
+   * Env that makes a local `git commit` record the project's selected GitHub
+   * account as the author and committer, instead of the machine's ambient
+   * `git config user.*` (which may belong to a different, currently-active
+   * account). Returns `{}` when no account is attached or the resolver isn't
+   * provided (tests/minimal layers), leaving the ambient identity untouched.
+   *
+   * Unlike remote auth this never fails: a local commit doesn't touch the
+   * network, and the login-based no-reply email still attributes the commit to
+   * the right account even when its token can't be minted. A later push is
+   * where a logged-out account surfaces loudly.
+   */
+  const resolveCommitIdentityEnv = (cwd: string): Effect.Effect<NodeJS.ProcessEnv> =>
+    Effect.gen(function* () {
+      const resolverOption = yield* Effect.serviceOption(GitHubAccountResolver);
+      if (Option.isNone(resolverOption)) {
+        return {};
+      }
+      const resolution = yield* resolverOption.value.resolveCommitIdentityForCwd(cwd);
+      if (resolution._tag === "ambient") {
+        return {};
+      }
+      const { name, email } = resolution.identity;
+      return {
+        GIT_AUTHOR_NAME: name,
+        GIT_AUTHOR_EMAIL: email,
+        GIT_COMMITTER_NAME: name,
+        GIT_COMMITTER_EMAIL: email,
+      };
+    });
+
+  /**
+   * Env for a git command that talks to a remote (fetch/pull/push). Combines
+   * the non-interactive base — so the server never blocks on a credential
+   * prompt — with the project's selected-account auth env (token + gh
+   * credential helper + SSH→HTTPS rewrite). When no account is attached, or the
+   * resolver isn't provided, this is just the non-interactive base and git uses
+   * ambient auth.
+   *
+   * Every remote-touching git command routes through this so account selection
+   * can't be silently skipped by a call site that forgot to opt in — the class
+   * of bug that made "set an account for a project" only half-work.
+   */
+  const resolveNetworkGitEnv = (
+    operation: string,
+    cwd: string,
+  ): Effect.Effect<NodeJS.ProcessEnv, GitCommandError> =>
+    resolveAccountAuthEnv(operation, cwd).pipe(
+      Effect.map((authEnv) => ({ ...STATUS_UPSTREAM_REFRESH_ENV, ...authEnv })),
+    );
+
+  /**
+   * Name the identity a remote git command acted as, for error messages. Git
+   * never reports this, so a rejection caused by acting as the wrong account is
+   * otherwise undiagnosable. Crucially it calls out the ambient fallback: with
+   * no account attached to the project, git silently uses whichever `gh` account
+   * happens to be active, which is the usual cause of "it pushed as the wrong
+   * user (sometimes)".
+   */
+  const describeAuthAccountForCwd = (cwd: string): Effect.Effect<string | null> =>
+    Effect.gen(function* () {
+      const resolverOption = yield* Effect.serviceOption(GitHubAccountResolver);
+      if (Option.isNone(resolverOption)) {
+        return null;
+      }
+      const resolution = yield* resolverOption.value.resolveForCwd(cwd);
+      if (resolution._tag === "ambient") {
+        return "No GitHub account is attached to this project, so the command ran as whichever account is currently active in the GitHub CLI. Attach the intended account in the project's settings to stop this depending on the machine's active account.";
+      }
+      return `The command ran as the GitHub account "${resolution.account.login}" selected for this project.`;
+    }).pipe(Effect.orElseSucceed(() => null));
+
+  // Remote-touching git commands (push/fetch) whose args are built internally.
+  // On failure the git stderr IS the actionable reason (auth denied, no remote,
+  // wrong account), so — unlike the redacted general executeGit path — surface
+  // it in the error detail. Runs with allowNonZeroExit so we can read stderr
+  // before deciding to fail.
+  const runGitWithEnv = (
+    operation: string,
+    cwd: string,
+    args: readonly string[],
+    env: NodeJS.ProcessEnv,
+    allowNonZeroExit = false,
+  ): Effect.Effect<void, GitCommandError> =>
+    executeGit(operation, cwd, args, { allowNonZeroExit: true, env }).pipe(
+      Effect.flatMap((result) => {
+        if (allowNonZeroExit || result.exitCode === 0) {
+          return Effect.void;
+        }
+        return Effect.gen(function* () {
+          // Only on the failure path, so the happy path stays a single spawn.
+          const rejection = describeGitRemoteRejection(result.stderr || result.stdout);
+          const account = rejection === null ? null : yield* describeAuthAccountForCwd(cwd);
+          const baseDetail = [
+            "Git command exited with a non-zero status.",
+            ...(rejection ? [rejection] : []),
+            ...(account ? [account] : []),
+          ].join("\n");
+          return yield* Effect.fail(
+            new GitCommandError({
+              ...gitCommandContext({ operation, cwd, args }),
+              detail: appendGitOutputToDetail(baseDetail, result.stdout, result.stderr),
+              ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+              stdoutLength: result.stdout.length,
+              stderrLength: result.stderr.length,
+            }),
+          );
+        });
+      }),
+    );
+
   const runGitStdout = (
     operation: string,
     cwd: string,
@@ -1023,16 +1250,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   ): Effect.Effect<void, GitCommandError> => {
     const fetchCwd =
       path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
-    return executeGit(
-      "GitVcsDriver.fetchRemoteForStatus",
-      fetchCwd,
-      ["--git-dir", gitCommonDir, "fetch", "--quiet", "--no-tags", remoteName],
-      {
-        env: STATUS_UPSTREAM_REFRESH_ENV,
-        fallbackErrorDetail: "Background Git fetch exited with a non-zero status.",
-        timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
-      },
-    ).pipe(Effect.asVoid);
+    return resolveNetworkGitEnv("GitVcsDriver.fetchRemoteForStatus", fetchCwd).pipe(
+      Effect.flatMap((env) =>
+        executeGit(
+          "GitVcsDriver.fetchRemoteForStatus",
+          fetchCwd,
+          ["--git-dir", gitCommonDir, "fetch", "--quiet", "--no-tags", remoteName],
+          {
+            env,
+            fallbackErrorDetail: "Background Git fetch exited with a non-zero status.",
+            timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
+          },
+        ),
+      ),
+      Effect.asVoid,
+    );
   };
 
   const resolveRepositoryPathsUncached = Effect.fn("resolveRepositoryPathsUncached")(function* (
@@ -1424,39 +1656,42 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     );
     const defaultBranch =
       primaryRemoteName === null ? null : yield* resolveDefaultBranchName(cwd, primaryRemoteName);
-    const candidates = [
+    // Ordered by the spec: the PR base (what this branch merges into) wins, then
+    // the repository's default branch (the branch it was most likely taken
+    // from), then the conventional names.
+    const remotePrefix =
+      primaryRemoteName && primaryRemoteName !== "origin" ? `${primaryRemoteName}/` : null;
+    const normalizedCandidates = [
       configuredBaseBranch.length > 0 ? configuredBaseBranch : null,
       defaultBranch,
       ...DEFAULT_BASE_BRANCH_CANDIDATES,
-    ];
-
-    for (const candidate of candidates) {
-      if (!candidate) {
-        continue;
-      }
-
-      const remotePrefix =
-        primaryRemoteName && primaryRemoteName !== "origin" ? `${primaryRemoteName}/` : null;
-      const normalizedCandidate = candidate.startsWith("origin/")
+    ].flatMap((candidate) => {
+      if (!candidate) return [];
+      const normalized = candidate.startsWith("origin/")
         ? candidate.slice("origin/".length)
         : remotePrefix && candidate.startsWith(remotePrefix)
           ? candidate.slice(remotePrefix.length)
           : candidate;
-      if (normalizedCandidate.length === 0 || normalizedCandidate === refName) {
-        continue;
-      }
+      if (normalized.length === 0 || normalized === refName) return [];
+      return [normalized];
+    });
 
-      if (
-        primaryRemoteName &&
-        (yield* remoteBranchExists({
-          cwd,
-          remoteName: primaryRemoteName,
-          refName: normalizedCandidate,
-        }))
-      ) {
-        return `${primaryRemoteName}/${normalizedCandidate}`;
+    // Always diff against origin: try every candidate as a remote-tracking ref
+    // first, so an earlier candidate that only exists locally never shadows a
+    // later one that is published on the remote. A stale local branch is never
+    // preferred over the remote it tracks.
+    if (primaryRemoteName) {
+      for (const normalizedCandidate of normalizedCandidates) {
+        if (yield* remoteBranchExists(cwd, primaryRemoteName, normalizedCandidate)) {
+          return `${primaryRemoteName}/${normalizedCandidate}`;
+        }
       }
+    }
 
+    // Fall back to a local branch only when no remote-tracking base exists (a
+    // remoteless repo, or a base that has never been pushed) so the branch diff
+    // still works instead of collapsing to nothing.
+    for (const normalizedCandidate of normalizedCandidates) {
       if (yield* branchExists(cwd, normalizedCandidate)) {
         return normalizedCandidate;
       }
@@ -1698,6 +1933,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     let aheadOfDefaultCount = 0;
     let hasWorkingTreeChanges = false;
     const changedFilesWithoutNumstat = new Set<string>();
+    const conflictedFiles = new Set<string>();
 
     for (const line of statusStdout.split(/\r?\n/g)) {
       if (line.startsWith("# branch.head ")) {
@@ -1720,7 +1956,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       if (line.trim().length > 0 && !line.startsWith("#")) {
         hasWorkingTreeChanges = true;
         const pathValue = parsePorcelainPath(line);
-        if (pathValue) changedFilesWithoutNumstat.add(pathValue);
+        if (pathValue) {
+          changedFilesWithoutNumstat.add(pathValue);
+          if (line.startsWith("u ")) conflictedFiles.add(pathValue);
+        }
       }
     }
 
@@ -1757,13 +1996,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       .map(([filePath, stat]) => {
         insertions += stat.insertions;
         deletions += stat.deletions;
-        return { path: filePath, insertions: stat.insertions, deletions: stat.deletions };
+        return {
+          path: filePath,
+          insertions: stat.insertions,
+          deletions: stat.deletions,
+          ...(conflictedFiles.has(filePath) ? { conflicted: true } : {}),
+        };
       })
       .toSorted((a, b) => a.path.localeCompare(b.path));
 
     for (const filePath of changedFilesWithoutNumstat) {
       if (fileStatMap.has(filePath)) continue;
-      files.push({ path: filePath, insertions: 0, deletions: 0 });
+      files.push({
+        path: filePath,
+        insertions: 0,
+        deletions: 0,
+        ...(conflictedFiles.has(filePath) ? { conflicted: true } : {}),
+      });
     }
     files.sort((a, b) => a.path.localeCompare(b.path));
 
@@ -1901,9 +2150,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             onStderrLine: (line: string) =>
               options.progress?.onOutputLine?.({ stream: "stderr", text: line }) ?? Effect.void,
           };
+    // Author/commit as the project's selected GitHub account (if any) rather
+    // than the machine's ambient git identity, so commits are attributed to the
+    // account in the project's settings — not whichever account happens to be
+    // active on the machine.
+    const identityEnv = yield* resolveCommitIdentityEnv(cwd);
     yield* executeGit("GitVcsDriver.commit.commit", cwd, args, {
       ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(progress ? { progress } : {}),
+      env: identityEnv,
     }).pipe(Effect.asVoid);
     const commitSha = yield* runGitStdout("GitVcsDriver.commit.revParseHead", cwd, [
       "rev-parse",
@@ -1912,6 +2167,63 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     return { commitSha };
   });
+
+  /**
+   * Run a push and, if it is rejected solely because the remote moved ahead,
+   * fetch that remote branch, rebase our commits onto it, and retry the push
+   * once. This makes an ordinary push self-heal the common "remote branch has
+   * commits this branch doesn't" case instead of failing and asking the user to
+   * reconcile by hand. A rebase that hits conflicts is aborted so the working
+   * tree is never left mid-rebase, and the original non-fast-forward is
+   * surfaced with actionable detail. Only non-fast-forward rejections are
+   * retried; auth/protection failures still fail fast.
+   */
+  const runPushWithAutoRebase = (
+    operation: string,
+    cwd: string,
+    pushArgs: readonly string[],
+    authEnv: NodeJS.ProcessEnv,
+    remoteName: string,
+    remoteBranch: string,
+  ): Effect.Effect<void, GitCommandError> =>
+    runGitWithEnv(operation, cwd, pushArgs, authEnv).pipe(
+      Effect.catchIf(isNonFastForwardRejection, () =>
+        Effect.gen(function* () {
+          // Refresh the exact remote branch we are pushing to; FETCH_HEAD then
+          // points at its current tip regardless of local tracking config.
+          yield* runGitWithEnv(
+            `${operation}.autoRebaseFetch`,
+            cwd,
+            ["fetch", remoteName, remoteBranch],
+            authEnv,
+          );
+          const rebaseResult = yield* executeGit(
+            `${operation}.autoRebase`,
+            cwd,
+            ["rebase", "FETCH_HEAD"],
+            { allowNonZeroExit: true, env: authEnv, timeoutMs: 120_000 },
+          );
+          if (rebaseResult.exitCode !== 0) {
+            // Abort so the repo is left clean rather than mid-rebase; ignore the
+            // abort's own exit code (nothing more we can do if it fails).
+            yield* executeGit(`${operation}.autoRebaseAbort`, cwd, ["rebase", "--abort"], {
+              allowNonZeroExit: true,
+            });
+            return yield* new GitCommandError({
+              ...gitCommandContext({ operation, cwd, args: pushArgs }),
+              detail: appendGitOutputToDetail(
+                "The remote branch has commits this branch doesn't, and automatically rebasing onto it hit conflicts. Resolve the conflicts locally, then push again.",
+                rebaseResult.stdout,
+                rebaseResult.stderr,
+              ),
+            });
+          }
+          // History is now linear on top of the remote; retry once (no further
+          // auto-rebase, so a second rejection fails fast).
+          yield* runGitWithEnv(operation, cwd, pushArgs, authEnv);
+        }),
+      ),
+    );
 
   const pushCurrentBranch: GitVcsDriver.GitVcsDriver["Service"]["pushCurrentBranch"] = Effect.fn(
     "pushCurrentBranch",
@@ -1929,14 +2241,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
     }
 
+    // Authenticate the push as the project's selected GitHub account (if any),
+    // non-interactively so it fails fast instead of prompting on the server.
+    const authEnv = yield* resolveNetworkGitEnv("GitVcsDriver.pushCurrentBranch", cwd);
+
     const requestedRemoteName = options?.remoteName?.trim() || null;
     if (requestedRemoteName) {
       const publishBranch = yield* resolvePublishBranchName(cwd, branch);
-      yield* runGit(
+      yield* runPushWithAutoRebase(
         "GitVcsDriver.pushCurrentBranch.pushWithRequestedRemote",
         cwd,
         ["push", "-u", requestedRemoteName, `HEAD:refs/heads/${publishBranch}`],
-        { timeoutMs: null },
+        authEnv,
+        requestedRemoteName,
+        publishBranch,
       );
       return {
         status: "pushed" as const,
@@ -1997,11 +2315,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         });
       }
       const publishBranch = yield* resolvePublishBranchName(cwd, branch);
-      yield* runGit(
+      yield* runPushWithAutoRebase(
         "GitVcsDriver.pushCurrentBranch.pushWithUpstream",
         cwd,
         ["push", "-u", publishRemoteName, `HEAD:refs/heads/${publishBranch}`],
-        { timeoutMs: null },
+        authEnv,
+        publishRemoteName,
+        publishBranch,
       );
       return {
         status: "pushed" as const,
@@ -2015,60 +2335,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.orElseSucceed(() => null),
     );
     if (currentUpstream) {
-      // A branch tracking a differently named ref was cut from it, the way
-      // `git checkout -b feature origin/dev` and our own worktree flow leave
-      // it. That upstream is the branch's base, not its publish target, and
-      // pushing HEAD onto it would write feature commits to a shared branch
-      // (bare `git push` refuses this under push.default=simple). The one
-      // same-repo tracking setup that legitimately differs is a git-mangled
-      // alias such as local `upstream/effect-atom` for my-org/upstream's
-      // `effect-atom`: the branch name ends in the upstream head while the
-      // upstream ref ends in the branch name.
-      const isAliasOfUpstreamHead =
-        branch === currentUpstream.branchName ||
-        (branch.endsWith(`/${currentUpstream.branchName}`) &&
-          currentUpstream.upstreamRef.endsWith(`/${branch}`));
-      if (!isAliasOfUpstreamHead) {
-        const publishRemoteName = yield* resolvePushRemoteName(cwd, branch).pipe(
-          Effect.orElseSucceed(() => null),
-        );
-        const remoteName = publishRemoteName ?? currentUpstream.remoteName;
-        const publishBranch = yield* resolvePublishBranchName(cwd, branch);
-        // `-u` retargets the upstream to the published branch, so keep the
-        // base recorded first; base resolution reads gh-merge-base before the
-        // upstream ref.
-        const configuredMergeBase = yield* runGitStdout(
-          "GitVcsDriver.pushCurrentBranch.readMergeBase",
-          cwd,
-          ["config", "--get", `branch.${branch}.gh-merge-base`],
-          true,
-        ).pipe(Effect.map((stdout) => stdout.trim()));
-        if (configuredMergeBase.length === 0) {
-          yield* runGit("GitVcsDriver.pushCurrentBranch.recordMergeBase", cwd, [
-            "config",
-            `branch.${branch}.gh-merge-base`,
-            currentUpstream.branchName,
-          ]);
-        }
-        yield* runGit(
-          "GitVcsDriver.pushCurrentBranch.pushOwnBranch",
-          cwd,
-          ["push", "-u", remoteName, `HEAD:refs/heads/${publishBranch}`],
-          { timeoutMs: null },
-        );
-        return {
-          status: "pushed" as const,
-          branch,
-          upstreamBranch: `${remoteName}/${publishBranch}`,
-          setUpstream: true,
-        };
-      }
-
-      yield* runGit(
+      yield* runPushWithAutoRebase(
         "GitVcsDriver.pushCurrentBranch.pushUpstream",
         cwd,
         ["push", currentUpstream.remoteName, `HEAD:refs/heads/${currentUpstream.branchName}`],
-        { timeoutMs: null },
+        authEnv,
+        currentUpstream.remoteName,
+        currentUpstream.branchName,
       );
       return {
         status: "pushed" as const,
@@ -2078,7 +2351,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       };
     }
 
-    yield* runGit("GitVcsDriver.pushCurrentBranch.push", cwd, ["push"], { timeoutMs: null });
+    yield* runGitWithEnv("GitVcsDriver.pushCurrentBranch.push", cwd, ["push"], authEnv);
     return {
       status: "pushed" as const,
       branch,
@@ -2118,7 +2391,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ["rev-parse", "HEAD"],
       true,
     ).pipe(Effect.map((stdout) => stdout.trim()));
+    const pullEnv = yield* resolveNetworkGitEnv("GitVcsDriver.pullCurrentBranch", cwd);
     yield* executeGit("GitVcsDriver.pullCurrentBranch.pull", cwd, ["pull", "--ff-only"], {
+      env: pullEnv,
       timeoutMs: 30_000,
       fallbackErrorDetail: "git pull failed",
     });
@@ -2235,6 +2510,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const getReviewDiffPreview = Effect.fn("getReviewDiffPreview")(function* (
     input: ReviewDiffPreviewInput,
   ) {
+    const contextArgs = input.fullContext ? ["--unified=2147483647"] : [];
     const details = yield* statusDetailsLocal(input.cwd);
     if (!details.isRepo) {
       return {
@@ -2245,8 +2521,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     const branch = details.branch;
+    const requestedBaseRef = input.baseRef;
+    const remoteRequestedBaseRef =
+      requestedBaseRef && input.preferRemoteBaseRef
+        ? yield* Effect.gen(function* () {
+            const primaryRemoteName = yield* resolvePrimaryRemoteName(input.cwd).pipe(
+              Effect.orElseSucceed(() => null),
+            );
+            if (!primaryRemoteName || requestedBaseRef.startsWith(`${primaryRemoteName}/`)) {
+              return requestedBaseRef;
+            }
+            return (yield* remoteBranchExists(input.cwd, primaryRemoteName, requestedBaseRef))
+              ? `${primaryRemoteName}/${requestedBaseRef}`
+              : requestedBaseRef;
+          })
+        : requestedBaseRef;
     const baseRef =
-      input.baseRef ??
+      remoteRequestedBaseRef ??
       (branch
         ? yield* resolveBaseBranchForNoUpstream(input.cwd, branch).pipe(
             Effect.orElseSucceed(() => null),
@@ -2264,6 +2555,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         "--no-textconv",
         "--minimal",
         ...PATCH_RENDER_PREFIX_ARGS,
+        ...contextArgs,
         ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
         "HEAD",
         "--",
@@ -2288,37 +2580,100 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       .filter((diff) => diff.length > 0)
       .join("\n");
 
-    const baseResult =
+    // Resolve the fork point so the branch view contains committed branch history
+    // only. Working-tree and untracked changes belong exclusively to the separate
+    // working-tree source above.
+    const mergeBase =
       baseRef && branch
         ? yield* executeGit(
-            "GitVcsDriver.getReviewDiffPreview.base",
+            "GitVcsDriver.getReviewDiffPreview.mergeBase",
             input.cwd,
-            [
-              "diff",
-              "--patch",
-              "--no-color",
-              "--no-ext-diff",
-              "--no-textconv",
-              "--minimal",
-              ...PATCH_RENDER_PREFIX_ARGS,
-              ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
-              `${baseRef}...HEAD`,
-            ],
+            ["merge-base", baseRef, "HEAD"],
             {
+              allowNonZeroExit: true,
               maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
-              appendTruncationMarker: true,
             },
           ).pipe(
-            Effect.orElseSucceed(() => ({
-              exitCode: 0,
-              stdout: "",
-              stderr: "",
-              stdoutTruncated: false,
-              stderrTruncated: false,
-            })),
+            Effect.map((result) =>
+              result.exitCode === 0 && result.stdout.trim().length > 0
+                ? result.stdout.trim()
+                : null,
+            ),
+            Effect.orElseSucceed(() => null),
           )
         : null;
-    const baseDiff = baseResult?.stdout ?? "";
+    // Fall back to the base ref itself when the merge-base can't be resolved.
+    const baseDiffRef = mergeBase ?? (branch ? baseRef : null);
+    const baseTrackedResult = baseDiffRef
+      ? yield* executeGit(
+          "GitVcsDriver.getReviewDiffPreview.base",
+          input.cwd,
+          [
+            "diff",
+            "--patch",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--minimal",
+            ...contextArgs,
+            ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
+            baseDiffRef,
+            "HEAD",
+            "--",
+          ],
+          {
+            maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
+            appendTruncationMarker: true,
+          },
+        ).pipe(
+          Effect.orElseSucceed(() => ({
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          })),
+        )
+      : null;
+    const baseDiff = baseTrackedResult?.stdout.trimEnd() ?? "";
+    // The combined "working tree" view: every change since the fork point,
+    // committed branch history *and* uncommitted working-tree edits in one
+    // diff. Diffing the base ref against the working tree (no `HEAD` endpoint)
+    // spans both. With no base ref to fork from, it degrades to the dirty
+    // working-tree diff, which is the most it can meaningfully show.
+    const allTrackedResult = baseDiffRef
+      ? yield* executeGit(
+          "GitVcsDriver.getReviewDiffPreview.all",
+          input.cwd,
+          [
+            "diff",
+            "--patch",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--minimal",
+            ...contextArgs,
+            ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
+            baseDiffRef,
+            "--",
+          ],
+          {
+            maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
+            appendTruncationMarker: true,
+          },
+        ).pipe(
+          Effect.orElseSucceed(() => ({
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          })),
+        )
+      : dirtyTrackedResult;
+    const allDiff = [allTrackedResult.stdout.trimEnd(), dirtyUntracked.diff.trimEnd()]
+      .filter((diff) => diff.length > 0)
+      .join("\n");
     const hashDiff = (diff: string) =>
       crypto.digest("SHA-256", new TextEncoder().encode(diff)).pipe(
         Effect.map(Encoding.encodeHex),
@@ -2333,12 +2688,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             }),
         ),
       );
-    const [dirtyDiffHash, baseDiffHash] = yield* Effect.all([
+    const [dirtyDiffHash, baseDiffHash, allDiffHash] = yield* Effect.all([
       hashDiff(dirtyDiff),
       hashDiff(baseDiff),
+      hashDiff(allDiff),
     ]);
 
     const sources: ReviewDiffPreviewSource[] = [
+      {
+        id: "working-tree-all",
+        kind: "working-tree-all",
+        title: baseRef ? `All changes vs ${baseRef}` : "All changes",
+        baseRef: baseDiffRef,
+        headRef: null,
+        diff: allDiff,
+        diffHash: allDiffHash,
+        truncated: allTrackedResult.stdoutTruncated || dirtyUntracked.truncated,
+      },
       {
         id: "working-tree",
         kind: "working-tree",
@@ -2357,7 +2723,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         headRef: branch ?? "HEAD",
         diff: baseDiff,
         diffHash: baseDiffHash,
-        truncated: baseResult?.stdoutTruncated ?? false,
+        truncated: baseTrackedResult?.stdoutTruncated ?? false,
       },
     ];
 
@@ -2831,71 +3197,334 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  const listWorktreeEntries = Effect.fn("listWorktreeEntries")(function* (
+    operation: string,
+    cwd: string,
+  ) {
+    const result = yield* executeGit(operation, cwd, ["worktree", "list", "--porcelain", "-z"], {
+      timeoutMs: 10_000,
+      allowNonZeroExit: true,
+      maxOutputBytes: 16 * 1024 * 1024,
+    });
+    return result.exitCode === 0 ? parseWorktreeBranchEntries(result.stdout) : [];
+  });
+
+  const normalizeWorktreePath = (worktreePath: string) =>
+    path.normalize(path.resolve(worktreePath));
+
+  const localBranchExists = (cwd: string, operation: string, refName: string) =>
+    executeGit(operation, cwd, ["show-ref", "--verify", "--quiet", `refs/heads/${refName}`], {
+      timeoutMs: 5_000,
+      allowNonZeroExit: true,
+    }).pipe(Effect.map((result) => result.exitCode === 0));
+
+  const remoteTrackingRefExists = (cwd: string, operation: string, refName: string) =>
+    executeGit(operation, cwd, ["show-ref", "--verify", "--quiet", `refs/remotes/${refName}`], {
+      timeoutMs: 5_000,
+      allowNonZeroExit: true,
+    }).pipe(Effect.map((result) => result.exitCode === 0));
+
+  const refResolvesToCommit = (cwd: string, operation: string, refName: string) =>
+    executeGit(operation, cwd, ["rev-parse", "--verify", "--quiet", `${refName}^{commit}`], {
+      timeoutMs: 5_000,
+      allowNonZeroExit: true,
+    }).pipe(Effect.map((result) => result.exitCode === 0));
+
+  /**
+   * Fetch a branch that exists only on a remote, so it can be checked out.
+   *
+   * Every ref T3 offers is read from local refs, and nothing fetches on the way
+   * to a checkout, so a branch pushed from somewhere else — another machine, a
+   * cloud agent, a collaborator's fork — stays unresolvable no matter how the
+   * name arrives: `git checkout` reports "pathspec ... did not match" and
+   * `git worktree add` "invalid reference". Checking it out is precisely the
+   * moment to go get it.
+   *
+   * A qualified `<remote>/<branch>` is fetched from the remote it names;
+   * a plain branch name is looked for on each configured remote, primary first,
+   * stopping at the first remote that has it. The created remote-tracking ref is
+   * returned so the caller checks out that exact ref instead of relying on git's
+   * DWIM, which refuses a plain name carried by more than one remote.
+   *
+   * Best effort throughout: an unreachable or unauthenticated remote leaves the
+   * caller to fail with git's own message about the ref it could not find.
+   */
+  const fetchRemoteRefForCheckout = Effect.fn("fetchRemoteRefForCheckout")(function* (
+    cwd: string,
+    refName: string,
+  ) {
+    const remoteNames = yield* listRemoteNames(cwd).pipe(
+      Effect.orElseSucceed((): ReadonlyArray<string> => []),
+    );
+    if (remoteNames.length === 0) {
+      return null;
+    }
+    const parsedRemoteRef = parseRemoteRefWithRemoteNames(
+      refName,
+      remoteNames.toSorted((left, right) => right.length - left.length),
+    );
+    const primaryRemoteName = remoteNames.includes("origin") ? "origin" : remoteNames[0];
+    const candidates = parsedRemoteRef
+      ? [{ remoteName: parsedRemoteRef.remoteName, remoteBranch: parsedRemoteRef.branchName }]
+      : [
+          ...(primaryRemoteName === undefined ? [] : [primaryRemoteName]),
+          ...remoteNames.filter((remoteName) => remoteName !== primaryRemoteName),
+        ].map((remoteName) => ({ remoteName, remoteBranch: refName }));
+
+    const env = yield* resolveNetworkGitEnv("GitVcsDriver.fetchRemoteRefForCheckout", cwd).pipe(
+      Effect.orElseSucceed(() => undefined),
+    );
+    for (const candidate of candidates) {
+      const remoteTrackingRef = `${candidate.remoteName}/${candidate.remoteBranch}`;
+      const result = yield* executeGit(
+        "GitVcsDriver.fetchRemoteRefForCheckout",
+        cwd,
+        [
+          "fetch",
+          "--quiet",
+          "--no-tags",
+          candidate.remoteName,
+          `+refs/heads/${candidate.remoteBranch}:refs/remotes/${remoteTrackingRef}`,
+        ],
+        {
+          ...(env ? { env } : {}),
+          allowNonZeroExit: true,
+        },
+      ).pipe(Effect.orElseSucceed(() => null));
+      if (result?.exitCode === 0) {
+        return remoteTrackingRef;
+      }
+    }
+    return null;
+  });
+
+  /**
+   * `git worktree add` refuses two situations the caller can neither see nor fix
+   * by hand, and both surface as an opaque "git worktree add failed":
+   *
+   * - the branch is already checked out in another worktree. That worktree — and
+   *   the threads rooted at it — is what the user asked for, so hand it back
+   *   instead of failing.
+   * - the derived directory is taken. Directory names come from the branch, but a
+   *   worktree keeps its directory when its branch is switched, so reopening the
+   *   original branch collides with a directory that now holds something else.
+   *   A sibling `<name>-2` keeps the request working.
+   *
+   * A worktree whose directory is gone still claims its branch until its
+   * administrative entry is pruned, so a stale claim is pruned and retried once.
+   * `git worktree prune` only drops entries whose working tree is already gone,
+   * so it never discards work. All of this runs on the failure path only, keeping
+   * a successful add a single spawn.
+   */
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input) {
-    const targetBranch = input.newRefName ?? input.refName;
+    // A start ref that resolves nowhere locally is the branch someone else
+    // pushed: fetch it, and start from the remote-tracking ref that fetch
+    // created rather than the ambiguous name that was asked for.
+    const requestedRefResolves = yield* refResolvesToCommit(
+      input.cwd,
+      "GitVcsDriver.createWorktree.startRefResolves",
+      input.refName,
+    );
+    const fetchedRemoteRef = requestedRefResolves
+      ? null
+      : yield* fetchRemoteRefForCheckout(input.cwd, input.refName);
+    if (!requestedRefResolves && fetchedRemoteRef === null) {
+      // Naming the ref beats git's "invalid reference": the caller usually typed
+      // this name, and no amount of worktree machinery can rescue a branch that
+      // is neither here nor on a remote we can reach.
+      return yield* new GitCommandError({
+        ...gitCommandContext({
+          operation: "GitVcsDriver.createWorktree",
+          cwd: input.cwd,
+          args: ["worktree", "add", input.refName],
+        }),
+        detail: `Could not resolve "${input.refName}": no local branch, tag or commit matches it, and it could not be fetched from a remote.`,
+      });
+    }
+    const startRef = fetchedRemoteRef ?? input.refName;
+
+    // `git worktree add <path> <remote>/<branch>` lands on a DETACHED HEAD,
+    // which no thread can commit and push from. A remote branch therefore gets a
+    // local branch to live on: the existing local branch of that name, or a new
+    // one tracking the remote ref. An explicitly requested `newRefName` already
+    // names that branch, so nothing has to be derived for it.
+    const derivedLocalBranch = input.newRefName
+      ? null
+      : (yield* remoteTrackingRefExists(
+            input.cwd,
+            "GitVcsDriver.createWorktree.startRefIsRemoteTracking",
+            startRef,
+          ))
+        ? deriveLocalBranchNameFromRemoteRef(startRef)
+        : null;
+    const existingLocalBranch =
+      derivedLocalBranch !== null &&
+      (yield* localBranchExists(
+        input.cwd,
+        "GitVcsDriver.createWorktree.derivedLocalBranchExists",
+        derivedLocalBranch,
+      ))
+        ? derivedLocalBranch
+        : null;
+    const newBranch =
+      input.newRefName ?? (existingLocalBranch === null ? derivedLocalBranch : null);
+    const startPoint = existingLocalBranch ?? startRef;
+    const targetBranch = newBranch ?? startPoint;
     const sanitizedBranch = targetBranch.replace(/\//g, "-");
     const repoName = path.basename(input.cwd);
-    const worktreePath = input.path ?? path.join(worktreesDir, repoName, sanitizedBranch);
-    const args = input.newRefName
-      ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
-      : ["worktree", "add", worktreePath, input.refName];
+    const requestedPath = input.path ?? path.join(worktreesDir, repoName, sanitizedBranch);
 
-    yield* executeGit("GitVcsDriver.createWorktree", input.cwd, args, {
-      fallbackErrorDetail: "git worktree add failed",
-      timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
+    // A new branch started from a remote-tracking ref is tracked by git's own
+    // default, so `-b` needs no `--track`.
+    const buildArgs = (worktreePath: string) =>
+      newBranch
+        ? ["worktree", "add", "-b", newBranch, worktreePath, startPoint]
+        : ["worktree", "add", worktreePath, startPoint];
+
+    // Stable diagnostics so the surfaced git output is the C-locale text
+    // regardless of the machine's language. The args are worktree paths and
+    // branch names built here, so there is no argument secret to leak by
+    // including git's own output.
+    const runAdd = (worktreePath: string) =>
+      executeGitWithStableDiagnostics(
+        "GitVcsDriver.createWorktree",
+        input.cwd,
+        buildArgs(worktreePath),
+        { allowNonZeroExit: true },
+      );
+
+    const failAdd = (
+      worktreePath: string,
+      result: GitVcsDriver.ExecuteGitResult,
+      detail = appendGitOutputToDetail("git worktree add failed", result.stdout, result.stderr),
+    ) =>
+      Effect.fail(
+        new GitCommandError({
+          ...gitCommandContext({
+            operation: "GitVcsDriver.createWorktree",
+            cwd: input.cwd,
+            args: buildArgs(worktreePath),
+          }),
+          detail,
+          ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+          stdoutLength: result.stdout.length,
+          stderrLength: result.stderr.length,
+        }),
+      );
+
+    const finish = Effect.fn("createWorktree.finish")(function* (worktreePath: string) {
+      if (input.newRefName && input.baseRefName) {
+        const remoteNames = yield* listRemoteNames(input.cwd).pipe(Effect.orElseSucceed(() => []));
+        const parsedBaseRef = parseRemoteRefWithRemoteNames(
+          input.baseRefName,
+          remoteNames.toSorted((left, right) => right.length - left.length),
+        );
+        const baseBranch = parsedBaseRef?.branchName ?? input.baseRefName;
+        yield* runGit("GitVcsDriver.createWorktree.configureBaseRef", input.cwd, [
+          "config",
+          `branch.${input.newRefName}.gh-merge-base`,
+          baseBranch,
+        ]);
+      }
+
+      return {
+        worktree: {
+          path: worktreePath,
+          refName: targetBranch,
+        },
+      };
     });
 
-    // `git worktree add` leaves submodules empty, so a repo that keeps agent
-    // skills, tooling or source in one gets a worktree that is quietly missing
-    // them. Best-effort: the objects are usually already in the parent's
-    // `.git/modules`, but a first-ever clone needs the network, and failing to
-    // populate a submodule must not roll back the caller's thread.
-    const hasSubmodules = yield* fileSystem
-      .exists(path.join(worktreePath, ".gitmodules"))
-      .pipe(Effect.orElseSucceed(() => false));
-    if (hasSubmodules) {
-      yield* runGit("GitVcsDriver.createWorktree.updateSubmodules", worktreePath, [
-        "submodule",
-        "update",
-        "--init",
-        "--recursive",
-      ]).pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("worktree submodule checkout failed; submodule paths are empty", {
-            worktreePath,
-            cause,
-          }),
-        ),
-      );
+    let lastResult = yield* runAdd(requestedPath);
+    if (lastResult.exitCode === 0) {
+      return yield* finish(requestedPath);
     }
 
-    if (input.newRefName && input.baseRefName) {
-      const remoteNames = yield* listRemoteNames(input.cwd).pipe(Effect.orElseSucceed(() => []));
-      const parsedBaseRef = parseRemoteRefWithRemoteNames(
-        input.baseRefName,
-        remoteNames.toSorted((left, right) => right.length - left.length),
-      );
-      const baseBranch = parsedBaseRef?.branchName ?? input.baseRefName;
-      yield* runGit("GitVcsDriver.createWorktree.configureBaseRef", input.cwd, [
-        "config",
-        `branch.${input.newRefName}.gh-merge-base`,
-        baseBranch,
-      ]);
+    const entries = yield* listWorktreeEntries(
+      "GitVcsDriver.createWorktree.worktreeList",
+      input.cwd,
+    );
+    // Only a plain checkout can land on an existing worktree: `-b` demands a
+    // branch that does not exist yet, so a claim on that name is a failure the
+    // caller has to see.
+    const claim = newBranch
+      ? null
+      : (entries.find((entry) => entry.branch === targetBranch) ?? null);
+
+    if (claim !== null && !claim.prunable) {
+      // git lists the main worktree first, and that checkout is the project
+      // itself rather than something a worktree thread can open.
+      if (claim === entries[0]) {
+        return yield* failAdd(
+          requestedPath,
+          lastResult,
+          `Branch "${targetBranch}" is already checked out in the main repo at ${claim.path}, which cannot also become a worktree. Open the branch there, or switch that checkout to another branch first.`,
+        );
+      }
+      return { worktree: { path: claim.path, refName: targetBranch } };
     }
 
-    return {
-      worktree: {
-        path: worktreePath,
-        refName: targetBranch,
-      },
-    };
+    if (claim !== null) {
+      yield* executeGit(
+        "GitVcsDriver.createWorktree.pruneWorktrees",
+        input.cwd,
+        ["worktree", "prune"],
+        { timeoutMs: 10_000, allowNonZeroExit: true },
+      );
+      lastResult = yield* runAdd(requestedPath);
+      if (lastResult.exitCode === 0) {
+        return yield* finish(requestedPath);
+      }
+    }
+
+    // Only a path this driver derived may move; an explicitly requested path is
+    // the caller's choice to keep.
+    if (input.path !== null) {
+      return yield* failAdd(requestedPath, lastResult);
+    }
+
+    const occupiedPaths = new Set(
+      entries.filter((entry) => !entry.prunable).map((entry) => normalizeWorktreePath(entry.path)),
+    );
+    const isPathTaken = Effect.fn("createWorktree.isPathTaken")(function* (
+      worktreePath: string,
+      unknownIsTaken: boolean,
+    ) {
+      if (occupiedPaths.has(normalizeWorktreePath(worktreePath))) {
+        return true;
+      }
+      return yield* fileSystem
+        .exists(worktreePath)
+        .pipe(Effect.orElseSucceed(() => unknownIsTaken));
+    });
+
+    // Retrying elsewhere only makes sense for a directory collision; any other
+    // failure repeats at the next path and buries git's real complaint.
+    if (!(yield* isPathTaken(requestedPath, false))) {
+      return yield* failAdd(requestedPath, lastResult);
+    }
+
+    for (let suffix = 2; suffix <= 100; suffix += 1) {
+      const candidatePath = `${requestedPath}-${suffix}`;
+      if (yield* isPathTaken(candidatePath, true)) {
+        continue;
+      }
+      const candidateResult = yield* runAdd(candidatePath);
+      if (candidateResult.exitCode === 0) {
+        return yield* finish(candidatePath);
+      }
+      return yield* failAdd(candidatePath, candidateResult);
+    }
+
+    return yield* failAdd(requestedPath, lastResult);
   });
 
   const fetchPullRequestBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchPullRequestBranch"] =
     Effect.fn("fetchPullRequestBranch")(function* (input) {
       const remoteName = yield* resolvePrimaryRemoteName(input.cwd);
+      const env = yield* resolveNetworkGitEnv("GitVcsDriver.fetchPullRequestBranch", input.cwd);
       yield* executeGit(
         "GitVcsDriver.fetchPullRequestBranch",
         input.cwd,
@@ -2907,6 +3536,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           `+refs/pull/${input.prNumber}/head:refs/heads/${input.branch}`,
         ],
         {
+          env,
           fallbackErrorDetail: "git fetch pull request branch failed",
         },
       );
@@ -3003,12 +3633,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const fetchRemote: GitVcsDriver.GitVcsDriver["Service"]["fetchRemote"] = Effect.fn("fetchRemote")(
     function* (input) {
+      const env = yield* resolveNetworkGitEnv("GitVcsDriver.fetchRemote", input.cwd);
       yield* executeGit(
         "GitVcsDriver.fetchRemote",
         input.cwd,
         ["fetch", "--quiet", input.remoteName],
         {
-          env: STATUS_UPSTREAM_REFRESH_ENV,
+          env,
           fallbackErrorDetail: `git fetch ${input.remoteName} failed`,
         },
       );
@@ -3036,13 +3667,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const fetchRemoteBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteBranch"] = Effect.fn(
     "fetchRemoteBranch",
   )(function* (input) {
-    yield* runGit("GitVcsDriver.fetchRemoteBranch.fetch", input.cwd, [
-      "fetch",
-      "--quiet",
-      "--no-tags",
-      input.remoteName,
-      `+refs/heads/${input.remoteBranch}:refs/remotes/${input.remoteName}/${input.remoteBranch}`,
-    ]);
+    const authEnv = yield* resolveNetworkGitEnv("GitVcsDriver.fetchRemoteBranch", input.cwd);
+    yield* runGitWithEnv(
+      "GitVcsDriver.fetchRemoteBranch.fetch",
+      input.cwd,
+      [
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        input.remoteName,
+        `+refs/heads/${input.remoteBranch}:refs/remotes/${input.remoteName}/${input.remoteBranch}`,
+      ],
+      authEnv,
+    );
 
     const localBranchAlreadyExists = yield* branchExists(input.cwd, input.localBranch);
     const targetRef = `${input.remoteName}/${input.remoteBranch}`;
@@ -3057,13 +3694,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const fetchRemoteTrackingBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"] =
     Effect.fn("fetchRemoteTrackingBranch")(function* (input) {
-      yield* runGit("GitVcsDriver.fetchRemoteTrackingBranch", input.cwd, [
-        "fetch",
-        "--quiet",
-        "--no-tags",
-        input.remoteName,
-        `+refs/heads/${input.remoteBranch}:refs/remotes/${input.remoteName}/${input.remoteBranch}`,
-      ]);
+      const env = yield* resolveNetworkGitEnv("GitVcsDriver.fetchRemoteTrackingBranch", input.cwd);
+      yield* runGitWithEnv(
+        "GitVcsDriver.fetchRemoteTrackingBranch",
+        input.cwd,
+        [
+          "fetch",
+          "--quiet",
+          "--no-tags",
+          input.remoteName,
+          `+refs/heads/${input.remoteBranch}:refs/remotes/${input.remoteName}/${input.remoteBranch}`,
+        ],
+        env,
+      );
     });
 
   const setBranchUpstream: GitVcsDriver.GitVcsDriver["Service"]["setBranchUpstream"] = (input) =>
@@ -3153,78 +3796,179 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return { branch: targetBranch };
   });
 
+  /**
+   * Git refuses to check out a branch that another worktree holds, and it keeps
+   * refusing for worktrees whose directory is gone until their administrative
+   * entry is pruned. Those stale claims are invisible to the caller — `listRefs`
+   * drops prunable worktrees, so the branch looks free right up to the point the
+   * checkout fails with an opaque "git checkout failed".
+   *
+   * So: prune and retry once when the holder is stale, and otherwise name the
+   * worktree that actually holds the branch. Everything runs on the failure path
+   * only, keeping a successful checkout a single spawn.
+   *
+   * `git worktree prune` only drops entries whose working tree is already gone,
+   * so it never discards work.
+   */
+  const checkoutWithWorktreeClaimRecovery = Effect.fn("checkoutWithWorktreeClaimRecovery")(
+    function* (cwd: string, checkoutArgs: readonly string[], checkoutBranch: string | null) {
+      // Stable diagnostics so the surfaced git output is the C-locale text
+      // regardless of the machine's language. The args here are branch names
+      // built from the ref list, so — as with the remote-touching commands —
+      // there is no argument secret to leak by including git's own output.
+      const runCheckout = () =>
+        executeGitWithStableDiagnostics("GitVcsDriver.switchRef.checkout", cwd, checkoutArgs, {
+          timeoutMs: 10_000,
+          allowNonZeroExit: true,
+        });
+
+      const failCheckout = (result: GitVcsDriver.ExecuteGitResult, baseDetail: string) =>
+        Effect.fail(
+          new GitCommandError({
+            ...gitCommandContext({
+              operation: "GitVcsDriver.switchRef.checkout",
+              cwd,
+              args: checkoutArgs,
+            }),
+            detail: appendGitOutputToDetail(baseDetail, result.stdout, result.stderr),
+            ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+            stdoutLength: result.stdout.length,
+            stderrLength: result.stderr.length,
+          }),
+        );
+
+      const result = yield* runCheckout();
+      if (result.exitCode === 0) {
+        return;
+      }
+      if (checkoutBranch === null) {
+        return yield* failCheckout(result, "git checkout failed");
+      }
+
+      const worktreeEntries = yield* listWorktreeEntries(
+        "GitVcsDriver.switchRef.worktreeList",
+        cwd,
+      );
+      const claim = worktreeEntries.find((entry) => entry.branch === checkoutBranch) ?? null;
+
+      if (claim === null) {
+        return yield* failCheckout(result, "git checkout failed");
+      }
+      if (!claim.prunable) {
+        return yield* failCheckout(
+          result,
+          `Branch "${claim.branch}" is already checked out in the worktree at ${claim.path}. Open the branch there, or switch that worktree to another branch first.`,
+        );
+      }
+
+      yield* executeGit("GitVcsDriver.switchRef.pruneWorktrees", cwd, ["worktree", "prune"], {
+        timeoutMs: 10_000,
+        allowNonZeroExit: true,
+      });
+
+      const retryResult = yield* runCheckout();
+      if (retryResult.exitCode !== 0) {
+        return yield* failCheckout(retryResult, "git checkout failed");
+      }
+    },
+  );
+
+  /**
+   * Decide how to check out a ref, given every shape it can arrive in: a local
+   * branch, a `<remote>/<branch>` tracking ref, or a bare name.
+   *
+   * Every remote case has to end on a local branch — a thread commits and pushes
+   * from its checkout, and `git checkout <remote>/<branch>` yields a detached
+   * HEAD instead. So a remote ref checks out the local branch that already
+   * tracks it, else the local branch of the same name, else a new branch
+   * tracking it.
+   */
+  const resolveCheckoutPlan = Effect.fn("resolveCheckoutPlan")(function* (
+    cwd: string,
+    refName: string,
+  ) {
+    const [localInputExists, remoteExists] = yield* Effect.all(
+      [
+        localBranchExists(cwd, "GitVcsDriver.switchRef.localInputExists", refName),
+        remoteTrackingRefExists(cwd, "GitVcsDriver.switchRef.remoteExists", refName),
+      ],
+      { concurrency: "unbounded" },
+    );
+
+    if (localInputExists) {
+      return { resolved: true, args: ["checkout", refName], branch: refName };
+    }
+    if (!remoteExists) {
+      return { resolved: false, args: ["checkout", refName], branch: refName };
+    }
+
+    const localTrackingBranch = yield* executeGit(
+      "GitVcsDriver.switchRef.localTrackingBranch",
+      cwd,
+      ["for-each-ref", "--format=%(refname:short)\t%(upstream:short)", "refs/heads"],
+      {
+        timeoutMs: 5_000,
+        allowNonZeroExit: true,
+      },
+    ).pipe(
+      Effect.map((result) =>
+        result.exitCode === 0 ? parseTrackingBranchByUpstreamRef(result.stdout, refName) : null,
+      ),
+    );
+    if (localTrackingBranch) {
+      return {
+        resolved: true,
+        args: ["checkout", localTrackingBranch],
+        branch: localTrackingBranch,
+      };
+    }
+
+    const localTrackedBranchCandidate = deriveLocalBranchNameFromRemoteRef(refName);
+    const localTrackedBranchTargetExists =
+      localTrackedBranchCandidate === null
+        ? false
+        : yield* localBranchExists(
+            cwd,
+            "GitVcsDriver.switchRef.localTrackedBranchTargetExists",
+            localTrackedBranchCandidate,
+          );
+    // A local branch already holding the derived name cannot be recreated with
+    // `--track`, and checking out the remote ref itself would detach HEAD. That
+    // local branch is what the ref list shows for this remote branch anyway, so
+    // check it out — the same thing `git checkout <branch>` would do.
+    if (localTrackedBranchTargetExists && localTrackedBranchCandidate) {
+      return {
+        resolved: true,
+        args: ["checkout", localTrackedBranchCandidate],
+        branch: localTrackedBranchCandidate,
+      };
+    }
+
+    return {
+      resolved: true,
+      args: ["checkout", "--track", refName],
+      // The branch does not exist yet, so no worktree can be holding it.
+      branch: localTrackedBranchCandidate,
+    };
+  });
+
   const switchRef: GitVcsDriver.GitVcsDriver["Service"]["switchRef"] = Effect.fn("switchRef")(
     function* (input) {
-      const [localInputExists, remoteExists] = yield* Effect.all(
-        [
-          executeGit(
-            "GitVcsDriver.switchRef.localInputExists",
-            input.cwd,
-            ["show-ref", "--verify", "--quiet", `refs/heads/${input.refName}`],
-            {
-              timeoutMs: 5_000,
-              allowNonZeroExit: true,
-            },
-          ).pipe(Effect.map((result) => result.exitCode === 0)),
-          executeGit(
-            "GitVcsDriver.switchRef.remoteExists",
-            input.cwd,
-            ["show-ref", "--verify", "--quiet", `refs/remotes/${input.refName}`],
-            {
-              timeoutMs: 5_000,
-              allowNonZeroExit: true,
-            },
-          ).pipe(Effect.map((result) => result.exitCode === 0)),
-        ],
-        { concurrency: "unbounded" },
-      );
-
-      const localTrackingBranch = remoteExists
-        ? yield* executeGit(
-            "GitVcsDriver.switchRef.localTrackingBranch",
-            input.cwd,
-            ["for-each-ref", "--format=%(refname:short)\t%(upstream:short)", "refs/heads"],
-            {
-              timeoutMs: 5_000,
-              allowNonZeroExit: true,
-            },
-          ).pipe(
-            Effect.map((result) =>
-              result.exitCode === 0
-                ? parseTrackingBranchByUpstreamRef(result.stdout, input.refName)
-                : null,
+      const initialPlan = yield* resolveCheckoutPlan(input.cwd, input.refName);
+      // Nothing local matches the requested ref: the usual cause is a branch
+      // pushed from elsewhere that this repository has never fetched, so go and
+      // fetch it before giving up on it.
+      const plan = initialPlan.resolved
+        ? initialPlan
+        : yield* fetchRemoteRefForCheckout(input.cwd, input.refName).pipe(
+            Effect.flatMap((fetchedRef) =>
+              fetchedRef === null
+                ? Effect.succeed(initialPlan)
+                : resolveCheckoutPlan(input.cwd, fetchedRef),
             ),
-          )
-        : null;
+          );
 
-      const localTrackedBranchCandidate = deriveLocalBranchNameFromRemoteRef(input.refName);
-      const localTrackedBranchTargetExists =
-        remoteExists && localTrackedBranchCandidate
-          ? yield* executeGit(
-              "GitVcsDriver.switchRef.localTrackedBranchTargetExists",
-              input.cwd,
-              ["show-ref", "--verify", "--quiet", `refs/heads/${localTrackedBranchCandidate}`],
-              {
-                timeoutMs: 5_000,
-                allowNonZeroExit: true,
-              },
-            ).pipe(Effect.map((result) => result.exitCode === 0))
-          : false;
-
-      const checkoutArgs = localInputExists
-        ? ["checkout", input.refName]
-        : remoteExists && !localTrackingBranch && localTrackedBranchTargetExists
-          ? ["checkout", input.refName]
-          : remoteExists && !localTrackingBranch
-            ? ["checkout", "--track", input.refName]
-            : remoteExists && localTrackingBranch
-              ? ["checkout", localTrackingBranch]
-              : ["checkout", input.refName];
-
-      yield* executeGit("GitVcsDriver.switchRef.checkout", input.cwd, checkoutArgs, {
-        timeoutMs: 10_000,
-        fallbackErrorDetail: "git checkout failed",
-      });
+      yield* checkoutWithWorktreeClaimRecovery(input.cwd, plan.args, plan.branch);
 
       const refName = yield* runGitStdout("GitVcsDriver.switchRef.currentBranch", input.cwd, [
         "branch",
@@ -3241,6 +3985,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         timeoutMs: 10_000,
         fallbackErrorDetail: "git branch create failed",
       });
+      // Record the branch this ref forks from so a later pull request targets
+      // it instead of the repo default. Mirrors createWorktree's handling.
+      if (input.baseRefName) {
+        const remoteNames = yield* listRemoteNames(input.cwd).pipe(Effect.orElseSucceed(() => []));
+        const parsedBaseRef = parseRemoteRefWithRemoteNames(
+          input.baseRefName,
+          remoteNames.toSorted((left, right) => right.length - left.length),
+        );
+        const baseBranch = parsedBaseRef?.branchName ?? input.baseRefName;
+        if (baseBranch !== input.refName) {
+          yield* runGit("GitVcsDriver.createRef.configureBaseRef", input.cwd, [
+            "config",
+            `branch.${input.refName}.gh-merge-base`,
+            baseBranch,
+          ]);
+        }
+      }
       if (input.switchRef) {
         yield* switchRef({ cwd: input.cwd, refName: input.refName });
       }

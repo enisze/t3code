@@ -30,13 +30,15 @@ function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeReq
     baseRefName: summary.baseRefName,
     headRefName: summary.headRefName,
     state: summary.state ?? "open",
-    ...(summary.isDraft === true ? { isDraft: true } : {}),
-    closedAt: summary.closedAt ?? null,
-    mergedAt: summary.mergedAt ?? null,
-    updatedAt:
-      summary.updatedAt === undefined
-        ? Option.none()
-        : Option.some(DateTime.makeUnsafe(summary.updatedAt)),
+    ...(summary.mergeability ? { mergeability: summary.mergeability } : {}),
+    ...(summary.checks ? { checks: summary.checks } : {}),
+    ...(summary.failedCheckCount !== undefined
+      ? { failedCheckCount: summary.failedCheckCount }
+      : {}),
+    ...(summary.unresolvedReviewThreadCount !== undefined
+      ? { unresolvedReviewThreadCount: summary.unresolvedReviewThreadCount }
+      : {}),
+    updatedAt: Option.none(),
     ...(summary.isCrossRepository !== undefined
       ? { isCrossRepository: summary.isCrossRepository }
       : {}),
@@ -51,7 +53,7 @@ function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeReq
 
 function parseGitHubAuth(input: SourceControlAuthProbeInput) {
   const output = combinedAuthOutput(input);
-  const authStatus = parseGitHubAuthStatus(input.stdout);
+  const authStatus = parseGitHubAuthStatus(output);
   const authenticatedAccount = findAuthenticatedGitHubAccount(authStatus.accounts);
   const host = authenticatedAccount?.host;
 
@@ -99,20 +101,57 @@ function parseGitHubAuth(input: SourceControlAuthProbeInput) {
   });
 }
 
+function parseGitHubAccounts(input: SourceControlAuthProbeInput) {
+  return parseGitHubAuthStatus(combinedAuthOutput(input)).accounts.map((account) => ({
+    host: account.host,
+    login: account.account,
+    authenticated: account.authenticated,
+    active: account.active,
+    ...(account.error === null ? {} : { authError: account.error }),
+  }));
+}
+
 export const discovery = {
   type: "cli",
   kind: "github",
   label: "GitHub",
   executable: "gh",
   versionArgs: ["--version"],
-  authArgs: ["auth", "status", "--json", "hosts"],
+  authArgs: ["auth", "status"],
   parseAuth: parseGitHubAuth,
+  parseAccounts: parseGitHubAccounts,
   installHint:
     "Install the GitHub command-line tool (`gh`) via https://cli.github.com/ or your package manager (for example `brew install gh`).",
 } satisfies SourceControlCliDiscoverySpec;
 
 export const make = Effect.gen(function* () {
   const github = yield* GitHubCli.GitHubCli;
+
+  /**
+   * `gh pr list` always reports mergeability as UNKNOWN and can't report review
+   * threads at all, so the merge button could never see a conflict. Resolve the
+   * real state per open change request. Only open ones are enriched: a
+   * merged/closed PR can't be merged, so the extra round trip would be wasted.
+   */
+  const withReviewState = (cwd: string, changeRequests: ReadonlyArray<ChangeRequest>) =>
+    Effect.forEach(
+      changeRequests,
+      (changeRequest) =>
+        changeRequest.state !== "open"
+          ? Effect.succeed(changeRequest)
+          : github
+              .readPullRequestReviewState({
+                cwd,
+                url: changeRequest.url,
+                number: changeRequest.number,
+              })
+              .pipe(
+                Effect.map((reviewState) =>
+                  reviewState ? { ...changeRequest, ...reviewState } : changeRequest,
+                ),
+              ),
+      { concurrency: 4 },
+    );
 
   const listChangeRequests: SourceControlProvider.SourceControlProvider["Service"]["listChangeRequests"] =
     (input) => {
@@ -124,7 +163,7 @@ export const make = Effect.gen(function* () {
             ...(input.limit !== undefined ? { limit: input.limit } : {}),
           })
           .pipe(
-            Effect.map((items) => items.map(toChangeRequest)),
+            Effect.flatMap((items) => withReviewState(input.cwd, items.map(toChangeRequest))),
             Effect.mapError(
               (error) =>
                 new SourceControlProviderError({
@@ -156,7 +195,7 @@ export const make = Effect.gen(function* () {
             "--limit",
             String(input.limit ?? 20),
             "--json",
-            "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
+            "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner,mergeable,mergeStateStatus,statusCheckRollup",
           ],
         })
         .pipe(
@@ -168,19 +207,12 @@ export const make = Effect.gen(function* () {
             return Effect.sync(() => decodeGitHubPullRequestListJson(raw)).pipe(
               Effect.flatMap((decoded) =>
                 Result.isSuccess(decoded)
-                  ? Effect.succeed(
-                      decoded.success.map((item) => {
-                        const { updatedAt, ...summary } = item;
-                        return {
-                          ...toChangeRequest({
-                            ...summary,
-                            ...(Option.isSome(updatedAt)
-                              ? { updatedAt: DateTime.formatIso(updatedAt.value) }
-                              : {}),
-                          }),
-                          updatedAt,
-                        };
-                      }),
+                  ? withReviewState(
+                      input.cwd,
+                      decoded.success.map((item) => ({
+                        ...toChangeRequest(item),
+                        updatedAt: item.updatedAt,
+                      })),
                     )
                   : Effect.fail(
                       new GitHubCli.GitHubChangeRequestListDecodeError({
@@ -310,6 +342,23 @@ export const make = Effect.gen(function* () {
             new SourceControlProviderError({
               provider: "github",
               operation: "checkoutChangeRequest",
+              command: error.command,
+              cwd: input.cwd,
+              reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                input.reference,
+              ),
+              detail: error.detail,
+              cause: error,
+            }),
+        ),
+      ),
+    mergeChangeRequest: (input) =>
+      github.mergePullRequest({ cwd: input.cwd, reference: input.reference }).pipe(
+        Effect.mapError(
+          (error) =>
+            new SourceControlProviderError({
+              provider: "github",
+              operation: "mergeChangeRequest",
               command: error.command,
               cwd: input.cwd,
               reference: SourceControlProvider.transportSafeSourceControlErrorValue(

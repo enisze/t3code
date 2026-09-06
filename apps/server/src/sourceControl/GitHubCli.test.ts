@@ -1,11 +1,14 @@
 import { assert, it, afterEach, describe, expect, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { GitHubAccountResolver } from "./GitHubAccountResolver.ts";
 import * as GitHubCli from "./GitHubCli.ts";
 
 const processOutput = (stdout: string): VcsProcess.VcsProcessOutput => ({
@@ -52,6 +55,64 @@ describe("GitHubCli.layer", () => {
     assert.notProperty(commandFailure, "operation");
   });
 
+  it("classifies temporary provider failures", () => {
+    const context = { command: "gh", cwd: "/repo" } as const;
+    const cause = new VcsProcessExitError({
+      operation: "GitHubCli.execute",
+      command: "gh",
+      cwd: context.cwd,
+      exitCode: 1,
+      detail: "The source control provider is temporarily unavailable.",
+      failureKind: "provider-unavailable",
+    });
+
+    const error = GitHubCli.fromVcsError(context, cause);
+
+    assert.equal(error._tag, "GitHubProviderUnavailableError");
+    assert.equal(error.detail, "GitHub is temporarily unavailable. Wait a moment and try again.");
+    assert.strictEqual(error.cause, cause);
+  });
+
+  it.effect("retries pull request reads while GitHub is temporarily unavailable", () =>
+    Effect.gen(function* () {
+      const unavailable = new VcsProcessExitError({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        cwd: "/repo",
+        exitCode: 1,
+        detail: "The source control provider is temporarily unavailable.",
+        failureKind: "provider-unavailable",
+      });
+      mockRun.mockReturnValueOnce(Effect.fail(unavailable));
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              number: 42,
+              title: "Recovered PR lookup",
+              url: "https://github.com/pingdotgg/codething-mvp/pull/42",
+              baseRefName: "main",
+              headRefName: "feature/retry",
+              state: "OPEN",
+              mergedAt: null,
+            }),
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const lookup = yield* gh
+        .getPullRequest({ cwd: "/repo", reference: "42" })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* TestClock.adjust("1 second");
+      const result = yield* Fiber.join(lookup);
+
+      assert.equal(result.number, 42);
+      expect(mockRun).toHaveBeenCalledTimes(2);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("parses pull request view output", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(
@@ -68,6 +129,9 @@ describe("GitHubCli.layer", () => {
               isDraft: true,
               mergedAt: null,
               updatedAt: "2026-08-24T12:34:56Z",
+              mergeable: "CONFLICTING",
+              mergeStateStatus: "DIRTY",
+              statusCheckRollup: [{ status: "COMPLETED", conclusion: "FAILURE" }],
               isCrossRepository: true,
               headRepository: {
                 nameWithOwner: "octocat/codething-mvp",
@@ -97,6 +161,9 @@ describe("GitHubCli.layer", () => {
         mergedAt: null,
         isDraft: true,
         updatedAt: "2026-08-24T12:34:56.000Z",
+        mergeability: "conflicting",
+        checks: "failing",
+        failedCheckCount: 1,
         isCrossRepository: true,
         headRepositoryNameWithOwner: "octocat/codething-mvp",
         headRepositoryOwnerLogin: "octocat",
@@ -109,7 +176,7 @@ describe("GitHubCli.layer", () => {
           "view",
           "#42",
           "--json",
-          "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner,mergeable,mergeStateStatus,statusCheckRollup",
         ],
         cwd: "/repo",
         timeoutMs: 30_000,
@@ -414,5 +481,527 @@ describe("GitHubCli.layer", () => {
       assert.strictEqual(error.cause, cause);
       assert.notInclude(error.message, "user ID");
     }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("surfaces a friendly error when the directory has no GitHub repository", () =>
+    Effect.gen(function* () {
+      const cause = new VcsProcessExitError({
+        operation: "GitHubCli.execute",
+        command: "gh pr view",
+        cwd: "/repo",
+        exitCode: 1,
+        failureKind: "repository-not-found",
+        detail:
+          "No repository found for this directory. It may not be a git repository, or its remotes don't point to the expected host.",
+      });
+      mockRun.mockReturnValueOnce(Effect.fail(cause));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const error = yield* gh
+        .getPullRequest({
+          cwd: "/repo",
+          reference: "33",
+        })
+        .pipe(Effect.flip);
+
+      assert.strictEqual(error._tag, "GitHubRepositoryNotFoundError");
+      assert.equal(error.message.includes("No GitHub repository was found"), true);
+      assert.strictEqual(error.command, "gh");
+      assert.strictEqual(error.cwd, "/repo");
+      assert.strictEqual(error.cause, cause);
+      assert.equal(error.message.includes(cause.detail), false);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("merges with a real merge commit when the repository allows it", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              mergeCommitAllowed: true,
+              squashMergeAllowed: true,
+              rebaseMergeAllowed: true,
+            }),
+          ),
+        ),
+      );
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({ mergeable: "MERGEABLE", mergeStateStatus: "CLEAN" }),
+          ),
+        ),
+      );
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.mergePullRequest({ cwd: "/repo", reference: "#42" });
+
+      expect(mockRun).toHaveBeenNthCalledWith(1, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: [
+          "repo",
+          "view",
+          "--json",
+          "mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+      expect(mockRun).toHaveBeenNthCalledWith(2, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "view", "#42", "--json", "mergeable,mergeStateStatus"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+      expect(mockRun).toHaveBeenNthCalledWith(3, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "merge", "#42", "--merge"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("falls back to squash when merge commits are disallowed", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              mergeCommitAllowed: false,
+              squashMergeAllowed: true,
+              rebaseMergeAllowed: true,
+            }),
+          ),
+        ),
+      );
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({ mergeable: "MERGEABLE", mergeStateStatus: "CLEAN" }),
+          ),
+        ),
+      );
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.mergePullRequest({ cwd: "/repo", reference: "#42" });
+
+      expect(mockRun).toHaveBeenNthCalledWith(3, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "merge", "#42", "--squash"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("falls back to rebase when only rebase merges are allowed", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              mergeCommitAllowed: false,
+              squashMergeAllowed: false,
+              rebaseMergeAllowed: true,
+            }),
+          ),
+        ),
+      );
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({ mergeable: "MERGEABLE", mergeStateStatus: "CLEAN" }),
+          ),
+        ),
+      );
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.mergePullRequest({ cwd: "/repo", reference: "#42" });
+
+      expect(mockRun).toHaveBeenNthCalledWith(3, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "merge", "#42", "--rebase"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("falls back to a plain merge when repository settings can't be read", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("not json")));
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({ mergeable: "MERGEABLE", mergeStateStatus: "CLEAN" }),
+          ),
+        ),
+      );
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.mergePullRequest({ cwd: "/repo", reference: "#42" });
+
+      expect(mockRun).toHaveBeenNthCalledWith(3, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "merge", "#42", "--merge"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("polls until GitHub finishes computing mergeability before merging", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              mergeCommitAllowed: true,
+              squashMergeAllowed: true,
+              rebaseMergeAllowed: true,
+            }),
+          ),
+        ),
+      );
+      // First read: still computing. Second read: settled.
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({ mergeable: "UNKNOWN", mergeStateStatus: "UNKNOWN" }),
+          ),
+        ),
+      );
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({ mergeable: "MERGEABLE", mergeStateStatus: "CLEAN" }),
+          ),
+        ),
+      );
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const merge = yield* gh
+        .mergePullRequest({ cwd: "/repo", reference: "#42" })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      // Let the one-second poll backoff elapse so the second read runs.
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(merge);
+
+      expect(mockRun).toHaveBeenNthCalledWith(2, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "view", "#42", "--json", "mergeable,mergeStateStatus"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+      expect(mockRun).toHaveBeenNthCalledWith(3, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "view", "#42", "--json", "mergeable,mergeStateStatus"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+      expect(mockRun).toHaveBeenNthCalledWith(4, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "merge", "#42", "--merge"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("retries a transient merge-blocked failure", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              mergeCommitAllowed: true,
+              squashMergeAllowed: true,
+              rebaseMergeAllowed: true,
+            }),
+          ),
+        ),
+      );
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({ mergeable: "MERGEABLE", mergeStateStatus: "CLEAN" }),
+          ),
+        ),
+      );
+      // First merge attempt: transient rejection. Second: success.
+      mockRun.mockReturnValueOnce(
+        Effect.fail(
+          new VcsProcessExitError({
+            operation: "GitHubCli.execute",
+            command: "gh",
+            cwd: "/repo",
+            exitCode: 1,
+            detail: "blocked",
+            failureKind: "merge-blocked",
+          }),
+        ),
+      );
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const merge = yield* gh
+        .mergePullRequest({ cwd: "/repo", reference: "#42" })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      // Let the one-second retry backoff elapse so the second attempt runs.
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(merge);
+
+      expect(mockRun).toHaveBeenNthCalledWith(3, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "merge", "#42", "--merge"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+      expect(mockRun).toHaveBeenNthCalledWith(4, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "merge", "#42", "--merge"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("retries a merge when GitHub is temporarily unavailable", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              mergeCommitAllowed: true,
+              squashMergeAllowed: true,
+              rebaseMergeAllowed: true,
+            }),
+          ),
+        ),
+      );
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({ mergeable: "MERGEABLE", mergeStateStatus: "CLEAN" }),
+          ),
+        ),
+      );
+      mockRun.mockReturnValueOnce(
+        Effect.fail(
+          new VcsProcessExitError({
+            operation: "GitHubCli.execute",
+            command: "gh",
+            cwd: "/repo",
+            exitCode: 1,
+            detail: "The source control provider is temporarily unavailable.",
+            failureKind: "provider-unavailable",
+          }),
+        ),
+      );
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const merge = yield* gh
+        .mergePullRequest({ cwd: "/repo", reference: "#42" })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(merge);
+
+      expect(mockRun).toHaveBeenNthCalledWith(3, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "merge", "#42", "--merge"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+      expect(mockRun).toHaveBeenNthCalledWith(4, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "merge", "#42", "--merge"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("names merge conflicts when GitHub refuses a conflicting PR", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              mergeCommitAllowed: true,
+              squashMergeAllowed: true,
+              rebaseMergeAllowed: true,
+            }),
+          ),
+        ),
+      );
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({ mergeable: "CONFLICTING", mergeStateStatus: "DIRTY" }),
+          ),
+        ),
+      );
+      // Every merge attempt is refused because the PR conflicts.
+      mockRun.mockReturnValue(
+        Effect.fail(
+          new VcsProcessExitError({
+            operation: "GitHubCli.execute",
+            command: "gh",
+            cwd: "/repo",
+            exitCode: 1,
+            detail: "blocked",
+            failureKind: "merge-blocked",
+          }),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const merge = yield* gh
+        .mergePullRequest({ cwd: "/repo", reference: "#42" })
+        .pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+      // Let the retry backoffs elapse so every attempt runs and the final
+      // failure is returned.
+      yield* TestClock.adjust("5 seconds");
+      const error = yield* Fiber.join(merge);
+
+      assert.strictEqual(error._tag, "GitHubMergeBlockedError");
+      if (error._tag !== "GitHubMergeBlockedError") throw error;
+      assert.strictEqual(error.mergeability, "conflicting");
+      assert.equal(error.detail.includes("merge conflicts"), true);
+    }).pipe(Effect.provide(layer)),
+  );
+});
+
+describe("parseRepositoryFromPullRequestUrl", () => {
+  it("reads owner and repo from a pull request URL", () => {
+    assert.deepStrictEqual(
+      GitHubCli.parseRepositoryFromPullRequestUrl("https://github.com/enisze/t3code/pull/30"),
+      { owner: "enisze", repo: "t3code" },
+    );
+  });
+
+  it("supports GitHub Enterprise hosts and trailing URL segments", () => {
+    assert.deepStrictEqual(
+      GitHubCli.parseRepositoryFromPullRequestUrl("https://gh.corp.example/team/app/pull/7/files"),
+      { owner: "team", repo: "app" },
+    );
+  });
+
+  it("returns null for URLs that are not pull requests", () => {
+    assert.strictEqual(
+      GitHubCli.parseRepositoryFromPullRequestUrl("https://github.com/enisze/t3code/issues/30"),
+      null,
+    );
+    assert.strictEqual(GitHubCli.parseRepositoryFromPullRequestUrl("not a url"), null);
+  });
+});
+
+describe("GitHubCli account scoping", () => {
+  const resolverLayer = Layer.succeed(
+    GitHubAccountResolver,
+    GitHubAccountResolver.of({
+      resolveForCwd: () =>
+        Effect.succeed({
+          _tag: "resolved",
+          account: { host: "github.com", login: "octo" },
+          token: "gho_project",
+        }),
+      resolveCommitIdentityForCwd: () => Effect.succeed({ _tag: "ambient" }),
+    }),
+  );
+
+  it.effect("gives gh the credential config its child git processes need", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValue(Effect.succeed(processOutput("")));
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.execute({ cwd: "/repo", args: ["pr", "create"] });
+
+      const env = mockRun.mock.calls[0]?.[0]?.env;
+      assert.equal(env?.GH_TOKEN, "gho_project");
+      // Without these, `gh pr create` pushing a new branch falls back to the
+      // machine credential helper and acts as the wrong account.
+      assert.equal(env?.GIT_CONFIG_KEY_1, "credential.https://github.com.helper");
+      assert.equal(env?.GIT_CONFIG_VALUE_1, "!gh auth git-credential");
+    }).pipe(Effect.provide(layer.pipe(Layer.provideMerge(resolverLayer)))),
+  );
+
+  it.effect("leaves the environment alone when no account is attached", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValue(Effect.succeed(processOutput("")));
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.execute({ cwd: "/repo", args: ["pr", "list"] });
+
+      assert.equal(mockRun.mock.calls[0]?.[0]?.env, undefined);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("refuses to run gh as the wrong account when the selected one is unavailable", () =>
+    Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      const error = yield* gh
+        .execute({ cwd: "/repo", args: ["pr", "merge", "#42", "--merge"] })
+        .pipe(Effect.flip);
+
+      // No gh command runs — we fail before acting as the ambient account.
+      assert.equal(mockRun.mock.calls.length, 0);
+      assert.strictEqual(error._tag, "GitHubAccountNotLoggedInError");
+      assert.equal(error.message.includes("octo"), true);
+      assert.equal(error.message.includes("gh auth login"), true);
+    }).pipe(
+      Effect.provide(
+        layer.pipe(
+          Layer.provideMerge(
+            Layer.succeed(
+              GitHubAccountResolver,
+              GitHubAccountResolver.of({
+                resolveForCwd: () =>
+                  Effect.succeed({
+                    _tag: "unavailable",
+                    account: { host: "github.com", login: "octo" },
+                  }),
+                resolveCommitIdentityForCwd: () => Effect.succeed({ _tag: "ambient" }),
+              }),
+            ),
+          ),
+        ),
+      ),
+    ),
   );
 });

@@ -1,5 +1,6 @@
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -15,6 +16,12 @@ import {
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import {
+  GitHubAccountResolver,
+  gitHubAccountAuthEnv,
+  type GitHubAccountResolution,
+} from "./GitHubAccountResolver.ts";
+import {
+  classifyMergeability,
   decodeGitHubPullRequestJson,
   decodeGitHubPullRequestListJson,
   type NormalizedGitHubPullRequestRecord,
@@ -80,12 +87,102 @@ export class GitHubPullRequestNotFoundError extends Schema.TaggedErrorClass<GitH
   }
 }
 
+export class GitHubRepositoryNotFoundError extends Schema.TaggedErrorClass<GitHubRepositoryNotFoundError>()(
+  "GitHubRepositoryNotFoundError",
+  gitHubCliFailureFields,
+) {
+  get detail(): string {
+    return "No GitHub repository was found for this directory. Make sure it's a git repository whose remote points to GitHub, then try again.";
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in execute: ${this.detail}`;
+  }
+}
+
 export class GitHubCliCommandError extends Schema.TaggedErrorClass<GitHubCliCommandError>()(
   "GitHubCliCommandError",
   gitHubCliFailureFields,
 ) {
   get detail(): string {
     return "GitHub CLI command failed.";
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in execute: ${this.detail}`;
+  }
+}
+
+export class GitHubProviderUnavailableError extends Schema.TaggedErrorClass<GitHubProviderUnavailableError>()(
+  "GitHubProviderUnavailableError",
+  gitHubCliFailureFields,
+) {
+  get detail(): string {
+    return "GitHub is temporarily unavailable. Wait a moment and try again.";
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in execute: ${this.detail}`;
+  }
+}
+
+export class GitHubPermissionError extends Schema.TaggedErrorClass<GitHubPermissionError>()(
+  "GitHubPermissionError",
+  gitHubCliFailureFields,
+) {
+  get detail(): string {
+    return "The selected GitHub account doesn't have permission for this action. Check the account attached to this project in its settings.";
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in execute: ${this.detail}`;
+  }
+}
+
+const gitHubAccountFailureFields = {
+  command: Schema.Literal("gh"),
+  cwd: Schema.String,
+  host: Schema.String,
+  login: Schema.String,
+  cause: Schema.Defect(),
+} as const;
+
+/**
+ * The project has a GitHub account attached, but that account isn't logged in
+ * to `gh` (so no token could be minted for it). We refuse rather than fall back
+ * to the machine's active account, which would run the command as the wrong
+ * user.
+ */
+export class GitHubAccountNotLoggedInError extends Schema.TaggedErrorClass<GitHubAccountNotLoggedInError>()(
+  "GitHubAccountNotLoggedInError",
+  gitHubAccountFailureFields,
+) {
+  get detail(): string {
+    return `The GitHub account "${this.login}" is selected for this project but isn't logged in to the GitHub CLI on ${this.host}. Run \`gh auth login\` for that account, or change the account in the project's settings.`;
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in execute: ${this.detail}`;
+  }
+}
+
+export class GitHubMergeBlockedError extends Schema.TaggedErrorClass<GitHubMergeBlockedError>()(
+  "GitHubMergeBlockedError",
+  {
+    ...gitHubCliFailureFields,
+    // The mergeability GitHub reported just before the merge was refused, so we
+    // can name the concrete blocker instead of listing every possibility.
+    mergeability: Schema.optional(Schema.Literals(["clean", "conflicting", "blocked", "unknown"])),
+  },
+) {
+  get detail(): string {
+    if (this.mergeability === "conflicting") {
+      return "GitHub couldn't merge this pull request because it has merge conflicts with the base branch. Resolve the conflicts, then try merging again.";
+    }
+    if (this.mergeability === "blocked") {
+      return "GitHub blocked this merge because required status checks are failing or branch protection rules haven't been satisfied yet.";
+    }
+    return "GitHub wouldn't merge this pull request. It may have merge conflicts, failing required status checks, or branch protection rules that block the merge.";
   }
 
   override get message(): string {
@@ -155,7 +252,12 @@ export const GitHubCliError = Schema.Union([
   GitHubCliUnavailableError,
   GitHubCliAuthenticationError,
   GitHubCliRateLimitError,
+  GitHubAccountNotLoggedInError,
   GitHubPullRequestNotFoundError,
+  GitHubRepositoryNotFoundError,
+  GitHubPermissionError,
+  GitHubMergeBlockedError,
+  GitHubProviderUnavailableError,
   GitHubCliCommandError,
   GitHubPullRequestListDecodeError,
   GitHubChangeRequestListDecodeError,
@@ -193,6 +295,18 @@ export function fromVcsError(
     if (error.failureKind === "not-found") {
       return new GitHubPullRequestNotFoundError({ ...context, cause: error });
     }
+    if (error.failureKind === "repository-not-found") {
+      return new GitHubRepositoryNotFoundError({ ...context, cause: error });
+    }
+    if (error.failureKind === "permission-denied") {
+      return new GitHubPermissionError({ ...context, cause: error });
+    }
+    if (error.failureKind === "merge-blocked") {
+      return new GitHubMergeBlockedError({ ...context, cause: error });
+    }
+    if (error.failureKind === "provider-unavailable") {
+      return new GitHubProviderUnavailableError({ ...context, cause: error });
+    }
   }
 
   return new GitHubCliCommandError({ ...context, cause: error });
@@ -209,6 +323,10 @@ export interface GitHubPullRequestSummary {
   readonly closedAt?: string | null;
   readonly mergedAt?: string | null;
   readonly updatedAt?: string;
+  readonly mergeability?: "clean" | "conflicting" | "blocked" | "unknown";
+  readonly checks?: "passing" | "failing" | "pending" | "unknown";
+  readonly failedCheckCount?: number;
+  readonly unresolvedReviewThreadCount?: number;
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
   readonly headRepositoryOwnerLogin?: string | null;
@@ -251,6 +369,23 @@ export class GitHubCli extends Context.Service<
       readonly reference: string;
     }) => Effect.Effect<GitHubPullRequestSummary, GitHubCliError>;
 
+    /**
+     * Resolve the merge/review state GitHub computes only when a pull request is
+     * queried on its own. Yields `null` when it can't be determined, so callers
+     * keep whatever the cheaper list call reported.
+     */
+    readonly readPullRequestReviewState: (input: {
+      readonly cwd: string;
+      readonly url: string;
+      readonly number: number;
+    }) => Effect.Effect<
+      {
+        readonly mergeability: "clean" | "conflicting" | "blocked" | "unknown";
+        readonly unresolvedReviewThreadCount?: number;
+      } | null,
+      never
+    >;
+
     readonly getRepositoryCloneUrls: (input: {
       readonly cwd: string;
       readonly repository: string;
@@ -279,6 +414,11 @@ export class GitHubCli extends Context.Service<
       readonly reference: string;
       readonly force?: boolean;
     }) => Effect.Effect<void, GitHubCliError>;
+
+    readonly mergePullRequest: (input: {
+      readonly cwd: string;
+      readonly reference: string;
+    }) => Effect.Effect<void, GitHubCliError>;
   }
 >()("t3/sourceControl/GitHubCli") {}
 
@@ -287,6 +427,130 @@ const RawGitHubRepositoryCloneUrlsSchema = Schema.Struct({
   url: TrimmedNonEmptyString,
   sshUrl: TrimmedNonEmptyString,
 });
+
+const RawGitHubMergeMethodsSchema = Schema.Struct({
+  mergeCommitAllowed: Schema.Boolean,
+  squashMergeAllowed: Schema.Boolean,
+  rebaseMergeAllowed: Schema.Boolean,
+});
+const decodeRawGitHubMergeMethods = Schema.decodeEffect(
+  Schema.fromJsonString(RawGitHubMergeMethodsSchema),
+);
+
+const RawGitHubMergeabilitySchema = Schema.Struct({
+  mergeable: Schema.String,
+  mergeStateStatus: Schema.String,
+});
+const decodeRawGitHubMergeability = Schema.decodeEffect(
+  Schema.fromJsonString(RawGitHubMergeabilitySchema),
+);
+const UNKNOWN_MERGEABILITY = {
+  mergeable: "UNKNOWN",
+  mergeStateStatus: "UNKNOWN",
+} as const;
+
+/**
+ * `gh pr list` never resolves the lazy `mergeable` / `mergeStateStatus` fields —
+ * it always reports `UNKNOWN`, so a conflicting PR looks mergeable in the status
+ * we drive the merge button from. Resolving the pull request on its own (as
+ * GraphQL below, or `gh pr view`) makes GitHub compute the real state. The same
+ * query also returns review-thread resolution, which no `gh pr view --json`
+ * field exposes, so one round trip covers both.
+ */
+const PULL_REQUEST_REVIEW_STATE_QUERY = `query($owner:String!,$repo:String!,$number:Int!){
+  repository(owner:$owner,name:$repo){
+    pullRequest(number:$number){
+      mergeable
+      mergeStateStatus
+      reviewThreads(first:100){ nodes { isResolved } }
+    }
+  }
+}`;
+
+const RawGitHubReviewStateSchema = Schema.Struct({
+  data: Schema.Struct({
+    repository: Schema.Struct({
+      pullRequest: Schema.Struct({
+        mergeable: Schema.optional(Schema.NullOr(Schema.String)),
+        mergeStateStatus: Schema.optional(Schema.NullOr(Schema.String)),
+        reviewThreads: Schema.optional(
+          Schema.NullOr(
+            Schema.Struct({
+              nodes: Schema.optional(
+                Schema.NullOr(
+                  Schema.Array(
+                    Schema.Struct({ isResolved: Schema.optional(Schema.NullOr(Schema.Boolean)) }),
+                  ),
+                ),
+              ),
+            }),
+          ),
+        ),
+      }),
+    }),
+  }),
+});
+const decodeRawGitHubReviewState = Schema.decodeEffect(
+  Schema.fromJsonString(RawGitHubReviewStateSchema),
+);
+
+/**
+ * Pull request web URLs are `https://<host>/<owner>/<repo>/pull/<number>`, so the
+ * repository the PR belongs to comes straight off the summary we already have —
+ * no extra `gh repo view` round trip just to build a GraphQL query.
+ */
+export function parseRepositoryFromPullRequestUrl(
+  url: string,
+): { readonly owner: string; readonly repo: string } | null {
+  const match = /^https?:\/\/[^/]+\/([^/]+)\/([^/]+)\/pull\/\d+/.exec(url.trim());
+  const owner = match?.[1];
+  const repo = match?.[2];
+  return owner && repo ? { owner, repo } : null;
+}
+
+/**
+ * Right after a pull request is opened (or its branch is pushed), GitHub reports
+ * the mergeable state as `UNKNOWN` while it recomputes the merge in the
+ * background. A merge attempted inside that window is rejected with a transient
+ * "not mergeable" / "base branch was modified" error that our classifier can
+ * only see as a hard `merge-blocked` failure. Reading the state forces GitHub to
+ * compute it, so we poll (bounded) until it settles before merging.
+ */
+const MERGEABILITY_POLL_ATTEMPTS = 6;
+const MERGEABILITY_POLL_INTERVAL = Duration.seconds(1);
+
+/**
+ * Even once mergeability is computed, GitHub can briefly return a transient
+ * `merge-blocked` failure. Retry the merge itself a few times; a genuine
+ * conflict, permission problem, or protection rule won't clear on retry, so we
+ * only retry that one classified kind.
+ */
+const MERGE_ATTEMPTS = 3;
+const MERGE_RETRY_INTERVAL = Duration.seconds(1);
+const TRANSIENT_ATTEMPTS = 3;
+const TRANSIENT_RETRY_INTERVAL = Duration.seconds(1);
+
+/**
+ * `gh pr merge` requires an explicit merge method; without one it drops into an
+ * interactive prompt that has no TTY here and fails. Hardcoding `--merge` breaks
+ * on the many repositories that disallow merge commits (squash- or rebase-only),
+ * so pick a method the repository actually permits, preferring a real merge
+ * commit, then squash, then rebase.
+ */
+function mergeMethodFlag(
+  methods: Schema.Schema.Type<typeof RawGitHubMergeMethodsSchema>,
+): "--merge" | "--squash" | "--rebase" | null {
+  if (methods.mergeCommitAllowed) {
+    return "--merge";
+  }
+  if (methods.squashMergeAllowed) {
+    return "--squash";
+  }
+  if (methods.rebaseMergeAllowed) {
+    return "--rebase";
+  }
+  return null;
+}
 const decodeRawGitHubRepositoryCloneUrls = Schema.decodeEffect(
   Schema.fromJsonString(RawGitHubRepositoryCloneUrlsSchema),
 );
@@ -342,17 +606,174 @@ export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
 
   const execute: GitHubCli["Service"]["execute"] = (input) =>
-    process
-      .run({
-        operation: "GitHubCli.execute",
-        command: "gh",
-        args: input.args,
+    Effect.serviceOption(GitHubAccountResolver).pipe(
+      Effect.flatMap(
+        (resolverOption): Effect.Effect<GitHubAccountResolution> =>
+          Option.isNone(resolverOption)
+            ? Effect.succeed({ _tag: "ambient" })
+            : resolverOption.value.resolveForCwd(input.cwd),
+      ),
+      Effect.flatMap((resolution) => {
+        // The project selected an account we can't act as. Refuse instead of
+        // silently running `gh` as the machine's active (wrong) account.
+        if (resolution._tag === "unavailable") {
+          return Effect.fail(
+            new GitHubAccountNotLoggedInError({
+              command: "gh",
+              cwd: input.cwd,
+              host: resolution.account.host,
+              login: resolution.account.login,
+              cause: new Error("gh could not mint a token for the selected account"),
+            }),
+          );
+        }
+        return process
+          .run({
+            operation: "GitHubCli.execute",
+            command: "gh",
+            args: input.args,
+            cwd: input.cwd,
+            timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+            // The full auth env, not the `gh`-only one: `gh` shells out to `git`
+            // for the network half of `pr create` (pushing a branch with no
+            // upstream) and `pr checkout`, and those children would otherwise
+            // fall back to the machine credential helper.
+            ...(resolution._tag === "resolved"
+              ? { env: gitHubAccountAuthEnv(resolution, globalThis.process.env) }
+              : {}),
+          })
+          .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
+      }),
+    );
+
+  const retryProviderUnavailable = <A>(
+    effect: () => Effect.Effect<A, GitHubCliError>,
+    attemptsLeft = TRANSIENT_ATTEMPTS,
+  ): Effect.Effect<A, GitHubCliError> =>
+    effect().pipe(
+      Effect.catchTag("GitHubProviderUnavailableError", (error) =>
+        attemptsLeft <= 1
+          ? Effect.fail(error)
+          : Effect.sleep(TRANSIENT_RETRY_INTERVAL).pipe(
+              Effect.flatMap(() => retryProviderUnavailable(effect, attemptsLeft - 1)),
+            ),
+      ),
+    );
+
+  const resolveMergeMethodFlag = (cwd: string) =>
+    retryProviderUnavailable(() =>
+      execute({
+        cwd,
+        args: [
+          "repo",
+          "view",
+          "--json",
+          "mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed",
+        ],
+      }),
+    ).pipe(
+      Effect.flatMap((output) =>
+        decodeRawGitHubMergeMethods(output.stdout).pipe(
+          // If the settings can't be read, fall back to a plain merge commit
+          // and let GitHub surface the real reason if that method is refused.
+          Effect.orElseSucceed(() => ({
+            mergeCommitAllowed: true,
+            squashMergeAllowed: false,
+            rebaseMergeAllowed: false,
+          })),
+        ),
+      ),
+      Effect.map(mergeMethodFlag),
+    );
+
+  /**
+   * Resolve the review/merge state GitHub only computes on demand. Best-effort:
+   * a failure (old `gh`, missing scope, unparseable URL) leaves the summary as
+   * the list reported it rather than failing the whole status read.
+   */
+  const readPullRequestReviewState = (input: {
+    readonly cwd: string;
+    readonly url: string;
+    readonly number: number;
+  }) =>
+    Effect.gen(function* () {
+      const repository = parseRepositoryFromPullRequestUrl(input.url);
+      if (!repository) return null;
+
+      const output = yield* execute({
         cwd: input.cwd,
-        timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
-        ...(input.maxOutputBytes !== undefined ? { maxOutputBytes: input.maxOutputBytes } : {}),
-      })
-      .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
+        args: [
+          "api",
+          "graphql",
+          "-f",
+          `query=${PULL_REQUEST_REVIEW_STATE_QUERY}`,
+          "-F",
+          `owner=${repository.owner}`,
+          "-F",
+          `repo=${repository.repo}`,
+          "-F",
+          `number=${input.number}`,
+        ],
+      });
+      const decoded = yield* decodeRawGitHubReviewState(output.stdout);
+      const pullRequest = decoded.data.repository.pullRequest;
+      const threads = pullRequest.reviewThreads?.nodes ?? null;
+      return {
+        mergeability: classifyMergeability(pullRequest),
+        ...(threads
+          ? {
+              unresolvedReviewThreadCount: threads.filter((thread) => thread.isResolved !== true)
+                .length,
+            }
+          : {}),
+      };
+    }).pipe(Effect.orElseSucceed(() => null));
+
+  const awaitMergeabilityComputed = (cwd: string, reference: string) =>
+    Effect.gen(function* () {
+      let mergeability: "clean" | "conflicting" | "blocked" | "unknown" = "unknown";
+      for (let attempt = 0; attempt < MERGEABILITY_POLL_ATTEMPTS; attempt++) {
+        const state = yield* retryProviderUnavailable(() =>
+          execute({
+            cwd,
+            args: ["pr", "view", reference, "--json", "mergeable,mergeStateStatus"],
+          }),
+        ).pipe(
+          Effect.flatMap((output) =>
+            decodeRawGitHubMergeability(output.stdout).pipe(
+              Effect.orElseSucceed(() => UNKNOWN_MERGEABILITY),
+            ),
+          ),
+          // A failed read must not abort the merge; fall through and let the
+          // merge itself report any real problem.
+          Effect.orElseSucceed(() => UNKNOWN_MERGEABILITY),
+        );
+        mergeability = classifyMergeability(state);
+        if (state.mergeable !== "UNKNOWN") {
+          return mergeability;
+        }
+        if (attempt < MERGEABILITY_POLL_ATTEMPTS - 1) {
+          yield* Effect.sleep(MERGEABILITY_POLL_INTERVAL);
+        }
+      }
+      return mergeability;
+    });
+
+  const attemptMerge = (
+    cwd: string,
+    args: ReadonlyArray<string>,
+    attemptsLeft: number,
+  ): Effect.Effect<void, GitHubCliError> =>
+    retryProviderUnavailable(() => execute({ cwd, args })).pipe(
+      Effect.asVoid,
+      Effect.catchTag("GitHubMergeBlockedError", (error) =>
+        attemptsLeft <= 1
+          ? Effect.fail(error)
+          : Effect.sleep(MERGE_RETRY_INTERVAL).pipe(
+              Effect.flatMap(() => attemptMerge(cwd, args, attemptsLeft - 1)),
+            ),
+      ),
+    );
 
   return GitHubCli.of({
     execute,
@@ -369,7 +790,7 @@ export const make = Effect.gen(function* () {
           "--limit",
           String(input.limit ?? 1),
           "--json",
-          "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner,mergeable,mergeStateStatus,statusCheckRollup",
         ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
@@ -393,17 +814,20 @@ export const make = Effect.gen(function* () {
               ),
         ),
       ),
+    readPullRequestReviewState,
     getPullRequest: (input) =>
-      execute({
-        cwd: input.cwd,
-        args: [
-          "pr",
-          "view",
-          input.reference,
-          "--json",
-          "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
-        ],
-      }).pipe(
+      retryProviderUnavailable(() =>
+        execute({
+          cwd: input.cwd,
+          args: [
+            "pr",
+            "view",
+            input.reference,
+            "--json",
+            "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner,mergeable,mergeStateStatus,statusCheckRollup",
+          ],
+        }),
+      ).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
           Effect.sync(() => decodeGitHubPullRequestJson(raw)).pipe(
@@ -483,6 +907,31 @@ export const make = Effect.gen(function* () {
         cwd: input.cwd,
         args: ["pr", "checkout", input.reference, ...(input.force ? ["--force"] : [])],
       }).pipe(Effect.asVoid),
+    mergePullRequest: (input) =>
+      Effect.gen(function* () {
+        const flag = yield* resolveMergeMethodFlag(input.cwd);
+        // Force GitHub to finish computing mergeability before we merge, so a
+        // merge fired right after create/push doesn't race a transient
+        // "not mergeable" rejection. The settled verdict also lets us name the
+        // concrete blocker (conflicts vs. checks) if the merge is refused.
+        const mergeability = yield* awaitMergeabilityComputed(input.cwd, input.reference);
+        yield* attemptMerge(
+          input.cwd,
+          ["pr", "merge", input.reference, ...(flag ? [flag] : ["--merge"])],
+          MERGE_ATTEMPTS,
+        ).pipe(
+          Effect.catchTag("GitHubMergeBlockedError", (error) =>
+            Effect.fail(
+              new GitHubMergeBlockedError({
+                command: error.command,
+                cwd: error.cwd,
+                cause: error.cause,
+                mergeability,
+              }),
+            ),
+          ),
+        );
+      }),
   });
 });
 

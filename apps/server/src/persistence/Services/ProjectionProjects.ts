@@ -7,12 +7,13 @@
  * @module ProjectionProjectRepository
  */
 import {
+  GitHubAccountRef,
   IsoDateTime,
   ModelSelection,
-  ProjectIconOverride,
+  PortSchema,
   ProjectId,
   ProjectScript,
-  ThreadEnvMode,
+  ProjectWorktreeCopyFiles,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -30,6 +31,12 @@ export const ProjectionProject = Schema.Struct({
   autoPull: Schema.Boolean,
   faviconPath: Schema.optional(Schema.NullOr(Schema.String)),
   projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
+  reviewModelSelection: Schema.NullOr(ModelSelection),
+  gitHubAccount: Schema.NullOr(GitHubAccountRef),
+  worktreeBranchPrefix: Schema.NullOr(Schema.String),
+  defaultWorktreeBranch: Schema.NullOr(Schema.String),
+  previewPort: Schema.NullOr(PortSchema),
+  worktreeCopyFiles: ProjectWorktreeCopyFiles,
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

@@ -290,6 +290,15 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         },
         defaultThreadEnvMode: null,
         autoPull: false,
+        reviewModelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-opus-4-6",
+        },
+        gitHubAccount: null,
+        worktreeBranchPrefix: null,
+        defaultWorktreeBranch: null,
+        previewPort: null,
+        worktreeCopyFiles: [],
         scripts: [],
         createdAt: "2026-03-24T00:00:00.000Z",
         updatedAt: "2026-03-24T00:00:00.000Z",
@@ -298,8 +307,11 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
 
       const rows = yield* sql<{
         readonly defaultModelSelection: string | null;
+        readonly reviewModelSelection: string | null;
       }>`
-        SELECT default_model_selection_json AS "defaultModelSelection"
+        SELECT
+          default_model_selection_json AS "defaultModelSelection",
+          review_model_selection_json AS "reviewModelSelection"
         FROM projection_projects
         WHERE project_id = 'project-null-options'
       `;
@@ -316,6 +328,14 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
           model: "gpt-5.4",
         }),
       );
+      assert.strictEqual(
+        row.reviewModelSelection,
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-opus-4-6",
+        }),
+      );
 
       const persisted = yield* projects.getById({
         projectId: ProjectId.make("project-null-options"),
@@ -323,6 +343,10 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       assert.deepStrictEqual(Option.getOrNull(persisted)?.defaultModelSelection, {
         instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5.4",
+      });
+      assert.deepStrictEqual(Option.getOrNull(persisted)?.reviewModelSelection, {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-opus-4-6",
       });
     }),
   );

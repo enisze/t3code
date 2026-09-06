@@ -251,6 +251,12 @@ export function projectEvent(
             autoPull: false,
             faviconPath: payload.faviconPath ?? null,
             projectIcon: payload.projectIcon ?? null,
+            reviewModelSelection: payload.reviewModelSelection ?? null,
+            gitHubAccount: payload.gitHubAccount ?? null,
+            worktreeBranchPrefix: payload.worktreeBranchPrefix ?? null,
+            defaultWorktreeBranch: payload.defaultWorktreeBranch ?? null,
+            previewPort: payload.previewPort ?? null,
+            worktreeCopyFiles: payload.worktreeCopyFiles ?? [],
             scripts: payload.scripts,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -292,6 +298,24 @@ export function projectEvent(
                     : {}),
                   ...(payload.projectIcon !== undefined
                     ? { projectIcon: payload.projectIcon }
+                    : {}),
+                  ...(payload.reviewModelSelection !== undefined
+                    ? { reviewModelSelection: payload.reviewModelSelection }
+                    : {}),
+                  ...(payload.gitHubAccount !== undefined
+                    ? { gitHubAccount: payload.gitHubAccount }
+                    : {}),
+                  ...(payload.worktreeBranchPrefix !== undefined
+                    ? { worktreeBranchPrefix: payload.worktreeBranchPrefix }
+                    : {}),
+                  ...(payload.defaultWorktreeBranch !== undefined
+                    ? { defaultWorktreeBranch: payload.defaultWorktreeBranch }
+                    : {}),
+                  ...(payload.previewPort !== undefined
+                    ? { previewPort: payload.previewPort }
+                    : {}),
+                  ...(payload.worktreeCopyFiles !== undefined
+                    ? { worktreeCopyFiles: payload.worktreeCopyFiles }
                     : {}),
                   ...(payload.scripts !== undefined ? { scripts: payload.scripts } : {}),
                   updatedAt: payload.updatedAt,

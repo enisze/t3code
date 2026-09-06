@@ -1,14 +1,22 @@
 import { describe, expect, it } from "vite-plus/test";
+import { parseDiffFromFile } from "@pierre/diffs";
 import {
-  buildFileDiffContentVersion,
-  buildFileDiffIdentityKey,
+  buildFileDiffContentSignature,
   buildFileDiffRenderKey,
   buildPatchCacheKey,
   getDiffLineStat,
   getRenderablePatch,
+  makeFullContextPatchExpandable,
 } from "./diffRendering";
+import { buildDiffViewedSignature } from "./diffViewedSignature";
 
 describe("buildPatchCacheKey", () => {
+  it("returns a stable cache key for identical content", () => {
+    const patch = "diff --git a/a.ts b/a.ts\n+console.log('hello')";
+
+    expect(buildPatchCacheKey(patch)).toBe(buildPatchCacheKey(patch));
+  });
+
   it("normalizes outer whitespace before hashing", () => {
     const patch = "diff --git a/a.ts b/a.ts\n+console.log('hello')";
 
@@ -32,6 +40,56 @@ describe("buildPatchCacheKey", () => {
 });
 
 describe("getRenderablePatch", () => {
+  it("rebuilds full-context patches with independently expandable gaps", () => {
+    const lines = Array.from({ length: 30 }, (_, index) => `line ${index + 1}\n`);
+    const before = lines.join("");
+    const afterLines = [...lines];
+    afterLines[2] = "changed near top\n";
+    afterLines[26] = "changed near bottom\n";
+    const full = makeFullContextPatchExpandable(
+      parseDiffFromFile(
+        { name: "example.ts", contents: before },
+        { name: "example.ts", contents: afterLines.join("") },
+        { context: Number.MAX_SAFE_INTEGER },
+      ),
+    );
+
+    expect(full.isPartial).toBe(false);
+    expect(full.hunks).toHaveLength(2);
+    expect(full.hunks[1]?.collapsedBefore).toBeGreaterThan(0);
+  });
+
+  it("preserves viewed identity and line stats across a full-context rebuild", () => {
+    const beforeLines = Array.from({ length: 100 }, (_, index) => `line ${index + 1}\n`);
+    const afterLines = [...beforeLines];
+    afterLines.splice(30, 1);
+    afterLines.splice(82, 1, "changed near bottom\n", "added near bottom\n");
+    const before = beforeLines.join("");
+    const after = afterLines.join("");
+    const compact = {
+      ...parseDiffFromFile(
+        { name: "example.ts", contents: before },
+        { name: "example.ts", contents: after },
+        { context: 3 },
+      ),
+      mode: "100644",
+    };
+    const full = {
+      ...parseDiffFromFile(
+        { name: "example.ts", contents: before },
+        { name: "example.ts", contents: after },
+        { context: Number.MAX_SAFE_INTEGER },
+      ),
+      mode: "100644",
+    };
+    const rebuilt = makeFullContextPatchExpandable(full);
+
+    expect(rebuilt.mode).toBe("100644");
+    expect(buildDiffViewedSignature(rebuilt)).toBe(buildDiffViewedSignature(compact));
+    expect(getDiffLineStat([rebuilt])).toEqual(getDiffLineStat([compact]));
+    expect(getDiffLineStat([rebuilt])).toEqual({ additions: 2, deletions: 2 });
+  });
+
   it("compacts partial hunk render offsets for virtualized review diffs", () => {
     const patch = [
       "diff --git a/example.ts b/example.ts",
@@ -84,69 +142,52 @@ describe("getRenderablePatch", () => {
   });
 });
 
-describe("diff file reconciliation", () => {
-  it("keeps Pierre's render key stable when a partial diff hydrates", () => {
-    const patch = [
-      "diff --git a/example.ts b/example.ts",
-      "--- a/example.ts",
-      "+++ b/example.ts",
-      "@@ -1 +1 @@",
-      "-before",
-      "+after",
+describe("buildFileDiffContentSignature", () => {
+  const patchWith = (aBody: string[], bBody: string[]) =>
+    [
+      "diff --git a/a.ts b/a.ts",
+      "--- a/a.ts",
+      "+++ b/a.ts",
+      `@@ -1,${aBody.length} +1,${aBody.length} @@`,
+      ...aBody,
+      "diff --git a/b.ts b/b.ts",
+      "--- a/b.ts",
+      "+++ b/b.ts",
+      `@@ -1,${bBody.length} +1,${bBody.length} @@`,
+      ...bBody,
     ].join("\n");
-    const parsed = getRenderablePatch(patch, "hydrated-key");
-    expect(parsed?.kind).toBe("files");
-    if (parsed?.kind !== "files") return;
 
-    const file = parsed.files[0];
-    expect(file).toBeDefined();
-    if (!file) return;
-    const key = buildFileDiffRenderKey(file);
-    file.cacheKey = `${file.cacheKey}:hydrated`;
+  const filesFrom = (patch: string) => {
+    const parsed = getRenderablePatch(patch);
+    if (parsed?.kind !== "files") throw new Error("expected files");
+    return parsed.files;
+  };
 
-    expect(buildFileDiffRenderKey(file)).toBe(key);
+  it("stays stable for a file when a different file in the patch changes", () => {
+    const before = filesFrom(patchWith(["-alpha", "+beta"], ["-one", "+two"]));
+    const after = filesFrom(patchWith(["-alpha", "+beta"], ["-one", "+three"]));
+
+    // a.ts is unchanged between the two patches, so both its content signature
+    // and virtualized item identity must remain stable.
+    expect(buildFileDiffContentSignature(after[0]!)).toBe(
+      buildFileDiffContentSignature(before[0]!),
+    );
+    expect(buildFileDiffRenderKey(after[0]!)).toBe(buildFileDiffRenderKey(before[0]!));
+
+    // b.ts changed, so its signature must move.
+    expect(buildFileDiffContentSignature(after[1]!)).not.toBe(
+      buildFileDiffContentSignature(before[1]!),
+    );
   });
 
-  it("keeps identities stable and versions local to the changed file", () => {
-    const patch = (secondLine: string) =>
-      [
-        "diff --git a/unchanged.ts b/unchanged.ts",
-        "--- a/unchanged.ts",
-        "+++ b/unchanged.ts",
-        "@@ -1 +1 @@",
-        "-before",
-        "+after",
-        "diff --git a/changed.ts b/changed.ts",
-        "--- a/changed.ts",
-        "+++ b/changed.ts",
-        "@@ -1 +1 @@",
-        "-old",
-        `+${secondLine}`,
-      ].join("\n");
-    const before = getRenderablePatch(patch("new"), "before");
-    const after = getRenderablePatch(patch("newer"), "after");
-    expect(before?.kind).toBe("files");
-    expect(after?.kind).toBe("files");
-    if (before?.kind !== "files" || after?.kind !== "files") return;
+  it("changes when the file's own content changes", () => {
+    const before = filesFrom(patchWith(["-alpha", "+beta"], ["-one", "+two"]));
+    const after = filesFrom(patchWith(["-alpha", "+gamma"], ["-one", "+two"]));
 
-    const [beforeUnchanged, beforeChanged] = before.files;
-    const [afterUnchanged, afterChanged] = after.files;
-    expect(beforeUnchanged).toBeDefined();
-    expect(beforeChanged).toBeDefined();
-    expect(afterUnchanged).toBeDefined();
-    expect(afterChanged).toBeDefined();
-    if (!beforeUnchanged || !beforeChanged || !afterUnchanged || !afterChanged) return;
-
-    expect(buildFileDiffIdentityKey(afterUnchanged)).toBe(
-      buildFileDiffIdentityKey(beforeUnchanged),
+    expect(buildFileDiffContentSignature(after[0]!)).not.toBe(
+      buildFileDiffContentSignature(before[0]!),
     );
-    expect(buildFileDiffIdentityKey(afterChanged)).toBe(buildFileDiffIdentityKey(beforeChanged));
-    expect(buildFileDiffContentVersion(afterUnchanged)).toBe(
-      buildFileDiffContentVersion(beforeUnchanged),
-    );
-    expect(buildFileDiffContentVersion(afterChanged)).not.toBe(
-      buildFileDiffContentVersion(beforeChanged),
-    );
+    expect(buildFileDiffRenderKey(after[0]!)).toBe(buildFileDiffRenderKey(before[0]!));
   });
 });
 

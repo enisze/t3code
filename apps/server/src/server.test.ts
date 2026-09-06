@@ -137,6 +137,7 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -145,6 +146,7 @@ import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
+import * as ProjectWorktreeFileCopier from "./project/ProjectWorktreeFileCopier.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
@@ -315,6 +317,11 @@ const makeDefaultOrchestrationReadModel = () => {
         title: "Default Project",
         workspaceRoot: "/tmp/default-project",
         defaultModelSelection,
+        gitHubAccount: null,
+        worktreeBranchPrefix: null,
+        defaultWorktreeBranch: null,
+        previewPort: null,
+        worktreeCopyFiles: [],
         scripts: [],
         createdAt: now,
         updatedAt: now,
@@ -521,6 +528,9 @@ const buildAppUnderTest = (options?: {
     >;
     providerSessionDirectory?: Partial<
       ProviderSessionDirectory.ProviderSessionDirectory["Service"]
+    >;
+    projectWorktreeFileCopier?: Partial<
+      ProjectWorktreeFileCopier.ProjectWorktreeFileCopier["Service"]
     >;
     terminalManager?: Partial<TerminalManager.TerminalManager["Service"]>;
     orchestrationEngine?: Partial<OrchestrationEngine.OrchestrationEngineService["Service"]>;
@@ -901,15 +911,24 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provideMerge(vcsStatusBroadcasterLayer),
       Layer.provide(
-        Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
-          runForThread: () => Effect.succeed({ status: "no-script" as const }),
-          ...options?.layers?.projectSetupScriptRunner,
-        }),
+        Layer.mergeAll(
+          Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
+            runForThread: () => Effect.succeed({ status: "no-script" as const }),
+            ...options?.layers?.projectSetupScriptRunner,
+          }),
+          Layer.mock(ProjectWorktreeFileCopier.ProjectWorktreeFileCopier)({
+            copyForThread: () => Effect.succeed({ entries: [], copiedCount: 0 }),
+            ...options?.layers?.projectWorktreeFileCopier,
+          }),
+        ),
       ),
       Layer.provide(
-        Layer.mock(TerminalManager.TerminalManager)({
-          ...options?.layers?.terminalManager,
-        }),
+        Layer.mergeAll(
+          Layer.mock(TerminalManager.TerminalManager)({
+            ...options?.layers?.terminalManager,
+          }),
+          Layer.mock(TextGeneration.TextGeneration)({}),
+        ),
       ),
       Layer.provide(
         Layer.mergeAll(
@@ -970,6 +989,7 @@ const buildAppUnderTest = (options?: {
               threads: [],
               updatedAt: "1970-01-01T00:00:00.000Z",
             }),
+          listAccountRoutes: () => Effect.die("unused"),
           getArchivedShellSnapshot: () =>
             Effect.succeed({
               snapshotSequence: 0,
@@ -990,6 +1010,7 @@ const buildAppUnderTest = (options?: {
               payloadBytes: 0,
             }),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+          getDefaultModelSelectionForCwd: () => Effect.succeed(Option.none()),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
           getImportedAgentSessionSources: () => Effect.succeed([]),
           getThreadCheckpointContext: () => Effect.succeed(Option.none()),
@@ -8051,6 +8072,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             title: "Project A",
             workspaceRoot: "/tmp/project-a",
             defaultModelSelection,
+            gitHubAccount: null,
+            worktreeBranchPrefix: null,
+            defaultWorktreeBranch: null,
+            previewPort: null,
+            worktreeCopyFiles: [],
             scripts: [],
             createdAt: now,
             updatedAt: now,

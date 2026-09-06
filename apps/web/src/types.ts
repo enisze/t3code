@@ -2,6 +2,7 @@ import type {
   ChatFileAttachment as ContractChatFileAttachment,
   ChatImageAttachment as ContractChatImageAttachment,
   ChatUnknownAttachment as ContractChatUnknownAttachment,
+  ChatDocumentAttachment as ContractChatDocumentAttachment,
   OrchestrationCheckpointFile,
   OrchestrationCheckpointSummary,
   OrchestrationLatestTurn,
@@ -40,40 +41,12 @@ export interface ChatImageAttachment extends ContractChatImageAttachment {
   readonly previewUrl?: string;
 }
 
-export interface ChatFileAttachment extends ContractChatFileAttachment {
+export interface ChatDocumentAttachment extends ContractChatDocumentAttachment {
+  /** Signed asset URL the document's bytes can be re-read from. */
   readonly previewUrl?: string;
-  readonly downloadable?: boolean;
 }
 
-// Attachment types this build does not know pass through with the contract
-// shape. The UI renders them as inert rows so a newer server cannot crash an
-// older client.
-export type ChatUnknownAttachment = ContractChatUnknownAttachment;
-
-export type ChatAttachment = ChatImageAttachment | ChatFileAttachment | ChatUnknownAttachment;
-
-// The union has an open member (`type: string`), so a literal comparison does
-// not narrow. Use these guards wherever type-specific fields are read.
-export function isImageAttachment(attachment: ChatAttachment): attachment is ChatImageAttachment {
-  return attachment.type === "image";
-}
-
-export function isFileAttachment(attachment: ChatAttachment): attachment is ChatFileAttachment {
-  return attachment.type === "file";
-}
-
-export function isVideoAttachment(attachment: ChatFileAttachment): boolean {
-  return videoMimeType(attachment) !== null;
-}
-
-export function isBrowserPreviewAttachment(attachment: ChatFileAttachment): boolean {
-  const mimeType = attachment.mimeType.split(";", 1)[0]?.trim().toLowerCase();
-  return (
-    /\.(?:html?|pdf)$/i.test(attachment.name) ||
-    mimeType === "application/pdf" ||
-    mimeType === "text/html"
-  );
-}
+export type ChatAttachment = ChatImageAttachment | ChatDocumentAttachment;
 
 export interface ChatMessage extends Omit<OrchestrationMessage, "attachments"> {
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;

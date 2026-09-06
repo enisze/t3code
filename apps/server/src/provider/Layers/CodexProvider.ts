@@ -42,6 +42,7 @@ import {
   type CodexRateLimitSnapshot,
   type CodexResetCreditsSummary,
 } from "./codexUsageLimits.ts";
+import { normalizeCodexRateLimits } from "../providerUsage.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
 const RATE_LIMITS_PROBE_TIMEOUT_MS = 3_000;
@@ -66,6 +67,7 @@ export interface CodexAppServerProviderSnapshot {
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
+  readonly rateLimits?: CodexSchema.V2GetAccountRateLimitsResponse | undefined;
 }
 
 const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
@@ -448,6 +450,10 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
           ),
         ),
       ),
+      // Best-effort: never fail the probe if the usage lookup is unavailable.
+      client
+        .request("account/rateLimits/read", undefined)
+        .pipe(Effect.orElseSucceed(() => undefined)),
     ],
     { concurrency: "unbounded" },
   );
@@ -460,6 +466,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       appendCustomCodexModels(models, input.customModels ?? []),
     ),
     skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
+    rateLimits,
   } satisfies CodexAppServerProviderSnapshot;
 });
 
@@ -655,6 +662,9 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
             resetCredits: snapshot.rateLimits.resetCredits,
             checkedAt,
           });
+  const usage = snapshot.rateLimits
+    ? (normalizeCodexRateLimits(snapshot.rateLimits, checkedAt) ?? undefined)
+    : undefined;
 
   return buildServerProvider({
     presentation: CODEX_PRESENTATION,
@@ -670,6 +680,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         input: { hint: "Describe the issue (optional)" },
       },
     ],
+    ...(usage ? { usage } : {}),
     probe: {
       installed: true,
       version: snapshot.version ?? null,

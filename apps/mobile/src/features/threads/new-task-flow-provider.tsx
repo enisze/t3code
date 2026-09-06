@@ -289,6 +289,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       workspaceRoot: creation.projectCwd ?? "",
       repositoryIdentity: null,
       defaultModelSelection: editingPendingTask.modelSelection ?? null,
+      gitHubAccount: null,
+      worktreeBranchPrefix: null,
+      defaultWorktreeBranch: null,
       scripts: [],
       createdAt: editingPendingTask.createdAt,
       updatedAt: editingPendingTask.createdAt,
@@ -795,6 +798,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     // The default may only exist as origin/<default> (isRemote), which
     // availableBranches filters out — search the unfiltered refs for it.
     const preferredBranch =
+      allBranchRefs.find((branch) => branch.name === selectedProject?.defaultWorktreeBranch) ??
       allBranchRefs.find((branch) => branch.isDefault) ??
       availableBranches.find((branch) => branch.current) ??
       null;
@@ -804,9 +808,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   }, [
     allBranchRefs,
     availableBranches,
-    defaultWorkspaceModeSettled,
     selectBranch,
     selectedBranchName,
+    selectedProject?.defaultWorktreeBranch,
     workspaceMode,
   ]);
 

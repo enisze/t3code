@@ -3,6 +3,7 @@ import {
   ApprovalRequestId,
   ChatAttachment,
   CheckpointRef,
+  GitHubAccountRef,
   IsoDateTime,
   MessageId,
   NonNegativeInt,
@@ -15,6 +16,7 @@ import {
   OrchestrationThreadDetailSnapshot,
   ProjectScript,
   ProjectIconOverride,
+  ProjectWorktreeCopyFiles,
   TurnId,
   type OrchestrationCheckpointSummary,
   type OrchestrationLatestTurn,
@@ -99,7 +101,10 @@ const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
     autoPull: Schema.Number,
     projectIcon: Schema.NullOr(Schema.fromJsonString(ProjectIconOverride)),
+    reviewModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
+    gitHubAccount: Schema.NullOr(Schema.fromJsonString(GitHubAccountRef)),
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
+    worktreeCopyFiles: Schema.fromJsonString(ProjectWorktreeCopyFiles),
   }),
 );
 const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
@@ -383,6 +388,12 @@ function mapProjectShellRow(
     autoPull: row.autoPull === 1,
     faviconPath: row.faviconPath ?? null,
     projectIcon: row.projectIcon ?? null,
+    reviewModelSelection: row.reviewModelSelection,
+    gitHubAccount: row.gitHubAccount,
+    worktreeBranchPrefix: row.worktreeBranchPrefix,
+    defaultWorktreeBranch: row.defaultWorktreeBranch,
+    previewPort: row.previewPort,
+    worktreeCopyFiles: row.worktreeCopyFiles,
     scripts: row.scripts,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -416,6 +427,27 @@ function mapThreadActivityRow(
     createdAt: row.createdAt,
     ...(row.sequence !== null ? { sequence: row.sequence } : {}),
   };
+}
+
+const ProjectionAccountRouteRowSchema = Schema.Struct({
+  path: Schema.String,
+  account: Schema.fromJsonString(GitHubAccountRef),
+});
+
+const ProjectionModelSelectionRouteRowSchema = Schema.Struct({
+  path: Schema.String,
+  modelSelection: Schema.fromJsonString(ModelSelection),
+});
+
+/**
+ * True when `cwd` is `base` itself or lives beneath it. Compares normalized,
+ * separator-terminated paths so `/a/repo` does not match `/a/repo-2`.
+ */
+function isPathWithin(cwd: string, base: string): boolean {
+  if (base.length === 0) return false;
+  const normalizedBase = base.replace(/[/\\]+$/, "");
+  if (cwd === normalizedBase) return true;
+  return cwd.startsWith(`${normalizedBase}/`) || cwd.startsWith(`${normalizedBase}\\`);
 }
 
 function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
@@ -477,12 +509,69 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           auto_pull AS "autoPull",
           favicon_path AS "faviconPath",
           project_icon_json AS "projectIcon",
+          review_model_selection_json AS "reviewModelSelection",
+          github_account_json AS "gitHubAccount",
+          worktree_branch_prefix AS "worktreeBranchPrefix",
+          default_worktree_branch AS "defaultWorktreeBranch",
+          preview_port AS "previewPort",
+          COALESCE(worktree_copy_files_json, '[]') AS "worktreeCopyFiles",
           scripts_json AS "scripts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
         FROM projection_projects
         ORDER BY created_at ASC, project_id ASC
+      `,
+  });
+
+  const listAccountRouteRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionAccountRouteRowSchema,
+    // Union of project workspace roots and thread worktree paths that have an
+    // account attached. Threads are NOT filtered by archived_at — an archived
+    // thread's worktree still exists on disk, and a git/gh command run there
+    // must resolve to its project's account rather than silently using the
+    // machine's active account.
+    execute: () =>
+      sql`
+        SELECT workspace_root AS "path", github_account_json AS "account"
+        FROM projection_projects
+        WHERE deleted_at IS NULL
+          AND github_account_json IS NOT NULL
+        UNION ALL
+        SELECT threads.worktree_path AS "path", projects.github_account_json AS "account"
+        FROM projection_threads AS threads
+        INNER JOIN projection_projects AS projects
+          ON projects.project_id = threads.project_id
+        WHERE threads.deleted_at IS NULL
+          AND threads.worktree_path IS NOT NULL
+          AND projects.deleted_at IS NULL
+          AND projects.github_account_json IS NOT NULL
+      `,
+  });
+
+  const listModelSelectionRouteRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionModelSelectionRouteRowSchema,
+    // Union of project workspace roots and thread worktree paths for projects
+    // that have a default model selection configured. Threads are NOT filtered
+    // by archived_at — an archived thread's worktree still exists on disk, and a
+    // git/gh command run there must resolve to its project's model selection.
+    execute: () =>
+      sql`
+        SELECT workspace_root AS "path", default_model_selection_json AS "modelSelection"
+        FROM projection_projects
+        WHERE deleted_at IS NULL
+          AND default_model_selection_json IS NOT NULL
+        UNION ALL
+        SELECT threads.worktree_path AS "path", projects.default_model_selection_json AS "modelSelection"
+        FROM projection_threads AS threads
+        INNER JOIN projection_projects AS projects
+          ON projects.project_id = threads.project_id
+        WHERE threads.deleted_at IS NULL
+          AND threads.worktree_path IS NOT NULL
+          AND projects.deleted_at IS NULL
+          AND projects.default_model_selection_json IS NOT NULL
       `,
   });
 
@@ -957,6 +1046,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           auto_pull AS "autoPull",
           favicon_path AS "faviconPath",
           project_icon_json AS "projectIcon",
+          review_model_selection_json AS "reviewModelSelection",
+          github_account_json AS "gitHubAccount",
+          worktree_branch_prefix AS "worktreeBranchPrefix",
+          default_worktree_branch AS "defaultWorktreeBranch",
+          preview_port AS "previewPort",
+          COALESCE(worktree_copy_files_json, '[]') AS "worktreeCopyFiles",
           scripts_json AS "scripts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -983,6 +1078,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           auto_pull AS "autoPull",
           favicon_path AS "faviconPath",
           project_icon_json AS "projectIcon",
+          review_model_selection_json AS "reviewModelSelection",
+          github_account_json AS "gitHubAccount",
+          worktree_branch_prefix AS "worktreeBranchPrefix",
+          default_worktree_branch AS "defaultWorktreeBranch",
+          preview_port AS "previewPort",
+          COALESCE(worktree_copy_files_json, '[]') AS "worktreeCopyFiles",
           scripts_json AS "scripts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -2052,6 +2153,12 @@ pending_approval_requests AS (
                 autoPull: row.autoPull === 1,
                 faviconPath: row.faviconPath ?? null,
                 projectIcon: row.projectIcon ?? null,
+                reviewModelSelection: row.reviewModelSelection,
+                gitHubAccount: row.gitHubAccount,
+                worktreeBranchPrefix: row.worktreeBranchPrefix,
+                defaultWorktreeBranch: row.defaultWorktreeBranch,
+                previewPort: row.previewPort,
+                worktreeCopyFiles: row.worktreeCopyFiles,
                 scripts: row.scripts,
                 createdAt: row.createdAt,
                 updatedAt: row.updatedAt,
@@ -2190,6 +2297,12 @@ pending_approval_requests AS (
                   autoPull: row.autoPull === 1,
                   faviconPath: row.faviconPath ?? null,
                   projectIcon: row.projectIcon ?? null,
+                  reviewModelSelection: row.reviewModelSelection,
+                  gitHubAccount: row.gitHubAccount,
+                  worktreeBranchPrefix: row.worktreeBranchPrefix,
+                  defaultWorktreeBranch: row.defaultWorktreeBranch,
+                  previewPort: row.previewPort,
+                  worktreeCopyFiles: row.worktreeCopyFiles,
                   scripts: row.scripts,
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
@@ -2710,6 +2823,12 @@ pending_approval_requests AS (
                     autoPull: option.value.autoPull === 1,
                     faviconPath: option.value.faviconPath ?? null,
                     projectIcon: option.value.projectIcon ?? null,
+                    reviewModelSelection: option.value.reviewModelSelection,
+                    gitHubAccount: option.value.gitHubAccount,
+                    worktreeBranchPrefix: option.value.worktreeBranchPrefix,
+                    defaultWorktreeBranch: option.value.defaultWorktreeBranch,
+                    previewPort: option.value.previewPort,
+                    worktreeCopyFiles: option.value.worktreeCopyFiles,
                     scripts: option.value.scripts,
                     createdAt: option.value.createdAt,
                     updatedAt: option.value.updatedAt,
@@ -3386,6 +3505,41 @@ pending_approval_requests AS (
         ),
       );
 
+  const listAccountRoutes: ProjectionSnapshotQueryShape["listAccountRoutes"] = () =>
+    listAccountRouteRows(undefined).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.listAccountRoutes:query",
+          "ProjectionSnapshotQuery.listAccountRoutes:decodeRows",
+        ),
+      ),
+    );
+
+  const getDefaultModelSelectionForCwd: ProjectionSnapshotQueryShape["getDefaultModelSelectionForCwd"] =
+    (cwd) =>
+      listModelSelectionRouteRows(undefined).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.getDefaultModelSelectionForCwd:query",
+            "ProjectionSnapshotQuery.getDefaultModelSelectionForCwd:decodeRows",
+          ),
+        ),
+        Effect.map((routes) => {
+          let bestPathLength = -1;
+          let bestSelection: ModelSelection | null = null;
+          for (const route of routes) {
+            if (!isPathWithin(cwd, route.path)) continue;
+            if (route.path.length > bestPathLength) {
+              bestPathLength = route.path.length;
+              bestSelection = route.modelSelection;
+            }
+          }
+          return bestSelection === null
+            ? Option.none<ModelSelection>()
+            : Option.some(bestSelection);
+        }),
+      );
+
   return {
     getCommandReadModel,
     getUserInputActivity,
@@ -3393,10 +3547,12 @@ pending_approval_requests AS (
     getShellSnapshot,
     getArchivedShellSnapshot,
     searchThreads,
+    listAccountRoutes,
     getSnapshotSequence,
     getCounts,
     getEventReplayStats,
     getActiveProjectByWorkspaceRoot,
+    getDefaultModelSelectionForCwd,
     getProjectShellById,
     getFirstActiveThreadIdByProjectId,
     getImportedAgentSessionSources,

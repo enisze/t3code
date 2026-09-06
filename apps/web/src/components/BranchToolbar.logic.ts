@@ -1,17 +1,15 @@
-import type { EnvironmentId, EnvironmentMachineKind, VcsRef, ProjectId } from "@t3tools/contracts";
+import type { EnvironmentId, VcsRef, ProjectId } from "@t3tools/contracts";
+import { deriveLocalBranchNameFromRemoteRef, stripRemoteRefPrefix } from "@t3tools/shared/git";
 import * as Schema from "effect/Schema";
 import { toSortableTimestamp } from "../lib/threadSort";
-export {
-  dedupeRemoteBranchesWithLocalMatches,
-  deriveLocalBranchNameFromRemoteRef,
-} from "@t3tools/shared/git";
+export { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
+export { deriveLocalBranchNameFromRemoteRef };
 
 export interface EnvironmentOption {
   environmentId: EnvironmentId;
   projectId: ProjectId;
   label: string;
   isPrimary: boolean;
-  machine: EnvironmentMachineKind;
 }
 
 export const EnvMode = Schema.Literals(["local", "worktree"]);
@@ -53,33 +51,6 @@ export function shouldShowEnvironmentIndicator(input: {
 }): boolean {
   if (input.canPickEnvironment) return true;
   return input.activeEnvironment !== null && !input.activeEnvironment.isPrimary;
-}
-
-export function shouldShowComposerContextStrip(input: {
-  hasActiveProject: boolean;
-  isGitRepo: boolean;
-  showEnvironmentIndicator: boolean;
-  /** A collapsed composer's controls currently fit in their measured strip host. */
-  hostsRestingComposerControls: boolean;
-}): boolean {
-  return (
-    input.hasActiveProject &&
-    (input.isGitRepo || input.showEnvironmentIndicator || input.hostsRestingComposerControls)
-  );
-}
-
-// Labels collapse to icons when the strip's content no longer fits. A small
-// hysteresis on the way back out keeps the boundary from flapping.
-const CONTEXT_STRIP_COMPACT_EXPAND_HYSTERESIS_PX = 16;
-
-export function resolveContextStripLabelsCompact(input: {
-  compact: boolean;
-  neededWidth: number;
-  availableWidth: number;
-}): boolean {
-  return input.compact
-    ? input.neededWidth > input.availableWidth - CONTEXT_STRIP_COMPACT_EXPAND_HYSTERESIS_PX
-    : input.neededWidth > input.availableWidth;
 }
 
 export function resolveEnvModeLabel(mode: EnvMode): string {
@@ -263,17 +234,49 @@ export function resolveBranchSelectionTarget(input: {
   };
 }
 
-// Git rejects ASCII space and the ASCII control characters (tab, newline and
-// friends) in ref names, so the picker's "Create new ref" entry can only fail
-// for a typed name like "new branch". Replacing runs of those with a dash makes
-// the name usable without reimplementing check-ref-format: names invalid for
-// other reasons still surface the git error. Only the whitespace git actually
-// rejects is replaced — git accepts U+00A0 and friends, and rewriting those
-// would silently create a ref the user never asked for. Case and existing
-// dashes are left alone, since ref names are case sensitive and consecutive
-// dashes are valid.
-export function sanitizeNewRefName(rawName: string): string {
-  return rawName.trim().replace(/[ \t\n\r\f\v]+/g, "-");
+export function resolveExactBranchWorktreeInput(input: {
+  activeProjectCwd: string;
+  ref: Pick<VcsRef, "name" | "isRemote" | "remoteName" | "worktreePath">;
+}):
+  | { kind: "reuse"; branch: string; worktreePath: string | null }
+  | {
+      kind: "create";
+      cwd: string;
+      refName: string;
+      newRefName?: string;
+      path: null;
+    } {
+  const { activeProjectCwd, ref } = input;
+  // A branch already checked out somewhere can never get a second worktree —
+  // `git worktree add` aborts with "already checked out". Reuse the existing
+  // checkout instead: a secondary worktree as-is, the primary checkout as the
+  // local workspace (worktreePath null).
+  if (ref.worktreePath) {
+    return {
+      kind: "reuse",
+      branch: ref.name,
+      worktreePath: ref.worktreePath === activeProjectCwd ? null : ref.worktreePath,
+    };
+  }
+  if (ref.isRemote) {
+    return {
+      kind: "create",
+      cwd: activeProjectCwd,
+      refName: ref.name,
+      // The ref's own remote is the only prefix worth stripping; falling back to
+      // the first segment covers refs listed without a parsed remote name.
+      newRefName: ref.remoteName
+        ? stripRemoteRefPrefix(ref.name, ref.remoteName)
+        : deriveLocalBranchNameFromRemoteRef(ref.name),
+      path: null,
+    };
+  }
+  return {
+    kind: "create",
+    cwd: activeProjectCwd,
+    refName: ref.name,
+    path: null,
+  };
 }
 
 export function shouldIncludeBranchPickerItem(input: {
@@ -296,18 +299,5 @@ export function shouldIncludeBranchPickerItem(input: {
     return true;
   }
 
-  const lowerItemValue = itemValue.toLowerCase();
-  if (lowerItemValue.includes(normalizedQuery)) {
-    return true;
-  }
-
-  // A query containing whitespace can only ever match a ref under its sanitized
-  // name, because that is the name such a ref would have been created with.
-  // Without this, typing "new branch" hides an existing "new-branch".
-  const sanitizedQuery = sanitizeNewRefName(normalizedQuery);
-  return (
-    sanitizedQuery.length > 0 &&
-    sanitizedQuery !== normalizedQuery &&
-    lowerItemValue.includes(sanitizedQuery)
-  );
+  return itemValue.toLowerCase().includes(normalizedQuery);
 }

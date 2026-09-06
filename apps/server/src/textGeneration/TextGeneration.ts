@@ -73,6 +73,32 @@ export interface ThreadTitleGenerationResult {
   title: string;
 }
 
+export interface ContinuationSummaryGenerationInput {
+  cwd: string;
+  /** Title of the finished chat being continued from. */
+  sourceTitle: string;
+  /** Windowed role-tagged transcript of the finished conversation. */
+  transcript: string;
+  /** What model and provider to use for generation. */
+  modelSelection: ModelSelection;
+}
+
+export interface ContinuationSummaryGenerationResult {
+  summary: string;
+}
+
+export interface TextGenerationService {
+  generateCommitMessage(
+    input: CommitMessageGenerationInput,
+  ): Promise<CommitMessageGenerationResult>;
+  generatePrContent(input: PrContentGenerationInput): Promise<PrContentGenerationResult>;
+  generateBranchName(input: BranchNameGenerationInput): Promise<BranchNameGenerationResult>;
+  generateThreadTitle(input: ThreadTitleGenerationInput): Promise<ThreadTitleGenerationResult>;
+  generateContinuationSummary(
+    input: ContinuationSummaryGenerationInput,
+  ): Promise<ContinuationSummaryGenerationResult>;
+}
+
 /**
  * TextGeneration - Service tag for commit and change request text generation.
  */
@@ -104,6 +130,14 @@ export class TextGeneration extends Context.Service<
     readonly generateThreadTitle: (
       input: ThreadTitleGenerationInput,
     ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+    /**
+     * Generate a compact handoff brief that lets a fresh session continue a
+     * finished (merged) chat's work.
+     */
+    readonly generateContinuationSummary: (
+      input: ContinuationSummaryGenerationInput,
+    ) => Effect.Effect<ContinuationSummaryGenerationResult, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
 
@@ -111,7 +145,8 @@ type TextGenerationOp =
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
-  | "generateThreadTitle";
+  | "generateThreadTitle"
+  | "generateContinuationSummary";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -151,6 +186,12 @@ export const makeTextGenerationFromRegistry = (
       resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generateThreadTitle(input)),
       ),
+    generateContinuationSummary: (input) =>
+      resolveInstance(
+        registry,
+        "generateContinuationSummary",
+        input.modelSelection.instanceId,
+      ).pipe(Effect.flatMap((textGeneration) => textGeneration.generateContinuationSummary(input))),
   });
 
 export const make = Effect.gen(function* () {

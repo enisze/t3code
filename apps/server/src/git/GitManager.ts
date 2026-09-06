@@ -17,6 +17,7 @@ import {
   GitActionProgressEvent,
   GitActionProgressPhase,
   GitCommandError,
+  GitMergePullRequestResult,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
   GitPullRequestRefInput,
@@ -54,6 +55,7 @@ import {
   repositoryConventionsTextGenerationPolicy,
 } from "../textGeneration/TextGenerationPresets.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import * as ProjectWorktreeFileCopier from "../project/ProjectWorktreeFileCopier.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -70,6 +72,14 @@ export interface GitActionProgressReporter {
 export interface GitRunStackedActionOptions {
   readonly actionId?: string;
   readonly progressReporter?: GitActionProgressReporter;
+  /**
+   * The owning project's configured model/account, resolved by the caller from
+   * the action's `cwd`. When set (and its provider instance is usable), it is
+   * preferred over the server-wide source-control writer selection for commit
+   * message / PR / branch text generation, so generation runs on the same
+   * account the project's agents use.
+   */
+  readonly projectModelSelection?: ModelSelection | null;
 }
 
 export interface GitRemoteStatusOptions extends GitVcsDriver.GitRemoteStatusOptions {
@@ -113,6 +123,9 @@ export class GitManager extends Context.Service<
     readonly resolvePullRequest: (
       input: GitPullRequestRefInput,
     ) => Effect.Effect<GitResolvePullRequestResult, GitManagerServiceError>;
+    readonly mergePullRequest: (
+      input: GitPullRequestRefInput,
+    ) => Effect.Effect<GitMergePullRequestResult, GitManagerServiceError>;
     readonly preparePullRequestThread: (
       input: GitPreparePullRequestThreadInput,
     ) => Effect.Effect<GitPreparePullRequestThreadResult, GitManagerServiceError>;
@@ -177,6 +190,10 @@ interface PullRequestInfo extends OpenPrInfo, PullRequestHeadRemoteInfo {
   isDraft?: boolean;
   closedAt?: string | null;
   mergedAt?: string | null;
+  mergeability?: "clean" | "conflicting" | "blocked" | "unknown";
+  checks?: "passing" | "failing" | "pending" | "unknown";
+  failedCheckCount?: number;
+  unresolvedReviewThreadCount?: number;
   updatedAt: Option.Option<DateTime.Utc>;
 }
 
@@ -433,6 +450,16 @@ function toPullRequestInfo(summary: ChangeRequest): PullRequestInfo {
     closedAt: summary.closedAt ?? null,
     mergedAt: summary.mergedAt ?? null,
     updatedAt: summary.updatedAt,
+    // Merge/review state drives the merge button, so it has to survive the hop
+    // from the provider's change request into the status payload.
+    ...(summary.mergeability ? { mergeability: summary.mergeability } : {}),
+    ...(summary.checks ? { checks: summary.checks } : {}),
+    ...(summary.failedCheckCount !== undefined
+      ? { failedCheckCount: summary.failedCheckCount }
+      : {}),
+    ...(summary.unresolvedReviewThreadCount !== undefined
+      ? { unresolvedReviewThreadCount: summary.unresolvedReviewThreadCount }
+      : {}),
     ...(summary.isCrossRepository !== undefined
       ? { isCrossRepository: summary.isCrossRepository }
       : {}),
@@ -588,6 +615,10 @@ function toStatusPr(pr: PullRequestInfo): {
   state: "open" | "closed" | "merged";
   isDraft?: boolean;
   updatedAt: string | null;
+  mergeability?: "clean" | "conflicting" | "blocked" | "unknown";
+  checks?: "passing" | "failing" | "pending" | "unknown";
+  failedCheckCount?: number;
+  unresolvedReviewThreadCount?: number;
 } {
   return {
     number: pr.number,
@@ -601,6 +632,12 @@ function toStatusPr(pr: PullRequestInfo): {
       onNone: () => null,
       onSome: (updatedAt) => DateTime.formatIso(updatedAt),
     }),
+    ...(pr.mergeability ? { mergeability: pr.mergeability } : {}),
+    ...(pr.checks ? { checks: pr.checks } : {}),
+    ...(pr.failedCheckCount !== undefined ? { failedCheckCount: pr.failedCheckCount } : {}),
+    ...(pr.unresolvedReviewThreadCount !== undefined
+      ? { unresolvedReviewThreadCount: pr.unresolvedReviewThreadCount }
+      : {}),
   };
 }
 
@@ -655,6 +692,7 @@ export const make = Effect.gen(function* () {
   const textGeneration = yield* TextGeneration.TextGeneration;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+  const projectWorktreeFileCopier = yield* ProjectWorktreeFileCopier.ProjectWorktreeFileCopier;
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -1912,6 +1950,7 @@ export const make = Effect.gen(function* () {
     cwd: string,
     fallbackBranch: string | null,
     emit: GitActionProgressEmitter,
+    preferredBaseBranch?: string,
   ) {
     const provider = yield* sourceControlProvider(cwd);
     const terms = getChangeRequestTerminologyForKind(provider.kind);
@@ -1949,7 +1988,9 @@ export const make = Effect.gen(function* () {
       };
     }
 
-    const baseBranch = yield* resolveBaseBranch(cwd, branch, details.upstreamRef, headContext);
+    const baseBranch =
+      preferredBaseBranch ??
+      (yield* resolveBaseBranch(cwd, branch, details.upstreamRef, headContext));
     yield* emit({
       kind: "phase_started",
       phase: "pr",
@@ -2233,9 +2274,47 @@ export const make = Effect.gen(function* () {
     return { pullRequest };
   });
 
+  const mergePullRequest: GitManager["Service"]["mergePullRequest"] = Effect.fn("mergePullRequest")(
+    function* (input) {
+      const normalizedReference = normalizePullRequestReference(input.reference);
+      const provider = yield* sourceControlProvider(input.cwd);
+      const resolved = yield* provider
+        .getChangeRequest({ cwd: input.cwd, reference: normalizedReference })
+        .pipe(Effect.map((changeRequest) => toResolvedPullRequest(changeRequest)));
+
+      return yield* provider
+        .mergeChangeRequest({ cwd: input.cwd, reference: normalizedReference })
+        .pipe(
+          Effect.as({ pullRequest: { ...resolved, state: "merged" as const } }),
+          Effect.ensuring(invalidateStatus(input.cwd)),
+        );
+    },
+  );
+
   const preparePullRequestThread: GitManager["Service"]["preparePullRequestThread"] = Effect.fn(
     "preparePullRequestThread",
   )(function* (input) {
+    const maybeCopyProjectFiles = (worktreePath: string) => {
+      if (!input.threadId) {
+        return Effect.void;
+      }
+      return projectWorktreeFileCopier
+        .copyForThread({
+          threadId: input.threadId,
+          projectCwd: input.cwd,
+          worktreePath,
+        })
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("GitManager.preparePullRequestThread file copy failed", {
+              threadId: input.threadId,
+              worktreePath,
+              cause: error,
+            }).pipe(Effect.asVoid),
+          ),
+          Effect.asVoid,
+        );
+    };
     const maybeRunSetupScript = (worktreePath: string) => {
       if (!input.threadId) {
         return Effect.void;
@@ -2487,6 +2566,7 @@ export const make = Effect.gen(function* () {
         path: null,
       });
       yield* ensureExistingWorktreeUpstream(worktree.worktree.path);
+      yield* maybeCopyProjectFiles(worktree.worktree.path);
       yield* maybeRunSetupScript(worktree.worktree.path);
 
       return {
@@ -2525,7 +2605,12 @@ export const make = Effect.gen(function* () {
     const existingBranchNames = yield* gitCore.listLocalBranchNames(cwd);
     const resolvedBranch = resolveAutoFeatureBranchName(existingBranchNames, preferredBranch);
 
-    yield* gitCore.createRef({ cwd, refName: resolvedBranch });
+    yield* gitCore.createRef({
+      cwd,
+      refName: resolvedBranch,
+      // The branch we're forking from becomes the pull request's base.
+      ...(branch ? { baseRefName: branch } : {}),
+    });
     yield* Effect.scoped(gitCore.switchRef({ cwd, refName: resolvedBranch }));
 
     return {
@@ -2600,23 +2685,19 @@ export const make = Effect.gen(function* () {
         let commitMessageForStep = input.commitMessage;
         let preResolvedCommitSuggestion: CommitAndBranchSuggestion | undefined = undefined;
 
-        const textGenerationSettings = yield* serverSettingsService.getSettings.pipe(
-          Effect.flatMap((settings) =>
-            settings.sourceControlWriterModelSelection === null
-              ? Effect.succeed({
-                  modelSelection: settings.textGenerationModelSelection,
-                  style: settings.sourceControlWritingStyle,
-                })
-              : providerRegistry.getProviders.pipe(
-                  Effect.map((providers) => ({
-                    modelSelection: ServerSettings.resolveSourceControlWriterModelSelection(
-                      settings,
-                      providers,
-                    ),
-                    style: settings.sourceControlWritingStyle,
-                  })),
-                ),
-          ),
+        const textGenerationSettings = yield* Effect.all([
+          serverSettingsService.getSettings,
+          providerRegistry.getProviders,
+        ]).pipe(
+          Effect.map(([settings, providers]) => ({
+            modelSelection:
+              ServerSettings.resolveSourceControlWriterModelSelectionWithProjectPreference(
+                settings,
+                providers,
+                options?.projectModelSelection ?? null,
+              ),
+            style: settings.sourceControlWritingStyle,
+          })),
           Effect.mapError(
             (cause) =>
               new GitManagerError({
@@ -2699,7 +2780,13 @@ export const make = Effect.gen(function* () {
               .pipe(
                 Effect.tap(() => Ref.set(currentPhase, Option.some("pr"))),
                 Effect.flatMap(() =>
-                  runPrStep(textGenerationSettings, input.cwd, currentBranch, progress.emit),
+                  runPrStep(
+                    textGenerationSettings,
+                    input.cwd,
+                    currentBranch,
+                    progress.emit,
+                    input.baseBranch,
+                  ),
                 ),
               )
           : { status: "skipped_not_requested" as const };
@@ -2751,6 +2838,7 @@ export const make = Effect.gen(function* () {
     invalidateRemoteStatus,
     invalidateStatus,
     resolvePullRequest,
+    mergePullRequest,
     preparePullRequestThread,
     runStackedAction,
   });

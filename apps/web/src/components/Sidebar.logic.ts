@@ -1,91 +1,39 @@
 import * as React from "react";
-import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
-import {
-  isAtomCommandInterrupted,
-  type AtomCommandResult,
-} from "@t3tools/client-runtime/state/runtime";
 import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
-import type { AsyncResult } from "effect/unstable/reactivity";
 import {
-  activeThreadAnchorTimestampMs,
   getThreadSortTimestamp,
-  resolveSettledThreadTimestamp,
   sortThreads,
   toSortableTimestamp,
-  type SettledThreadTimestampInput,
   type ThreadSortInput,
 } from "../lib/threadSort";
 import type { SidebarThreadSummary, Thread } from "../types";
+import type { ThreadRouteTarget } from "../threadRoutes";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
+import { resolveServerBackedAppStageLabel } from "../branding.logic";
+import { worktreeActivityKey } from "../uiStateStore";
 
-const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
-export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
+export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
+export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // Visible sidebar rows are prewarmed into the thread-detail cache so opening a
-// nearby thread usually reuses an already-hot subscription. Each prewarmed
-// thread holds a live, fully hydrated detail subscription (all messages and
-// activities, growing as agents work) for as long as the row stays visible,
-// so this limit is a direct renderer-heap and server-load multiplier — keep
-// it small; cold opens still render instantly from the cached snapshot.
-const SIDEBAR_THREAD_PREWARM_LIMIT = 3;
-// A small buffer keeps the next few rows warm without leasing every row that
-// content-visibility leaves mounted below the scroll viewport.
-const SIDEBAR_ROW_SUBSCRIPTION_OVERSCAN_PX = 160;
+// nearby thread usually reuses an already-hot subscription.
+export const SIDEBAR_THREAD_PREWARM_LIMIT = 10;
 
-export function useSidebarRowSubscriptionLease(isActive: boolean): {
-  readonly leaseLiveStatus: boolean;
-  readonly rowRef: React.Dispatch<React.SetStateAction<HTMLElement | null>>;
-} {
-  const [row, setRow] = React.useState<HTMLElement | null>(null);
-  const [isNearViewport, setIsNearViewport] = React.useState(isActive);
-
-  React.useEffect(() => {
-    if (isActive) {
-      setIsNearViewport(true);
-      return;
-    }
-    if (row === null) return;
-    if (typeof IntersectionObserver === "undefined") {
-      setIsNearViewport(true);
-      return;
-    }
-
-    const scrollRoot = row.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
-    const observer = new IntersectionObserver(
-      ([entry]) => setIsNearViewport(entry?.isIntersecting === true),
-      {
-        root: scrollRoot,
-        rootMargin: `${SIDEBAR_ROW_SUBSCRIPTION_OVERSCAN_PX}px 0px`,
-      },
-    );
-    observer.observe(row);
-    return () => observer.disconnect();
-  }, [isActive, row]);
-
-  return {
-    leaseLiveStatus: isActive || isNearViewport,
-    rowRef: setRow,
-  };
+/**
+ * Dedicated worktrees may be checked out to another branch from inside a chat.
+ * Their live Git ref is authoritative for presentation; local-checkout threads
+ * keep their recorded branch so the existing branch-mismatch flow can restore it.
+ */
+export function resolveSidebarThreadBranch(input: {
+  worktreePath: string | null;
+  threadBranch: string | null;
+  currentGitBranch: string | null;
+}): string | null {
+  return input.worktreePath !== null
+    ? (input.currentGitBranch ?? input.threadBranch)
+    : input.threadBranch;
 }
-
-// A row keeps the last live value it rendered so a released lease never
-// blanks its badge. The value is bound to `key`, so a different worktree or
-// linked pull request cannot reuse the previous one.
-export function useRetainedValue<T>(key: string | null, value: T | null): T | null {
-  const retained = React.useRef<{ readonly key: string; readonly value: T } | null>(null);
-  if (key !== null && value !== null) {
-    retained.current = { key, value };
-  }
-  if (value !== null) return value;
-  return key !== null && retained.current?.key === key ? retained.current.value : null;
-}
-
-// The list already reaches its destination through sortable transforms while
-// the pointer is down. dnd-kit's default also animates the committed DOM order
-// after release, replaying the same movement across every affected row.
-export const animatePinnedLayoutChanges: AnimateLayoutChanges = (args) =>
-  args.isSorting ? defaultAnimateLayoutChanges(args) : false;
 
 type SidebarProject = {
   id: string;
@@ -113,36 +61,6 @@ type LogicalSidebarProject = SidebarProject & {
 };
 
 export type ThreadTraversalDirection = "previous" | "next";
-
-/**
- * Shared-worktree checks must exclude only successful deletions, never the
- * whole batch. A null result skips an entry that the caller can no longer find.
- */
-export async function deleteSelectedThreadEntries<
-  TEntry extends { readonly threadKey: string },
->(input: {
-  entries: readonly TEntry[];
-  delete: (
-    entry: TEntry,
-    deletedThreadKeys: ReadonlySet<string>,
-  ) => Promise<AtomCommandResult<unknown, unknown> | null>;
-}) {
-  const deletedThreadKeys = new Set<string>();
-  let firstFailure: AsyncResult.Failure<unknown, unknown> | null = null;
-
-  for (const entry of input.entries) {
-    const result = await input.delete(entry, deletedThreadKeys);
-    if (result === null) continue;
-    if (result._tag === "Failure") {
-      if (isAtomCommandInterrupted(result)) break;
-      firstFailure ??= result;
-      continue;
-    }
-    deletedThreadKeys.add(entry.threadKey);
-  }
-
-  return { deletedThreadKeys, firstFailure };
-}
 
 export async function archiveSelectedThreadEntries<
   TEntry extends { readonly threadKey: string },
@@ -193,40 +111,9 @@ export function buildMultiSelectThreadContextMenuItems(input: {
   ];
 }
 
-export function buildBulkTitleRegenerationContextMenuItem(input: {
-  supportedCount: number;
-  actionableCount: number;
-}): ContextMenuItem<"regenerate-title"> | null {
-  if (input.supportedCount === 0) return null;
-  if (input.actionableCount === 0) {
-    return {
-      id: "regenerate-title",
-      label: `Regenerating… (${input.supportedCount})`,
-      disabled: true,
-    };
-  }
-  return {
-    id: "regenerate-title",
-    label: `Regenerate titles (${input.actionableCount})`,
-  };
-}
-
-/**
- * Bulk unpin follows the same "count only what the action will touch" rule
- * as title regeneration: on a mixed selection the label counts the pinned
- * rows alone, and the item disappears when nothing selected is pinned.
- */
-export function buildBulkUnpinContextMenuItem(input: {
-  pinnedCount: number;
-}): ContextMenuItem<"unpin"> | null {
-  if (input.pinnedCount === 0) return null;
-  return { id: "unpin", label: `Unpin (${input.pinnedCount})` };
-}
-
 export interface ThreadStatusPill {
   label:
     | "Working"
-    | "Monitoring"
     | "Connecting"
     | "Completed"
     | "Pending Approval"
@@ -237,16 +124,12 @@ export interface ThreadStatusPill {
   pulse: boolean;
 }
 
-// Rollup order mirrors the per-thread resolver exactly: attention states,
-// then active work, then the actionable plan prompt, then passive
-// monitoring. A Monitoring sibling must never hide a Plan Ready thread.
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
-  "Pending Approval": 6,
-  "Awaiting Input": 5,
-  Working: 4,
-  Connecting: 4,
-  "Plan Ready": 3,
-  Monitoring: 2,
+  "Pending Approval": 5,
+  "Awaiting Input": 4,
+  Working: 3,
+  Connecting: 3,
+  "Plan Ready": 2,
   Completed: 1,
 };
 
@@ -258,7 +141,6 @@ type ThreadStatusInput = Pick<
   | "interactionMode"
   | "latestTurn"
   | "session"
-  | "backgroundLiveness"
 > & {
   lastVisitedAt?: string | undefined;
 };
@@ -266,6 +148,13 @@ type ThreadStatusInput = Pick<
 export interface ThreadJumpHintVisibilityController {
   sync: (shouldShow: boolean) => void;
   dispose: () => void;
+}
+
+export function resolveSidebarStageBadgeLabel(input: {
+  primaryServerVersion: string | null | undefined;
+  fallbackStageLabel: string;
+}): string {
+  return resolveServerBackedAppStageLabel(input);
 }
 
 export function createThreadJumpHintVisibilityController(input: {
@@ -373,35 +262,6 @@ export function isTrailingDoubleClick(detail: number): boolean {
   return detail > 1;
 }
 
-function nodeClosest(node: object | null, selector: string): unknown {
-  if (node === null || !("closest" in node) || typeof node.closest !== "function") return null;
-  return node.closest(selector);
-}
-
-/** Clicks on a nested link keep the link's meaning. The row must not treat them as multi-select. */
-export function isSidebarNestedLinkClick(target: EventTarget | null): boolean {
-  if (target == null || typeof target !== "object") return false;
-  if (nodeClosest(target, "a[href]") !== null) return true;
-  const parent =
-    "parentElement" in target &&
-    target.parentElement !== null &&
-    typeof target.parentElement === "object"
-      ? target.parentElement
-      : null;
-  return nodeClosest(parent, "a[href]") !== null;
-}
-
-// Shift+click on the new thread button creates directly in the current
-// project, skipping the command palette's project picker. With a single
-// project there is nothing to pick, so a plain click already creates
-// immediately and the modifier changes nothing.
-export function shouldCreateNewThreadInCurrentProject(
-  shiftKey: boolean,
-  projectGroupCount: number,
-): boolean {
-  return shiftKey || projectGroupCount <= 1;
-}
-
 export function orderItemsByPreferredIds<TItem, TId>(input: {
   items: readonly TItem[];
   preferredIds: readonly TId[];
@@ -441,6 +301,17 @@ export function orderItemsByPreferredIds<TItem, TId>(input: {
   return [...ordered, ...remaining];
 }
 
+export function getVisibleSidebarThreadIds<TThreadId>(
+  renderedProjects: readonly {
+    shouldShowThreadPanel?: boolean;
+    renderedThreadIds: readonly TThreadId[];
+  }[],
+): TThreadId[] {
+  return renderedProjects.flatMap((renderedProject) =>
+    renderedProject.shouldShowThreadPanel === false ? [] : renderedProject.renderedThreadIds,
+  );
+}
+
 export function getSidebarThreadIdsToPrewarm<TThreadId>(
   visibleThreadIds: readonly TThreadId[],
   limit = SIDEBAR_THREAD_PREWARM_LIMIT,
@@ -473,6 +344,28 @@ export function resolveAdjacentThreadId<T>(input: {
   }
 
   return currentIndex < threadIds.length - 1 ? (threadIds[currentIndex + 1] ?? null) : null;
+}
+
+export function shouldNavigateAfterProjectRemoval(input: {
+  routeTarget: ThreadRouteTarget | null;
+  projectThreads: readonly {
+    environmentId: string;
+    id: string;
+  }[];
+  projectDraftId: string | null;
+}): boolean {
+  const { projectDraftId, projectThreads, routeTarget } = input;
+  if (routeTarget?.kind === "draft") {
+    return projectDraftId === routeTarget.draftId;
+  }
+  if (routeTarget?.kind !== "server") {
+    return false;
+  }
+  return projectThreads.some(
+    (thread) =>
+      thread.environmentId === routeTarget.threadRef.environmentId &&
+      thread.id === routeTarget.threadRef.threadId,
+  );
 }
 
 export function isContextMenuPointerDown(input: {
@@ -518,42 +411,21 @@ export function resolveThreadRowClassName(input: {
   );
 }
 
-// ── Sidebar thread status model ─────────────────────────────────────
+// ── Sidebar v2 status model ─────────────────────────────────────────
 // Five visual states, three colors: color is reserved for "act now"
 // (approval), "in motion" (working), and "broken" (failed). Ready is the
 // unlabeled resting state — the agent stopped and is waiting on the user,
 // whether it finished, asked a question, or proposed a plan.
 // Unread completion is tracked separately: it describes whether a ready
 // thread needs attention, not what the thread is currently doing.
-export type SidebarThreadStatus =
-  | "approval"
-  | "input"
-  | "working"
-  | "monitoring"
-  | "failed"
-  | "ready";
+export type SidebarV2Status = "approval" | "input" | "working" | "failed" | "ready";
 
-export function shouldRecedeSidebarThread(input: {
-  status: SidebarThreadStatus;
-  isUnread: boolean;
-  isWoke: boolean;
-  isActive: boolean;
-  isSelected: boolean;
-}): boolean {
-  if (input.isActive || input.isSelected) return false;
-  if (input.status === "working" || input.status === "monitoring") return true;
-  if (input.status === "ready" || input.status === "approval" || input.status === "input") {
-    return !input.isUnread && !input.isWoke;
-  }
-  return false;
-}
-
-type SidebarThreadStatusInput = Pick<
+type SidebarV2StatusInput = Pick<
   SidebarThreadSummary,
-  "hasPendingApprovals" | "hasPendingUserInput" | "session" | "backgroundLiveness"
+  "hasPendingApprovals" | "hasPendingUserInput" | "session"
 >;
 
-export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
+export function resolveSidebarV2Status(thread: SidebarV2StatusInput): SidebarV2Status {
   if (thread.hasPendingApprovals) {
     return "approval";
   }
@@ -563,20 +435,17 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   if (thread.session?.status === "running" || thread.session?.status === "starting") {
     return "working";
   }
-  // A failed session outranks lingering background liveness: the user must
-  // see the failure, not a stale Working (review finding).
   if (thread.session?.status === "error") {
     return "failed";
   }
-  // Background work outlives the turn: fleets read as working; monitoring
-  // only when watch loops are the sole live work.
-  if (thread.backgroundLiveness === "working") {
-    return "working";
-  }
-  if (thread.backgroundLiveness === "monitoring") {
-    return "monitoring";
-  }
   return "ready";
+}
+
+/** NaN-safe Date.parse for sort comparators: a malformed timestamp must not
+    poison the whole ordering, so it sinks to the epoch instead. */
+export function parseTimestampMs(isoDate: string): number {
+  const parsed = Date.parse(isoDate);
+  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 /** First VALID timestamp wins: `a ?? b` falls through on null, but a present-
@@ -595,7 +464,7 @@ export function firstValidTimestampMs(
 
 /** String twin of firstValidTimestampMs for callers that need the ISO string
     (display labels, tick anchors) rather than epoch ms. */
-function firstValidTimestamp(
+export function firstValidTimestamp(
   ...candidates: ReadonlyArray<string | null | undefined>
 ): string | null {
   for (const candidate of candidates) {
@@ -605,91 +474,87 @@ function firstValidTimestamp(
   return null;
 }
 
-// Sidebar sort: static order, newest anchor on top. Activity NEVER reorders
-// the list — a row holds its position between lifecycle transitions, so the
-// screen only moves when a thread enters or leaves the active list. The
-// anchor is creation time until an un-settle re-anchors it (see
-// activeThreadAnchorTimestampMs), so an un-settled thread surfaces at the
-// top instead of sinking back to its creation-order slot. Status (including
-// pending approval) is carried by each card's edge strip, not by position.
-export function sortThreadsForSidebar<
+// Keep the chats users touched most recently at the top of each project. The
+// project grouping step preserves this incoming order within every section.
+//
+// `worktreeLastActivityAtByKey` folds a locally-recorded worktree interaction
+// (e.g. closing a chat) into each chat's effective sort time. A worktree row is
+// positioned by its newest surviving chat — collapsing keeps the group at that
+// chat's slot — so closing the newest chat would otherwise sink the row to an
+// older sibling's timestamp even though closing is a recent interaction. Taking
+// the max of the chat's own time and its worktree's recorded activity keeps the
+// row in place. Callers that omit the map keep the plain activity sort.
+export function sortThreadsForSidebarV2<
   T extends {
     readonly id: string;
-    readonly createdAt: string;
-    readonly unsettledAt?: string | null | undefined;
-  },
->(threads: readonly T[]): T[] {
-  return [...threads].toSorted(
-    (left, right) =>
-      activeThreadAnchorTimestampMs(right) - activeThreadAnchorTimestampMs(left) ||
-      left.id.localeCompare(right.id),
-  );
-}
-
-// Pinned-reorder key math and the keyed sort live in client-runtime
-// (state/thread-sort) so web and mobile compute identical pinned orders.
-export { pinOrderKeyBetween, planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
-export { sortPinnedThreadsByOrderKey as sortPinnedThreadsForSidebar } from "@t3tools/client-runtime/state/thread-sort";
-
-/**
- * Search the already-ordered sidebar thread collection by title only.
- * Keeping the input order means lifecycle ordering (active, snoozed, settled)
- * remains stable while the user narrows the list.
- */
-export function searchSidebarThreadsByTitle<T extends { readonly title: string }>(
-  threads: readonly T[],
-  query: string,
-): T[] {
-  const normalizedQuery = query.trim().toLowerCase();
-  if (normalizedQuery.length === 0) return [];
-  return threads.filter((thread) => thread.title.toLowerCase().includes(normalizedQuery));
-}
-
-export function filterSidebarProjectScopeItems<TItem extends { readonly value: string }>(input: {
-  items: readonly TItem[];
-  activeScopeKey: string | null;
-  query: string;
-  matches: (item: TItem, query: string) => boolean;
-}): readonly TItem[] {
-  const projectItems = input.items.filter((item) => item.value !== "all");
-  const query = input.query.trim();
-  if (query.length > 0) {
-    return projectItems.filter((item) => input.matches(item, query));
+    readonly environmentId?: string;
+    readonly worktreePath?: string | null;
+  } & ThreadSortInput,
+>(threads: readonly T[], worktreeLastActivityAtByKey?: Readonly<Record<string, string>>): T[] {
+  if (!worktreeLastActivityAtByKey) {
+    return sortThreads(threads, "updated_at");
   }
-  return input.activeScopeKey === null ? projectItems : input.items;
+  const effectiveTimestamp = (thread: T): number => {
+    const base = getThreadSortTimestamp(thread, "updated_at");
+    const { environmentId, worktreePath } = thread;
+    if (environmentId == null || worktreePath == null) {
+      return base;
+    }
+    const activityAt =
+      worktreeLastActivityAtByKey[worktreeActivityKey(environmentId, worktreePath)];
+    const activityMs = activityAt ? Date.parse(activityAt) : Number.NaN;
+    return Number.isFinite(activityMs) ? Math.max(base, activityMs) : base;
+  };
+  // Match sortThreads' order: newest activity first, ties broken by descending
+  // id so the sequence stays stable.
+  return [...threads].sort((left, right) => {
+    const leftTimestamp = effectiveTimestamp(left);
+    const rightTimestamp = effectiveTimestamp(right);
+    if (leftTimestamp !== rightTimestamp) {
+      return rightTimestamp - leftTimestamp;
+    }
+    return left.id < right.id ? 1 : left.id > right.id ? -1 : 0;
+  });
 }
 
-export interface SidebarProjectScopeMenuState {
-  readonly open: boolean;
-  readonly query: string;
-}
+type SettledTimestampInput = Pick<
+  SidebarThreadSummary,
+  "settledAt" | "latestUserMessageAt" | "latestTurn" | "updatedAt"
+>;
 
-export type SidebarProjectScopeMenuAction =
-  | { readonly type: "query-changed"; readonly query: string }
-  | { readonly type: "open-changed"; readonly open: boolean }
-  | { readonly type: "project-settings-opened" };
-
-export function reduceSidebarProjectScopeMenuState(
-  state: SidebarProjectScopeMenuState,
-  action: SidebarProjectScopeMenuAction,
-): SidebarProjectScopeMenuState {
-  switch (action.type) {
-    case "query-changed":
-      return { ...state, query: action.query };
-    case "open-changed":
-      return { open: action.open, query: "" };
-    case "project-settings-opened":
-      return { open: false, query: "" };
+/** The timestamp a settled row sorts and labels by: settledAt when stamped
+    (explicit settles), otherwise last activity — the same candidates
+    threadLastActivityAt feeds the auto-settle window (user message plus all
+    latestTurn stamps), so a thread whose last activity was a turn completion
+    doesn't sort by an older message time. updatedAt is the final net. */
+export function resolveSettledTimestamp(thread: SettledTimestampInput): string | null {
+  const settledAt = firstValidTimestamp(thread.settledAt);
+  if (settledAt !== null) return settledAt;
+  let latest: string | null = null;
+  let latestMs = Number.NEGATIVE_INFINITY;
+  for (const candidate of [
+    thread.latestUserMessageAt,
+    thread.latestTurn?.requestedAt,
+    thread.latestTurn?.startedAt,
+    thread.latestTurn?.completedAt,
+  ]) {
+    if (candidate == null) continue;
+    const parsed = Date.parse(candidate);
+    if (!Number.isNaN(parsed) && parsed > latestMs) {
+      latest = candidate;
+      latestMs = parsed;
+    }
   }
+  return latest ?? firstValidTimestamp(thread.updatedAt);
 }
 
 // Settled rows are history, so they order by when the work ENDED, not when
 // the thread was created or last touched.
-export function sortSettledThreadsForSidebar<
-  T extends SettledThreadTimestampInput & { readonly id: string },
+export function sortSettledThreadsForSidebarV2<
+  T extends SettledTimestampInput & { readonly id: string },
 >(threads: readonly T[]): T[] {
   const timestampMs = (thread: T) => {
-    const timestamp = resolveSettledThreadTimestamp(thread);
+    const timestamp = resolveSettledTimestamp(thread);
     return timestamp === null ? 0 : Date.parse(timestamp);
   };
   return [...threads].toSorted(
@@ -760,8 +625,6 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  // An actionable plan prompt outranks lingering background work: it needs
-  // the user's decision, while liveness merely reports (review finding).
   const hasPlanReadyPrompt =
     !thread.hasPendingUserInput &&
     thread.interactionMode === "plan" &&
@@ -772,28 +635,6 @@ export function resolveThreadStatusPill(input: {
       label: "Plan Ready",
       colorClass: "text-violet-600 dark:text-violet-300/90",
       dotClass: "bg-violet-500 dark:bg-violet-300/90",
-      pulse: false,
-    };
-  }
-
-  // The turn can settle while native background work runs on. Subagent and
-  // workflow fleets read as plain Working; Monitoring is reserved for watch
-  // loops (a parent agent babysitting a PR, tailing checks) with no other
-  // live work. Same recede treatment as Working per inbox-zero.
-  if (thread.backgroundLiveness === "working") {
-    return {
-      label: "Working",
-      colorClass: "text-sky-600 dark:text-sky-300/80",
-      dotClass: "bg-sky-500 dark:bg-sky-300/80",
-      pulse: true,
-    };
-  }
-
-  if (thread.backgroundLiveness === "monitoring") {
-    return {
-      label: "Monitoring",
-      colorClass: "text-sky-600 dark:text-sky-300/80",
-      dotClass: "bg-sky-500 dark:bg-sky-300/80",
       pulse: false,
     };
   }
@@ -828,6 +669,343 @@ export function resolveProjectStatusIndicator(
   return highestPriorityStatus;
 }
 
+export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input: {
+  threads: readonly T[];
+  activeThreadId: T["id"] | undefined;
+  isThreadListExpanded: boolean;
+  previewLimit: number;
+}): {
+  hasHiddenThreads: boolean;
+  visibleThreads: T[];
+  hiddenThreads: T[];
+} {
+  const { activeThreadId, isThreadListExpanded, previewLimit, threads } = input;
+  const hasHiddenThreads = threads.length > previewLimit;
+
+  if (!hasHiddenThreads || isThreadListExpanded) {
+    return {
+      hasHiddenThreads,
+      hiddenThreads: [],
+      visibleThreads: [...threads],
+    };
+  }
+
+  const previewThreads = threads.slice(0, previewLimit);
+  if (!activeThreadId || previewThreads.some((thread) => thread.id === activeThreadId)) {
+    return {
+      hasHiddenThreads: true,
+      hiddenThreads: threads.slice(previewLimit),
+      visibleThreads: previewThreads,
+    };
+  }
+
+  const activeThread = threads.find((thread) => thread.id === activeThreadId);
+  if (!activeThread) {
+    return {
+      hasHiddenThreads: true,
+      hiddenThreads: threads.slice(previewLimit),
+      visibleThreads: previewThreads,
+    };
+  }
+
+  const visibleThreadIds = new Set([...previewThreads, activeThread].map((thread) => thread.id));
+
+  return {
+    hasHiddenThreads: true,
+    hiddenThreads: threads.filter((thread) => !visibleThreadIds.has(thread.id)),
+    visibleThreads: threads.filter((thread) => visibleThreadIds.has(thread.id)),
+  };
+}
+
+type WorktreeCollapsibleThread = {
+  readonly id: string;
+  readonly environmentId: string;
+  readonly worktreePath: string | null;
+  readonly createdAt: string;
+};
+
+function isEarlierCreatedThread<T extends WorktreeCollapsibleThread>(
+  candidate: T,
+  incumbent: T,
+): boolean {
+  const byCreatedAt = candidate.createdAt.localeCompare(incumbent.createdAt);
+  return byCreatedAt !== 0 ? byCreatedAt < 0 : candidate.id.localeCompare(incumbent.id) < 0;
+}
+
+/**
+ * Collapse chats that share one on-disk git worktree into a single sidebar
+ * row. Several chats can run in the same worktree — the in-chat worktree tab
+ * strip spawns siblings that reuse it — and listing each as its own row
+ * duplicates the worktree down the sidebar. Only the earliest-created chat in
+ * a group survives as the representative row; its siblings stay reachable
+ * through the tab strip. Threads with no worktree (worktreePath === null)
+ * never collapse — each keeps its own row.
+ *
+ * A group occupies the position of its first input member, while still using
+ * the earliest-created chat as its representative. This preserves a caller's
+ * activity sort at the worktree level: when any sibling is the newest chat,
+ * the collapsed worktree row stays in that sibling's position. Otherwise the
+ * older representative's own timestamp could incorrectly sink the whole
+ * worktree below less-active rows. `representativeKeyByThreadKey` maps every
+ * input thread's key to its representative's key so the caller can highlight
+ * the representative row when the active route is a collapsed sibling.
+ * Callers can provide `mergeGroup` to project group-level presentation state
+ * onto the representative without changing its identity or route.
+ */
+export function collapseWorktreeSiblings<T extends WorktreeCollapsibleThread>(
+  threads: readonly T[],
+  keyOf: (thread: T) => string,
+  mergeGroup?: (representative: T, members: readonly T[]) => T,
+): { threads: T[]; representativeKeyByThreadKey: Map<string, string> } {
+  const representativeByGroupKey = new Map<string, T>();
+  const membersByGroupKey = new Map<string, T[]>();
+  for (const thread of threads) {
+    if (thread.worktreePath === null) continue;
+    const groupKey = `${thread.environmentId}\0${thread.worktreePath}`;
+    const members = membersByGroupKey.get(groupKey);
+    if (members) {
+      members.push(thread);
+    } else {
+      membersByGroupKey.set(groupKey, [thread]);
+    }
+    const incumbent = representativeByGroupKey.get(groupKey);
+    if (incumbent === undefined || isEarlierCreatedThread(thread, incumbent)) {
+      representativeByGroupKey.set(groupKey, thread);
+    }
+  }
+
+  const representativeKeyByGroupKey = new Map<string, string>();
+  for (const [groupKey, thread] of representativeByGroupKey) {
+    representativeKeyByGroupKey.set(groupKey, keyOf(thread));
+  }
+
+  const representativeKeyByThreadKey = new Map<string, string>();
+  const survivors: T[] = [];
+  const emittedGroupKeys = new Set<string>();
+  for (const thread of threads) {
+    const key = keyOf(thread);
+    if (thread.worktreePath === null) {
+      representativeKeyByThreadKey.set(key, key);
+      survivors.push(thread);
+      continue;
+    }
+    const groupKey = `${thread.environmentId}\0${thread.worktreePath}`;
+    const representativeKey = representativeKeyByGroupKey.get(groupKey) ?? key;
+    representativeKeyByThreadKey.set(key, representativeKey);
+    if (emittedGroupKeys.has(groupKey)) continue;
+    emittedGroupKeys.add(groupKey);
+    const representative = representativeByGroupKey.get(groupKey) ?? thread;
+    survivors.push(
+      mergeGroup?.(representative, membersByGroupKey.get(groupKey) ?? [representative]) ??
+        representative,
+    );
+  }
+
+  return { threads: survivors, representativeKeyByThreadKey };
+}
+
+/**
+ * When a worktree collapses to one representative row (the earliest-created
+ * chat, see collapseWorktreeSiblings), clicking that row should reopen the chat
+ * the user was last in — not always the oldest one. This resolves the clicked
+ * representative to the most recently active sibling sharing its worktree.
+ *
+ * The chat the user last opened always wins: a sibling the user has explicitly
+ * visited beats one they never opened, regardless of newer server activity, so
+ * clicking the row returns you to where you left off — not to whichever sibling
+ * an agent happened to touch most recently. Server last-activity only breaks
+ * ties among chats the user never opened. Threads with no worktree, or
+ * worktrees holding a single live chat, resolve to themselves. Ties keep the
+ * earliest-created chat, so a group with no activity signal lands on the same
+ * row collapseWorktreeSiblings shows.
+ */
+export function resolveWorktreeActiveThread<
+  T extends WorktreeCollapsibleThread &
+    SettledTimestampInput & { readonly archivedAt: string | null },
+>(input: {
+  threads: readonly T[];
+  clicked: T;
+  keyOf: (thread: T) => string;
+  lastVisitedAtByKey: Readonly<Record<string, string | undefined>>;
+}): T {
+  const { clicked, keyOf, lastVisitedAtByKey, threads } = input;
+  if (clicked.worktreePath === null) return clicked;
+  const parseMs = (value: string | null | undefined): number => {
+    if (value === undefined || value === null) return Number.NEGATIVE_INFINITY;
+    const ms = Date.parse(value);
+    return Number.isNaN(ms) ? Number.NEGATIVE_INFINITY : ms;
+  };
+  // Primary rank: the user's own last-opened time. Secondary rank: server
+  // last-activity, used only to order chats the user never opened.
+  const rankOf = (thread: T): readonly [number, number] => [
+    parseMs(lastVisitedAtByKey[keyOf(thread)]),
+    parseMs(resolveSettledTimestamp(thread)),
+  ];
+  const isBetter = (a: readonly [number, number], b: readonly [number, number]): boolean =>
+    a[0] !== b[0] ? a[0] > b[0] : a[1] > b[1];
+  let best = clicked;
+  let bestRank = rankOf(clicked);
+  for (const thread of threads) {
+    if (thread.environmentId === clicked.environmentId && thread.id === clicked.id) continue;
+    if (thread.archivedAt !== null) continue;
+    if (thread.environmentId !== clicked.environmentId) continue;
+    if (thread.worktreePath !== clicked.worktreePath) continue;
+    const rank = rankOf(thread);
+    const tied = rank[0] === bestRank[0] && rank[1] === bestRank[1];
+    if (isBetter(rank, bestRank) || (tied && isEarlierCreatedThread(thread, best))) {
+      best = thread;
+      bestRank = rank;
+    }
+  }
+  return best;
+}
+
+/**
+ * Resolve the thread that owns a worktree's shared workspace state — the open
+ * files, diff view, terminals, and preview that every chat in the worktree sees
+ * in common. Chats sharing one on-disk worktree collapse to a single
+ * representative row (see collapseWorktreeSiblings); their workspace panels key
+ * off that same representative so switching between siblings keeps the same
+ * files open, the same diff, and the same live terminals. The representative is
+ * the earliest-created live chat in the worktree, matching the collapse rule so
+ * the workspace anchors to the row the sidebar shows. Threads with no worktree
+ * (worktreePath === null) own their workspace alone and resolve to null, so the
+ * caller falls back to the thread's own ref.
+ */
+export function resolveWorktreeWorkspaceRepresentative<
+  T extends WorktreeCollapsibleThread & { readonly archivedAt: string | null },
+>(input: { threads: readonly T[]; target: Pick<T, "environmentId" | "worktreePath"> }): T | null {
+  const { target, threads } = input;
+  if (target.worktreePath === null) return null;
+  let representative: T | null = null;
+  for (const thread of threads) {
+    if (thread.archivedAt !== null) continue;
+    if (thread.environmentId !== target.environmentId) continue;
+    if (thread.worktreePath !== target.worktreePath) continue;
+    if (representative === null || isEarlierCreatedThread(thread, representative)) {
+      representative = thread;
+    }
+  }
+  return representative;
+}
+
+/**
+ * Project a collapsed worktree group's attention state onto its representative
+ * row. Chats sharing one on-disk worktree collapse to a single row (see
+ * collapseWorktreeSiblings), so that row must reflect what any sibling is doing:
+ * a running sibling's session (so the row shows "Working" and its elapsed timer)
+ * and — just as importantly — a sibling that is waiting on the user. Without the
+ * latter, a non-representative sibling awaiting input or approval would still be
+ * shown as "Working" (its running session projected, its pending-input flag
+ * dropped), hiding that the user needs to act. resolveSidebarV2Status /
+ * resolveThreadStatusPill then rank approval > input > working, so surfacing the
+ * flags here is enough for the row to read "Approval"/"Input" over "Working".
+ */
+export function mergeWorktreeSiblingRunningStatus<
+  T extends Pick<SidebarThreadSummary, "session" | "hasPendingApprovals" | "hasPendingUserInput">,
+>(representative: T, members: readonly T[]): T {
+  const runningSibling = members.find(
+    (thread) => thread.session?.status === "running" || thread.session?.status === "starting",
+  );
+  const session =
+    runningSibling && runningSibling.session !== representative.session
+      ? runningSibling.session
+      : representative.session;
+  const hasPendingApprovals = members.some((thread) => thread.hasPendingApprovals);
+  const hasPendingUserInput = members.some((thread) => thread.hasPendingUserInput);
+  if (
+    session === representative.session &&
+    hasPendingApprovals === representative.hasPendingApprovals &&
+    hasPendingUserInput === representative.hasPendingUserInput
+  ) {
+    return representative;
+  }
+  return { ...representative, session, hasPendingApprovals, hasPendingUserInput };
+}
+
+/**
+ * Expand a single archive target into every chat that shares its worktree.
+ * The sidebar collapses chats living in one on-disk worktree to a single row
+ * (see collapseWorktreeSiblings), so archiving that row must archive the whole
+ * group — otherwise the collapsed siblings resurface as their own rows the
+ * moment the representative is gone. Threads with no worktree
+ * (worktreePath === null) archive only themselves. Already-archived threads
+ * are skipped, and survivors keep the input order so navigation and toasts see
+ * a stable sequence. Returns an empty list when the target is unknown.
+ */
+export function collectWorktreeSiblingThreads<
+  T extends WorktreeCollapsibleThread & { readonly archivedAt: string | null },
+>(input: { threads: readonly T[]; target: Pick<T, "environmentId" | "id" | "worktreePath"> }): T[] {
+  const { target, threads } = input;
+  if (target.worktreePath === null) {
+    return threads.filter(
+      (thread) =>
+        thread.environmentId === target.environmentId &&
+        thread.id === target.id &&
+        thread.archivedAt === null,
+    );
+  }
+  return threads.filter(
+    (thread) =>
+      thread.environmentId === target.environmentId &&
+      thread.worktreePath === target.worktreePath &&
+      thread.archivedAt === null,
+  );
+}
+
+export type SidebarProjectThreadSection<T> = {
+  /** The project group these threads belong to, or null for a trailing
+      catch-all section of threads whose project isn't in `projectOrder`. */
+  projectKey: string | null;
+  threads: T[];
+};
+
+/**
+ * Split an already-ordered thread list into per-project sections for sidebar
+ * v2's optional "group by project" mode. Sections follow `projectOrder` (the
+ * caller's project sort), and within each section threads keep their incoming
+ * order so the activity sort is preserved inside a project. Threads whose
+ * resolved project key isn't in `projectOrder` are never dropped — they land
+ * in a trailing section keyed null so the flattened result still covers every
+ * input thread (jump shortcuts and range-select index against that flattened
+ * order). Empty sections are omitted so no project header renders without rows.
+ */
+export function groupSidebarThreadsByProject<T>(input: {
+  threads: readonly T[];
+  projectOrder: readonly string[];
+  resolveProjectKey: (thread: T) => string | null;
+}): SidebarProjectThreadSection<T>[] {
+  const { projectOrder, resolveProjectKey, threads } = input;
+  const knownKeys = new Set(projectOrder);
+  const threadsByKey = new Map<string, T[]>();
+  const ungrouped: T[] = [];
+  for (const thread of threads) {
+    const key = resolveProjectKey(thread);
+    if (key === null || !knownKeys.has(key)) {
+      ungrouped.push(thread);
+      continue;
+    }
+    const bucket = threadsByKey.get(key);
+    if (bucket) {
+      bucket.push(thread);
+    } else {
+      threadsByKey.set(key, [thread]);
+    }
+  }
+
+  const sections: SidebarProjectThreadSection<T>[] = [];
+  for (const projectKey of projectOrder) {
+    const sectionThreads = threadsByKey.get(projectKey);
+    if (sectionThreads && sectionThreads.length > 0) {
+      sections.push({ projectKey, threads: sectionThreads });
+    }
+  }
+  if (ungrouped.length > 0) {
+    sections.push({ projectKey: null, threads: ungrouped });
+  }
+  return sections;
+}
+
 export function getFallbackThreadIdAfterDelete<
   T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt"> & ThreadSortInput,
 >(input: {
@@ -852,6 +1030,39 @@ export function getFallbackThreadIdAfterDelete<
       ),
       sortOrder,
     )[0]?.id ?? null
+  );
+}
+
+export function getFallbackThreadAfterArchive<
+  T extends Pick<Thread, "id" | "environmentId" | "projectId" | "createdAt" | "updatedAt"> &
+    ThreadSortInput & { archivedAt: string | null },
+>(input: {
+  threads: readonly T[];
+  archivedThreadId: T["id"];
+  archivedThreadEnvironmentId: T["environmentId"];
+  sortOrder: SidebarThreadSortOrder;
+}): T | null {
+  const archivedThread = input.threads.find(
+    (thread) =>
+      thread.id === input.archivedThreadId &&
+      thread.environmentId === input.archivedThreadEnvironmentId,
+  );
+  if (!archivedThread) return null;
+  const activeThreads = input.threads.filter(
+    (thread) =>
+      thread.archivedAt === null &&
+      (thread.id !== input.archivedThreadId ||
+        thread.environmentId !== input.archivedThreadEnvironmentId),
+  );
+  const sameProjectThreads = activeThreads.filter(
+    (thread) =>
+      thread.environmentId === archivedThread.environmentId &&
+      thread.projectId === archivedThread.projectId,
+  );
+  return (
+    sortThreads(sameProjectThreads, input.sortOrder)[0] ??
+    sortThreads(activeThreads, input.sortOrder)[0] ??
+    null
   );
 }
 export function getProjectSortTimestamp(
@@ -932,7 +1143,10 @@ export function sortLogicalProjectsForSidebar<
   );
   const threadsByProjectKey = new Map<string, TThread[]>();
   for (const thread of threads) {
-    if (thread.archivedAt !== null) continue;
+    // Archived threads still count toward a project's activity timestamp so
+    // archiving a chat never moves its project in the list. Archiving doesn't
+    // change a thread's sort timestamp (it's derived from message activity, not
+    // the archive event), so keeping it here holds the project's position.
     const projectKey = groupKeyByProjectRef.get(`${thread.environmentId}\0${thread.projectId}`);
     if (!projectKey) continue;
     const existing = threadsByProjectKey.get(projectKey);
@@ -954,8 +1168,8 @@ export function sortLogicalProjectsForSidebar<
 
 /**
  * Sorts the cross-environment project collection used by landing surfaces.
- * Project ids are only unique within an environment, and archived threads
- * must not make a project appear recently active.
+ * Project ids are only unique within an environment. Archived threads still
+ * count toward project activity so archiving a chat never reorders projects.
  */
 export function sortScopedProjectsForSidebar<
   TProject extends ScopedSidebarProject,
@@ -969,9 +1183,6 @@ export function sortScopedProjectsForSidebar<
     `${environmentId}\u0000${projectId}`;
   const threadsByProject = new Map<string, TThread[]>();
   for (const thread of threads) {
-    if (thread.archivedAt !== null) {
-      continue;
-    }
     const key = scopedKey(thread.environmentId, thread.projectId);
     const existing = threadsByProject.get(key) ?? [];
     existing.push(thread);

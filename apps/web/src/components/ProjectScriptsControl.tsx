@@ -8,19 +8,17 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { ChevronDownIcon, DownloadIcon, PlusIcon, SettingsIcon } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { commandForProjectScript, primaryProjectScript } from "~/projectScripts";
 import { shortcutLabelForCommand } from "~/keybindings";
 import {
-  EMPTY_PROJECT_SCRIPT_INPUT,
-  editorRequestForScript,
-  ProjectScriptEditorDialog,
-  ScriptIcon,
+  ProjectScriptDialog,
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
-  type ProjectScriptEditorRequest,
-} from "./projectScriptEditor";
+  type ProjectScriptDraft,
+} from "./ProjectScriptDialog";
+import { ScriptIcon } from "./projectScriptIcons";
 import { Button } from "./ui/button";
 import { Group, GroupSeparator } from "./ui/group";
 import {
@@ -35,7 +33,7 @@ import {
 } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
-export type { NewProjectScriptInput, ProjectScriptActionResult };
+export type { NewProjectScriptInput, ProjectScriptActionResult } from "./ProjectScriptDialog";
 
 const NO_FILE_SCRIPTS: ReadonlyArray<T3ProjectFileScript> = [];
 
@@ -68,7 +66,10 @@ export default function ProjectScriptsControl({
     scripts: false,
     imports: false,
   });
-  const [editorRequest, setEditorRequest] = useState<ProjectScriptEditorRequest | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingScript, setEditingScript] = useState<ProjectScript | null>(null);
+  const [importDraft, setImportDraft] = useState<ProjectScriptDraft | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
 
   const primaryScript = useMemo(() => {
     if (preferredScriptId) {
@@ -93,19 +94,19 @@ export default function ProjectScriptsControl({
     "data-highlighted:bg-transparent data-highlighted:text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:hover:bg-accent data-highlighted:hover:text-accent-foreground data-highlighted:focus-visible:bg-accent data-highlighted:focus-visible:text-accent-foreground";
 
   const openAddDialog = () => {
-    setEditorRequest({ scriptId: null, initial: EMPTY_PROJECT_SCRIPT_INPUT });
+    setEditingScript(null);
+    setImportDraft(null);
+    setImportError(null);
+    setDialogOpen(true);
   };
 
   const openEditDialog = (script: ProjectScript) => {
     setActionsMenuOpen({ scripts: false, imports: false });
-    setEditorRequest(editorRequestForScript(script, keybindings));
+    setEditingScript(script);
+    setImportDraft(null);
+    setImportError(null);
+    setDialogOpen(true);
   };
-
-  const submitScript = useCallback(
-    (scriptId: string | null, input: NewProjectScriptInput) =>
-      scriptId === null ? onAddScript(input) : onUpdateScript(scriptId, input),
-    [onAddScript, onUpdateScript],
-  );
 
   const importFileScript = async (fileScript: T3ProjectFileScript) => {
     const payload: NewProjectScriptInput = {
@@ -122,11 +123,17 @@ export default function ProjectScriptsControl({
       // Surface the failure through the regular add dialog, prefilled so the
       // user can adjust and retry.
       const error = squashAtomCommandFailure(result);
-      setEditorRequest({
-        scriptId: null,
-        initial: payload,
-        error: error instanceof Error ? error.message : "Failed to import action.",
+      setEditingScript(null);
+      setImportDraft({
+        name: payload.name,
+        command: payload.command,
+        icon: payload.icon,
+        runOnWorktreeCreate: payload.runOnWorktreeCreate,
+        previewUrl: payload.previewUrl ?? "",
+        autoOpenPreview: payload.autoOpenPreview,
       });
+      setImportError(error instanceof Error ? error.message : "Failed to import action.");
+      setDialogOpen(true);
     }
   };
 
@@ -162,11 +169,7 @@ export default function ProjectScriptsControl({
                 <Button
                   size="xs"
                   variant="outline"
-                  className="w-7 px-0 sm:w-6 @3xl/header-actions:w-auto! @3xl/header-actions:px-[calc(--spacing(2)-1px)]"
                   aria-label={`Run ${primaryScript.name}`}
-                  // The tooltip wrapper replaces data-slot="button", so themed
-                  // toolbar styling needs its own hook.
-                  data-toolbar-control=""
                   onClick={() => onRunScript(primaryScript)}
                 />
               }
@@ -266,16 +269,7 @@ export default function ProjectScriptsControl({
         <Tooltip>
           <TooltipTrigger
             render={
-              <Button
-                size="xs"
-                variant="outline"
-                className="w-7 px-0 sm:w-6 @3xl/header-actions:w-auto! @3xl/header-actions:px-[calc(--spacing(2)-1px)]"
-                aria-label="Add action"
-                // The tooltip wrapper replaces data-slot="button", so themed
-                // toolbar styling needs its own hook.
-                data-toolbar-control=""
-                onClick={openAddDialog}
-              />
+              <Button size="xs" variant="outline" aria-label="Add action" onClick={openAddDialog} />
             }
           >
             <PlusIcon className="size-3.5" />
@@ -287,12 +281,17 @@ export default function ProjectScriptsControl({
         </Tooltip>
       )}
 
-      <ProjectScriptEditorDialog
-        request={editorRequest}
-        scripts={scripts}
-        onSubmit={submitScript}
-        onDelete={(scriptId) => void onDeleteScript(scriptId)}
-        onClose={() => setEditorRequest(null)}
+      <ProjectScriptDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        editingScript={editingScript}
+        existingScriptIds={scripts.map((script) => script.id)}
+        keybindings={keybindings}
+        initialDraft={importDraft}
+        initialError={importError}
+        onAddScript={onAddScript}
+        onUpdateScript={onUpdateScript}
+        onDeleteScript={onDeleteScript}
       />
     </>
   );

@@ -13,65 +13,104 @@ import {
   FileDiffIcon,
   FolderIcon,
   FolderClosedIcon,
+  TriangleAlertIcon,
 } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import {
+  changedFileName,
+  selectChangedFilePreview,
+  summarizeChangedFileScopes,
+} from "./changedFilesPresentation";
 
 const EMPTY_DIRECTORY_OVERRIDES: Record<string, boolean> = {};
 
 export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
   turnId: TurnId;
   files: ReadonlyArray<TurnDiffFileChange>;
+  expanded: boolean;
+  showCompactPreview: boolean;
   allDirectoriesExpanded: boolean;
   resolvedTheme: "light" | "dark";
+  onExpandedChange: (expanded: boolean) => void;
   onToggleAllDirectories: () => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
 }) {
   const {
     turnId,
     files,
+    expanded,
+    showCompactPreview,
     allDirectoriesExpanded,
     resolvedTheme,
+    onExpandedChange,
     onToggleAllDirectories,
     onOpenTurnDiff,
   } = props;
   const summaryStat = useMemo(() => summarizeTurnDiffStats(files), [files]);
-  const hasDirectories = files.some((file) => /[/\\]/.test(file.path));
+  const scopeSummary = useMemo(() => summarizeChangedFileScopes(files), [files]);
+  const previewFiles = useMemo(() => selectChangedFilePreview(files), [files]);
+  const compactPreviewVisible = showCompactPreview && !expanded;
 
   return (
     <div
-      className="@container/changed-files mt-4 rounded-lg bg-secondary dark:bg-input/20"
-      data-changed-files-state="tree"
+      className="mt-4 rounded-2xl border border-border/70 bg-secondary p-2 dark:border-transparent dark:bg-input/32"
+      data-changed-files-state={
+        expanded ? "expanded" : compactPreviewVisible ? "preview" : "collapsed"
+      }
     >
       <div
-        data-changed-files-header=""
-        className="sticky top-2 z-10 flex items-center justify-between gap-2 rounded-t-lg bg-secondary px-3 py-2 dark:bg-[color-mix(in_srgb,var(--input)_20%,var(--background))]"
+        className={cn(
+          "flex items-center justify-between gap-2 rounded-xl px-1",
+          expanded &&
+            "sticky top-2 z-10 mb-2 bg-secondary dark:bg-[color-mix(in_srgb,var(--foreground)_2.5%,var(--background))]",
+        )}
       >
-        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs font-medium text-foreground">
-          <span>
-            {files.length} changed file{files.length === 1 ? "" : "s"}
+        <button
+          type="button"
+          aria-expanded={expanded}
+          data-scroll-anchor-ignore
+          className="group flex min-w-0 flex-1 items-center gap-1.5 rounded-lg px-1 py-1.5 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={() => onExpandedChange(!expanded)}
+        >
+          <ChevronRightIcon
+            aria-hidden="true"
+            className={cn(
+              "size-3.5 shrink-0 text-muted-foreground transition-transform",
+              expanded && "rotate-90",
+            )}
+          />
+          <span className="flex min-w-0 items-center gap-1 whitespace-nowrap font-medium text-foreground text-xs leading-4">
+            <span>
+              {files.length} changed file{files.length === 1 ? "" : "s"}
+            </span>
+            {hasNonZeroStat(summaryStat) && (
+              <DiffStatLabel
+                additions={summaryStat.additions}
+                className="text-xs leading-4"
+                deletions={summaryStat.deletions}
+                layout="inline"
+              />
+            )}
           </span>
-          {hasNonZeroStat(summaryStat) && (
-            <DiffStatLabel
-              additions={summaryStat.additions}
-              deletions={summaryStat.deletions}
-              layout="inline"
-              className="text-xs leading-4"
-            />
-          )}
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          {hasDirectories && (
+          <span className="ml-1 hidden truncate text-[11px] text-muted-foreground group-hover:text-foreground/80 sm:inline">
+            {expanded ? "Hide files" : "Show files"}
+          </span>
+        </button>
+        <div className="flex items-center gap-1.5">
+          {expanded ? (
             <Tooltip>
               <TooltipTrigger
                 render={
                   <Button
                     type="button"
                     size="icon-xs"
-                    variant="ghost-muted"
+                    variant="outline"
+                    className="!size-[22px]"
                     aria-label={
                       allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"
                     }
@@ -90,46 +129,86 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                 {allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}
               </TooltipPopup>
             </Tooltip>
-          )}
+          ) : null}
           <Tooltip>
             <TooltipTrigger
               render={
                 <Button
                   type="button"
                   size="xs"
-                  variant="ghost-muted"
+                  variant="outline"
                   aria-label="Open diff"
                   onClick={() => onOpenTurnDiff(turnId, files[0]?.path)}
                 />
               }
             >
               <FileDiffIcon className="size-3" />
-              <span className="hidden @[24rem]/changed-files:inline">Open diff</span>
+              <span className="hidden sm:inline">Open diff</span>
             </TooltipTrigger>
             <TooltipPopup side="top">Open the full diff</TooltipPopup>
           </Tooltip>
         </div>
       </div>
-      <ChangedFilesTree
-        key={`${turnId}:${allDirectoriesExpanded}`}
-        turnId={turnId}
-        files={files}
-        allDirectoriesExpanded={allDirectoriesExpanded}
-        resolvedTheme={resolvedTheme}
-        onOpenTurnDiff={onOpenTurnDiff}
-      />
+      {expanded ? (
+        <ChangedFilesTree
+          key={`changed-files-tree:${turnId}`}
+          files={files}
+          allDirectoriesExpanded={allDirectoriesExpanded}
+          resolvedTheme={resolvedTheme}
+          onOpenFile={(filePath) => onOpenTurnDiff(turnId, filePath)}
+        />
+      ) : compactPreviewVisible ? (
+        <div className="px-2 pb-1.5 pt-1">
+          <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-muted-foreground">
+            {scopeSummary.map((scope, index) => (
+              <span key={scope.label} className="inline-flex items-center gap-1">
+                {index > 0 ? <span aria-hidden="true">·</span> : null}
+                <span className="font-mono text-foreground/75">{scope.label}</span>
+                <span>
+                  {scope.fileCount} file{scope.fileCount === 1 ? "" : "s"}
+                </span>
+              </span>
+            ))}
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {previewFiles.map((file) => (
+              <button
+                key={file.path}
+                type="button"
+                title={file.path}
+                className="inline-flex max-w-48 items-center gap-1 rounded-md border border-border/70 bg-background/45 px-1.5 py-1 font-mono text-[10px] text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={() => onOpenTurnDiff(turnId, file.path)}
+              >
+                <PierreEntryIcon
+                  pathValue={file.path}
+                  kind="file"
+                  theme={resolvedTheme}
+                  className="size-3 shrink-0 text-muted-foreground/70"
+                />
+                <span className="truncate">{changedFileName(file.path)}</span>
+              </button>
+            ))}
+            <button
+              type="button"
+              className="rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => onExpandedChange(true)}
+            >
+              Show all {files.length} files
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 });
 
 export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
-  turnId: TurnId;
   files: ReadonlyArray<TurnDiffFileChange>;
   allDirectoriesExpanded: boolean;
   resolvedTheme: "light" | "dark";
-  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onOpenFile: (filePath: string) => void;
 }) {
-  const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, turnId } = props;
+  const { files, allDirectoriesExpanded, onOpenFile, resolvedTheme } = props;
   const treeNodes = useMemo(() => buildTurnDiffTree(files), [files]);
   const directoryPathsKey = useMemo(
     () => collectDirectoryPaths(treeNodes).join("\u0000"),
@@ -174,8 +253,7 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
           <button
             type="button"
             data-scroll-anchor-ignore
-            aria-expanded={isExpanded}
-            className="group flex w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+            className="group flex w-full items-center gap-1.5 rounded-xl py-1 pr-3 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
             style={{ paddingLeft: `${leftPadding}px` }}
             onClick={() => toggleDirectory(node.path)}
           >
@@ -191,17 +269,19 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
             ) : (
               <FolderClosedIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
             )}
-            <span className="truncate font-mono text-[11px] text-muted-foreground/90 group-hover:text-foreground/90">
+            <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground/90 group-hover:text-foreground/90">
               {node.name}
             </span>
             {hasNonZeroStat(node.stat) && (
-              <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums">
+              <span className="shrink-0 pl-2 font-mono text-[10px] tabular-nums">
                 <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
               </span>
             )}
           </button>
           {isExpanded && (
-            <div>{node.children.map((childNode) => renderTreeNode(childNode, depth + 1))}</div>
+            <div className="space-y-0.5">
+              {node.children.map((childNode) => renderTreeNode(childNode, depth + 1))}
+            </div>
           )}
         </div>
       );
@@ -211,9 +291,9 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
       <button
         key={`file:${node.path}`}
         type="button"
-        className="group flex w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+        className="group flex w-full items-center gap-1.5 rounded-xl py-1 pr-3 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
         style={{ paddingLeft: `${leftPadding}px` }}
-        onClick={() => onOpenTurnDiff(turnId, node.path)}
+        onClick={() => onOpenFile(node.path)}
       >
         {hasDirectoryNodes || depth > 0 ? (
           <span aria-hidden="true" className="size-3.5 shrink-0" />
@@ -224,11 +304,13 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
           theme={resolvedTheme}
           className="size-3.5 text-muted-foreground/70"
         />
-        <span className="truncate font-mono text-xs text-foreground/85 group-hover:text-foreground">
+        {/* min-w-0 lets the name shrink below its intrinsic width, so it
+            ellipsizes instead of overflowing onto the diff stat. */}
+        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground/80 group-hover:text-foreground/90">
           {node.name}
         </span>
         {node.stat && (
-          <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums">
+          <span className="shrink-0 pl-2 font-mono text-[10px] tabular-nums">
             <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
           </span>
         )}
@@ -236,7 +318,171 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
     );
   };
 
-  return <div className="p-2">{treeNodes.map((node) => renderTreeNode(node, 0))}</div>;
+  return <div className="space-y-0.5">{treeNodes.map((node) => renderTreeNode(node, 0))}</div>;
+});
+
+export interface DiffNavigatorFile {
+  path: string;
+  additions: number;
+  deletions: number;
+  viewed: boolean;
+  conflicted: boolean;
+}
+
+/**
+ * Flat changed-file list for the Diff navigator (no folder nesting). Each row
+ * carries a "viewed" checkbox; viewed files dim and sink to the bottom of the
+ * list so unreviewed changes stay on top.
+ */
+export const DiffNavigatorFileList = memo(function DiffNavigatorFileList(props: {
+  files: ReadonlyArray<DiffNavigatorFile>;
+  resolvedTheme: "light" | "dark";
+  /** The file whose diff is currently open — highlighted in the list. */
+  activeFilePath?: string | null | undefined;
+  onOpenFile: (filePath: string) => void;
+  onToggleViewed: (filePath: string, viewed: boolean) => void;
+}) {
+  const { files, resolvedTheme, activeFilePath, onOpenFile, onToggleViewed } = props;
+  const fileGroups = useMemo(() => {
+    const orderByViewed = (group: ReadonlyArray<DiffNavigatorFile>) => [
+      ...group.filter((file) => !file.viewed),
+      ...group.filter((file) => file.viewed),
+    ];
+    return [
+      { kind: "conflicts" as const, files: orderByViewed(files.filter((file) => file.conflicted)) },
+      { kind: "changes" as const, files: orderByViewed(files.filter((file) => !file.conflicted)) },
+    ].filter((group) => group.files.length > 0);
+  }, [files]);
+
+  return (
+    <div className="space-y-3">
+      {fileGroups.map((group) => (
+        <section
+          key={group.kind}
+          aria-label={group.kind === "conflicts" ? "Merge conflicts" : "Other changes"}
+        >
+          {fileGroups.length > 1 || group.kind === "conflicts" ? (
+            <div
+              className={cn(
+                "mb-1.5 flex items-center gap-1.5 border-b px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-wide",
+                group.kind === "conflicts"
+                  ? "border-destructive/30 text-destructive"
+                  : "border-border/70 text-muted-foreground",
+              )}
+            >
+              {group.kind === "conflicts" ? <TriangleAlertIcon className="size-3" /> : null}
+              <span>{group.kind === "conflicts" ? "Merge conflicts" : "Other changes"}</span>
+              <span className="font-mono font-normal tabular-nums opacity-70">
+                {group.files.length}
+              </span>
+            </div>
+          ) : null}
+          <div className="space-y-1">
+            {group.files.map((file) => {
+              const slashIndex = file.path.lastIndexOf("/");
+              const directory = slashIndex >= 0 ? file.path.slice(0, slashIndex + 1) : "";
+              const name = slashIndex >= 0 ? file.path.slice(slashIndex + 1) : file.path;
+              const isActive = activeFilePath === file.path;
+              return (
+                <div
+                  key={`file:${file.path}`}
+                  data-active={isActive || undefined}
+                  aria-current={isActive ? "true" : undefined}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onOpenFile(file.path)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onOpenFile(file.path);
+                    }
+                  }}
+                  // The open file has to be findable at a glance in a long list,
+                  // so it carries three cues instead of the one tint that hover
+                  // nearly matched: a tinted surface, an outline, and the solid
+                  // edge marker below. `bg-accent` alone is 4% white in dark
+                  // mode — indistinguishable from `hover:bg-accent/60`.
+                  className={cn(
+                    "group relative flex w-full cursor-pointer items-center gap-2 rounded-xl py-2 pr-3 pl-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    isActive
+                      ? cn(
+                          // Clips the edge marker to the row's rounded corners.
+                          "overflow-hidden",
+                          file.conflicted
+                            ? "bg-destructive/15 ring-1 ring-inset ring-destructive/40"
+                            : "bg-primary/12 ring-1 ring-inset ring-primary/35",
+                        )
+                      : file.conflicted
+                        ? "bg-destructive/[0.06] hover:bg-destructive/10"
+                        : "hover:bg-accent/60",
+                    // Dimming a viewed row must never outrank the selection.
+                    file.viewed && !isActive && "opacity-70",
+                  )}
+                >
+                  {isActive ? (
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        "absolute inset-y-0 left-0 w-1",
+                        file.conflicted ? "bg-destructive" : "bg-primary",
+                      )}
+                    />
+                  ) : null}
+                  <Checkbox
+                    checked={file.viewed}
+                    className="shrink-0"
+                    aria-label={
+                      file.viewed
+                        ? `Mark ${file.path} as not viewed`
+                        : `Mark ${file.path} as viewed`
+                    }
+                    onClick={(event) => event.stopPropagation()}
+                    onCheckedChange={(checked) => onToggleViewed(file.path, checked)}
+                  />
+                  <div className="flex min-w-0 flex-1 items-center gap-2 py-0.5">
+                    <PierreEntryIcon
+                      pathValue={file.path}
+                      kind="file"
+                      theme={resolvedTheme}
+                      className="size-4 shrink-0 text-muted-foreground/70"
+                    />
+                    {file.conflicted ? (
+                      <TriangleAlertIcon
+                        className="size-4 shrink-0 text-destructive"
+                        aria-label="Merge conflict"
+                      />
+                    ) : null}
+                    {/* overflow-hidden is the hard guarantee that a long name can
+                        never paint over the diff stat; the directory collapses
+                        first so the file name stays readable as long as
+                        possible, then the name itself ellipsizes. */}
+                    <span
+                      className={cn(
+                        "flex min-w-0 flex-1 items-baseline overflow-hidden font-mono text-xs",
+                        isActive && "font-medium",
+                      )}
+                    >
+                      {directory ? (
+                        <span className="min-w-0 shrink-[9999] truncate text-foreground">
+                          {directory}
+                        </span>
+                      ) : null}
+                      <span className="min-w-0 truncate text-foreground">{name}</span>
+                    </span>
+                    {hasNonZeroStat({ additions: file.additions, deletions: file.deletions }) ? (
+                      <span className="shrink-0 pl-2 font-mono text-[11px] tabular-nums">
+                        <DiffStatLabel additions={file.additions} deletions={file.deletions} />
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
 });
 
 function collectDirectoryPaths(nodes: ReadonlyArray<TurnDiffTreeNode>): string[] {

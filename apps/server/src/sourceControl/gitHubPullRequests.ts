@@ -17,6 +17,9 @@ export interface NormalizedGitHubPullRequestRecord {
   readonly isDraft?: boolean;
   readonly closedAt?: string | null;
   readonly mergedAt?: string | null;
+  readonly mergeability?: "clean" | "conflicting" | "blocked" | "unknown";
+  readonly checks?: "passing" | "failing" | "pending" | "unknown";
+  readonly failedCheckCount?: number;
   readonly updatedAt: Option.Option<DateTime.Utc>;
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
@@ -33,6 +36,18 @@ const GitHubPullRequestSchema = Schema.Struct({
   isDraft: Schema.optional(Schema.Boolean),
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
+  mergeable: Schema.optional(Schema.NullOr(Schema.String)),
+  mergeStateStatus: Schema.optional(Schema.NullOr(Schema.String)),
+  statusCheckRollup: Schema.optional(
+    Schema.NullOr(
+      Schema.Array(
+        Schema.Struct({
+          status: Schema.optional(Schema.NullOr(Schema.String)),
+          conclusion: Schema.optional(Schema.NullOr(Schema.String)),
+        }),
+      ),
+    ),
+  ),
   updatedAt: Schema.optional(Schema.OptionFromNullOr(Schema.DateTimeUtcFromString)),
   isCrossRepository: Schema.optional(Schema.Boolean),
   // gh < 2.47 exports headRepository as {id, name} only; nameWithOwner was
@@ -58,6 +73,26 @@ const GitHubPullRequestSchema = Schema.Struct({
 function trimOptionalString(value: string | null | undefined): string | null {
   const trimmed = value?.trim() ?? "";
   return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * Map GitHub's `mergeable` / `mergeStateStatus` pair to a single mergeability
+ * verdict. Shared between PR normalization and the merge path so a blocked
+ * merge can report the concrete reason (conflicts vs. checks/protection).
+ */
+export function classifyMergeability(input: {
+  readonly mergeable?: string | null | undefined;
+  readonly mergeStateStatus?: string | null | undefined;
+}): "clean" | "conflicting" | "blocked" | "unknown" {
+  const mergeable = input.mergeable?.toUpperCase();
+  const mergeStateStatus = input.mergeStateStatus?.toUpperCase();
+  return mergeable === "CONFLICTING" || mergeStateStatus === "DIRTY"
+    ? "conflicting"
+    : mergeable === "MERGEABLE" && mergeStateStatus === "CLEAN"
+      ? "clean"
+      : mergeStateStatus === "BLOCKED" || mergeStateStatus === "UNSTABLE"
+        ? "blocked"
+        : "unknown";
 }
 
 function normalizeGitHubPullRequestState(input: {
@@ -90,6 +125,41 @@ function normalizeGitHubPullRequestRecord(
     (headRepositoryOwnerLogin && headRepositoryName
       ? `${headRepositoryOwnerLogin}/${headRepositoryName}`
       : null);
+  const mergeability = classifyMergeability({
+    mergeable: raw.mergeable,
+    mergeStateStatus: raw.mergeStateStatus,
+  });
+  const failingConclusions = new Set([
+    "FAILURE",
+    "CANCELLED",
+    "TIMED_OUT",
+    "ACTION_REQUIRED",
+    "STARTUP_FAILURE",
+  ]);
+  const failedCheckCount = (raw.statusCheckRollup ?? []).filter((check) =>
+    failingConclusions.has(check.conclusion?.toUpperCase() ?? ""),
+  ).length;
+  const checks =
+    raw.statusCheckRollup == null
+      ? undefined
+      : (() => {
+          const rollup = raw.statusCheckRollup ?? [];
+          if (rollup.length === 0) return "passing" as const;
+          if (failedCheckCount > 0) {
+            return "failing" as const;
+          }
+          if (
+            rollup.some(
+              (check) =>
+                check.status?.toUpperCase() !== "COMPLETED" ||
+                !check.conclusion ||
+                check.conclusion.toUpperCase() === "NEUTRAL",
+            )
+          ) {
+            return "pending" as const;
+          }
+          return "passing" as const;
+        })();
 
   return {
     number: raw.number,
@@ -101,6 +171,9 @@ function normalizeGitHubPullRequestRecord(
     ...(raw.isDraft === true ? { isDraft: true } : {}),
     closedAt: raw.closedAt ?? null,
     mergedAt: raw.mergedAt ?? null,
+    ...(raw.mergeable != null || raw.mergeStateStatus != null ? { mergeability } : {}),
+    ...(checks ? { checks } : {}),
+    ...(raw.statusCheckRollup != null ? { failedCheckCount } : {}),
     updatedAt: raw.updatedAt ?? Option.none(),
     ...(typeof raw.isCrossRepository === "boolean"
       ? { isCrossRepository: raw.isCrossRepository }

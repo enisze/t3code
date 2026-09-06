@@ -12,8 +12,7 @@ import {
   type RuntimeMode,
   type TurnId,
 } from "@t3tools/contracts";
-import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
-import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
+import { isTemporaryWorktreeBranch, sanitizeWorktreeBranchPrefix } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -25,10 +24,13 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
+import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { ServerConfig } from "../../config.ts";
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
 import {
@@ -74,6 +76,18 @@ type ProviderIntentEvent = Extract<
       | "thread.settled";
   }
 >;
+
+// A worktree-safe basename for a dropped document: no path separators, only
+// portable filename characters, bounded length. Each document lives in its own
+// id-named subdir so distinct uploads never collide even with the same name.
+function safeDocumentBaseName(name: string): string {
+  const base = name.split(/[\\/]/).pop() ?? name;
+  const cleaned = base
+    .replace(/[^a-zA-Z0-9._-]+/g, "_")
+    .replace(/^\.+/, "")
+    .slice(0, 200);
+  return cleaned.length > 0 ? cleaned : "file";
+}
 
 function toNonEmptyProviderInput(value: string | undefined): string | undefined {
   const normalized = value?.trim();
@@ -293,15 +307,16 @@ function stalePendingRequestDetail(
   return `Stale pending ${requestKind} request: ${requestId}. Provider callback state does not survive app restarts or recovered sessions. Restart the turn to continue.`;
 }
 
-function buildGeneratedWorktreeBranchName(raw: string): string {
+function buildGeneratedWorktreeBranchName(raw: string, prefix?: string | null): string {
+  const resolvedPrefix = sanitizeWorktreeBranchPrefix(prefix);
   const normalized = raw
     .trim()
     .toLowerCase()
     .replace(/^refs\/heads\//, "")
     .replace(/['"`]/g, "");
 
-  const withoutPrefix = normalized.startsWith(`${WORKTREE_BRANCH_PREFIX}/`)
-    ? normalized.slice(`${WORKTREE_BRANCH_PREFIX}/`.length)
+  const withoutPrefix = normalized.startsWith(`${resolvedPrefix}/`)
+    ? normalized.slice(`${resolvedPrefix}/`.length)
     : normalized;
 
   const branchFragment = withoutPrefix
@@ -313,11 +328,14 @@ function buildGeneratedWorktreeBranchName(raw: string): string {
     .replace(/[./_-]+$/g, "");
 
   const safeFragment = branchFragment.length > 0 ? branchFragment : "update";
-  return `${WORKTREE_BRANCH_PREFIX}/${safeFragment}`;
+  return `${resolvedPrefix}/${safeFragment}`;
 }
 
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const serverConfig = yield* ServerConfig;
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerAuthService = yield* ProviderAuthService;
@@ -837,6 +855,54 @@ const make = Effect.gen(function* () {
     return startedSession.threadId;
   });
 
+  // Copy each persisted document attachment into <cwd>/.t3/attachments/<id>/
+  // (git-ignored) and return the worktree-relative paths to reference in the
+  // prompt. Best-effort: a file that fails to write is skipped, never aborting
+  // the turn. Images never reach here — they stay on the adapter content path.
+  const writeWorktreeDocuments = Effect.fnUntraced(function* (
+    cwd: string,
+    documents: ReadonlyArray<ChatAttachment>,
+  ) {
+    const written: string[] = [];
+    const attachmentsRoot = path.join(cwd, ".t3", "attachments");
+    const rootReady = yield* fileSystem.makeDirectory(attachmentsRoot, { recursive: true }).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
+    if (!rootReady) return written;
+    // Keep every attachment out of git without touching the user's own ignores.
+    yield* fileSystem
+      .writeFileString(path.join(attachmentsRoot, ".gitignore"), "*\n")
+      .pipe(Effect.ignore);
+    for (const document of documents) {
+      if (document.type !== "document") continue;
+      const sourcePath = resolveAttachmentPath({
+        attachmentsDir: serverConfig.attachmentsDir,
+        attachment: document,
+      });
+      if (!sourcePath) continue;
+      const bytes = yield* fileSystem.readFile(sourcePath).pipe(Effect.orElseSucceed(() => null));
+      if (!bytes) continue;
+      const destinationDir = path.join(attachmentsRoot, document.id);
+      const destinationName = safeDocumentBaseName(document.name);
+      const destinationReady = yield* fileSystem
+        .makeDirectory(destinationDir, { recursive: true })
+        .pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        );
+      if (!destinationReady) continue;
+      const wrote = yield* fileSystem
+        .writeFile(path.join(destinationDir, destinationName), bytes)
+        .pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        );
+      if (wrote) written.push(`.t3/attachments/${document.id}/${destinationName}`);
+    }
+    return written;
+  });
+
   const buildSendTurnRequestForThread = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
     readonly messageText: string;
@@ -860,6 +926,31 @@ const make = Effect.gen(function* () {
     }
     const normalizedInput = toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];
+    // Documents are delivered as files in the worktree, not as model content;
+    // images stay on the adapter attachment path.
+    const documentAttachments = normalizedAttachments.filter(
+      (attachment) => attachment.type === "document",
+    );
+    const providerAttachments = normalizedAttachments.filter(
+      (attachment) => attachment.type === "image",
+    );
+    let providerInput = normalizedInput;
+    if (documentAttachments.length > 0) {
+      const project = yield* resolveProject(thread.projectId);
+      const cwd = resolveThreadWorkspaceCwd({ thread, projects: project ? [project] : [] });
+      if (cwd) {
+        const relativePaths = yield* writeWorktreeDocuments(cwd, documentAttachments);
+        if (relativePaths.length > 0) {
+          const block = [
+            relativePaths.length === 1
+              ? "The user attached a file, saved in the worktree at:"
+              : "The user attached files, saved in the worktree at:",
+            ...relativePaths.map((relativePath) => `- ${relativePath}`),
+          ].join("\n");
+          providerInput = providerInput ? `${providerInput}\n\n${block}` : block;
+        }
+      }
+    }
     const activeSession = yield* providerService
       .listSessions()
       .pipe(
@@ -890,8 +981,8 @@ const make = Effect.gen(function* () {
 
     return {
       threadId: input.threadId,
-      ...(normalizedInput ? { input: normalizedInput } : {}),
-      ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
+      ...(providerInput ? { input: providerInput } : {}),
+      ...(providerAttachments.length > 0 ? { attachments: providerAttachments } : {}),
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
     };
@@ -903,6 +994,7 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly branch: string | null;
     readonly worktreePath: string | null;
+    readonly worktreeBranchPrefix?: string | null;
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
   }) {
@@ -934,7 +1026,10 @@ const make = Effect.gen(function* () {
       });
       if (!generated) return;
 
-      const targetBranch = buildGeneratedWorktreeBranchName(generated.branch);
+      // Prefer the project's prefix, then the global default setting; an empty
+      // string or null resolves to the built-in default inside the builder.
+      const effectivePrefix = input.worktreeBranchPrefix ?? settings.worktreeBranchPrefix;
+      const targetBranch = buildGeneratedWorktreeBranchName(generated.branch, effectivePrefix);
       if (targetBranch === oldBranch) return;
 
       const renamed = yield* gitWorkflow.renameBranch({ cwd, oldBranch, newBranch: targetBranch });
@@ -1318,6 +1413,7 @@ const make = Effect.gen(function* () {
         threadId: event.payload.threadId,
         branch: thread.branch,
         worktreePath: thread.worktreePath,
+        worktreeBranchPrefix: project?.worktreeBranchPrefix ?? null,
         ...generationInput,
       }).pipe(Effect.forkScoped);
 
