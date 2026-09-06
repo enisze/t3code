@@ -239,6 +239,7 @@ export const DEFAULT_RESOLVE_PROMPT =
   "Resolve the merge conflicts between this branch and its origin/upstream branch. Fetch the latest origin branch, merge or rebase it into the current branch, and resolve every conflict so the working tree is clean. Preserve the intent of both sides, keep the build passing, and explain each conflict you resolved.";
 
 export const ClientSettingsSchema = Schema.Struct({
+  autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   loadBalancingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   loadBalancingWeights: LoadBalancingWeights.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   appearanceContrast: AppearanceContrast.pipe(
@@ -1277,6 +1278,7 @@ export const ServerSettingsPatch = Schema.Struct({
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
 export const ClientSettingsPatch = Schema.Struct({
+  autoOpenPlanSidebar: Schema.optionalKey(Schema.Boolean),
   loadBalancingEnabled: Schema.optionalKey(Schema.Boolean),
   loadBalancingWeights: Schema.optionalKey(LoadBalancingWeights),
   appearanceContrast: Schema.optionalKey(AppearanceContrast),
