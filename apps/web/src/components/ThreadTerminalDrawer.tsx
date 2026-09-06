@@ -67,6 +67,7 @@ import { terminalEnvironment } from "../state/terminal";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
 import { useAtomCommand } from "../state/use-atom-command";
 
+import { terminalOutputText } from "@t3tools/client-runtime/state/terminal";
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
 const MULTI_CLICK_SELECTION_ACTION_DELAY_MS = 260;
@@ -364,7 +365,9 @@ export function TerminalViewport({
       input: { threadId, terminalId, cols, rows },
     }),
   );
-  const terminalBuffer = terminalSession.buffer;
+  // upstream renamed TerminalSessionState.buffer to a structured .output;
+  // terminalOutputText flattens it back to the string this drawer renders.
+  const terminalBuffer = terminalOutputText(terminalSession.output);
   const terminalError = terminalSession.error;
   const terminalStatus = terminalSession.status;
   const terminalVersion = terminalSession.version;

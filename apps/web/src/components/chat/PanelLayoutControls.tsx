@@ -14,7 +14,8 @@ interface PanelLayoutControlsProps {
   rightPanelShortcutLabel: string | null;
   rightPanelUnavailableLabel?: string;
   /** Running + waiting subagents in this thread; badges the right panel toggle. */
-  liveAgentCount: number;
+  /** Defaults to 0; the fork has no agents surface to count. */
+  liveAgentCount?: number;
   onToggleTerminal: () => void;
   onToggleRightPanel: () => void;
 }
@@ -28,7 +29,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   rightPanelOpen,
   rightPanelShortcutLabel,
   rightPanelUnavailableLabel = "Right panel is unavailable",
-  liveAgentCount,
+  liveAgentCount = 0,
   onToggleTerminal,
   onToggleRightPanel,
 }: PanelLayoutControlsProps) {
