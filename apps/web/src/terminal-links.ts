@@ -217,3 +217,50 @@ export function resolvePathLinkTarget(rawPath: string, cwd: string): string {
 
   return formatFilePathPosition({ ...position, path: resolvedPath });
 }
+
+export function resolveWrappedTerminalLinkRange(
+  wrappedLine: WrappedTerminalLinkLine,
+  match: Pick<TerminalLinkMatch, "start" | "end">,
+): TerminalLinkBufferRange {
+  return {
+    start: resolveCharacterPosition(wrappedLine.segments, match.start),
+    end: resolveCharacterPosition(wrappedLine.segments, match.end - 1),
+  };
+}
+
+export function wrappedTerminalLinkRangeIntersectsBufferLine(
+  range: TerminalLinkBufferRange,
+  bufferLineNumber: number,
+): boolean {
+  return range.start.y <= bufferLineNumber && bufferLineNumber <= range.end.y;
+}
+
+export interface TerminalLinkBufferRange {
+  start: TerminalLinkBufferPosition;
+  end: TerminalLinkBufferPosition;
+}
+
+function resolveCharacterPosition(
+  segments: ReadonlyArray<WrappedTerminalLinkLineSegment>,
+  characterIndex: number,
+): TerminalLinkBufferPosition {
+  for (const segment of segments) {
+    if (characterIndex < segment.endIndex) {
+      return {
+        x: characterIndex - segment.startIndex + 1,
+        y: segment.bufferLineNumber,
+      };
+    }
+  }
+
+  const lastSegment = segments[segments.length - 1];
+  return {
+    x: Math.max(lastSegment?.text.length ?? 0, 1),
+    y: lastSegment?.bufferLineNumber ?? 1,
+  };
+}
+
+export interface TerminalLinkBufferPosition {
+  x: number;
+  y: number;
+}

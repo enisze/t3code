@@ -1,3 +1,6 @@
+
+import { videoMimeType } from "@t3tools/shared/video";
+import type { ContractChatFileAttachment, ContractChatUnknownAttachment } from "@t3tools/contracts";
 import type {
   ChatImageAttachment as ContractChatImageAttachment,
   ChatDocumentAttachment as ContractChatDocumentAttachment,
@@ -61,3 +64,36 @@ export interface ThreadTurnState {
 
 export type SidebarThreadSummary = EnvironmentThreadShell;
 export type ThreadSession = OrchestrationSession;
+
+export interface ChatFileAttachment extends ContractChatFileAttachment {
+  readonly previewUrl?: string;
+  readonly downloadable?: boolean;
+}
+
+// Attachment types this build does not know pass through with the contract
+// shape. The UI renders them as inert rows so a newer server cannot crash an
+// older client.
+export type ChatUnknownAttachment = ContractChatUnknownAttachment;
+
+// The union has an open member (`type: string`), so a literal comparison does
+// not narrow. Use these guards wherever type-specific fields are read.
+export function isImageAttachment(attachment: ChatAttachment): attachment is ChatImageAttachment {
+  return attachment.type === "image";
+}
+
+export function isFileAttachment(attachment: ChatAttachment): attachment is ChatFileAttachment {
+  return attachment.type === "file";
+}
+
+export function isVideoAttachment(attachment: ChatFileAttachment): boolean {
+  return videoMimeType(attachment) !== null;
+}
+
+export function isBrowserPreviewAttachment(attachment: ChatFileAttachment): boolean {
+  const mimeType = attachment.mimeType.split(";", 1)[0]?.trim().toLowerCase();
+  return (
+    /\.(?:html?|pdf)$/i.test(attachment.name) ||
+    mimeType === "application/pdf" ||
+    mimeType === "text/html"
+  );
+}

@@ -1,5 +1,6 @@
 import * as Option from "effect/Option";
 import * as Arr from "effect/Array";
+import { shallow } from "zustand/vanilla/shallow";
 import {
   ApprovalRequestId,
   isToolLifecycleItemType,
@@ -1390,4 +1391,19 @@ export function derivePhase(session: ThreadSession | null): SessionPhase {
   if (session.status === "starting") return "connecting";
   if (session.status === "running") return "running";
   return "ready";
+}
+
+/** Text and update time do not change a streaming assistant message's timeline structure. */
+export function isStreamingMessageTextUpdate(previous: ChatMessage, next: ChatMessage): boolean {
+  if (
+    previous.role !== "assistant" ||
+    next.role !== "assistant" ||
+    !previous.streaming ||
+    !next.streaming
+  ) {
+    return false;
+  }
+  const { text: _previousText, updatedAt: _previousUpdatedAt, ...previousMetadata } = previous;
+  const { text: _nextText, updatedAt: _nextUpdatedAt, ...nextMetadata } = next;
+  return shallow(previousMetadata, nextMetadata);
 }

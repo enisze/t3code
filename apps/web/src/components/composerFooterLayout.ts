@@ -192,3 +192,6 @@ export function resolveRestingComposerControlsLayout(
       : minimumWidth <= hostWidth;
   return { hiddenCount, visible };
 }
+
+export const COMPOSER_PRIMARY_ACTIONS_COMPACT_BREAKPOINT_PX =
+  COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX;

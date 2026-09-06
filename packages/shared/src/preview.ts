@@ -96,3 +96,14 @@ export function normalizePreviewUrl(rawUrl: string): string {
   }
   return parsed.href;
 }
+
+/** True when a raw URL string looks like a loopback dev URL we can preview. */
+export function isPreviewableUrl(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    return isLoopbackHost(parsed.hostname);
+  } catch {
+    return false;
+  }
+}

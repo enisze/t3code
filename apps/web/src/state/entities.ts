@@ -21,6 +21,7 @@ import {
 } from "./shell";
 import { environmentThreadDetails, environmentThreadShells } from "./threads";
 
+import type { OrchestrationProposedPlan } from "@t3tools/contracts";
 const EMPTY_THREAD_REFS: ReadonlyArray<ScopedThreadRef> = Object.freeze([]);
 
 const EMPTY_PROJECT_ATOM = Atom.make<EnvironmentProject | null>(null).pipe(
@@ -238,3 +239,21 @@ export function readEnvironmentThreadRefs(
 export function readThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
   return appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
 }
+
+export function readThreadRefs(): ReadonlyArray<ScopedThreadRef> {
+  return appAtomRegistry.get(environmentThreadShells.threadRefsAtom);
+}
+
+export function useThreadProposedPlans(
+  ref: ScopedThreadRef | null,
+): ReadonlyArray<OrchestrationProposedPlan> {
+  return useAtomValue(
+    ref === null ? EMPTY_PROPOSED_PLANS_ATOM : environmentThreadDetails.proposedPlansAtom(ref),
+  );
+}
+
+const EMPTY_PROPOSED_PLANS_ATOM = Atom.make(EMPTY_PROPOSED_PLANS).pipe(
+  Atom.withLabel("web-thread-proposed-plans:empty"),
+);
+
+const EMPTY_PROPOSED_PLANS: ReadonlyArray<OrchestrationProposedPlan> = Object.freeze([]);
