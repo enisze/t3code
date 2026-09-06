@@ -41,6 +41,7 @@ import { decodeProjectScriptKeybindingRule, keybindingValueForCommand } from "..
 import { buildProjectScript, commandForProjectScript, nextProjectScriptId } from "../../projectScripts";
 import type { ProjectScript, ResolvedKeybindingsConfig, ServerSettings } from "@t3tools/contracts";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import type { NewProjectScriptInput } from "../ProjectScriptDialog";
 /**
  * Per-project settings page. Hosts every project-scoped setting (name, git
  * defaults, files copied into new worktrees, agents, scripts, preview) in the

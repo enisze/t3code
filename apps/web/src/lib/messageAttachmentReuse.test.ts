@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ChatAttachment } from "../types";
+import { isImageAttachment } from "../types";
 import {
   buildUnavailableAttachmentsToastCopy,
   reuseMessageAttachments,
@@ -29,7 +30,7 @@ function documentAttachment(name: string, previewUrl?: string): ChatAttachment {
 }
 
 const loadFile = async (attachment: ChatAttachment) =>
-  attachment.previewUrl
+  isImageAttachment(attachment) && attachment.previewUrl
     ? new File([`bytes-of-${attachment.name}`], attachment.name, { type: attachment.mimeType })
     : null;
 
