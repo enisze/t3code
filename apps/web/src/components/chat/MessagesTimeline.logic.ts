@@ -760,7 +760,6 @@ function replaceStreamingMessageRows(
 ): MessagesTimelineRow[] | null {
   const {
     timelineEntries: previousEntries,
-    turnDiffSummaries: previousSummaries,
     latestTurn: previousLatestTurn,
     expandedTurnIds: previousExpandedTurns,
     expandedWorkGroupIds: previousExpandedGroups,
@@ -768,7 +767,6 @@ function replaceStreamingMessageRows(
   } = previous.input;
   const {
     timelineEntries,
-    turnDiffSummaries,
     latestTurn,
     expandedTurnIds,
     expandedWorkGroupIds,
@@ -777,7 +775,6 @@ function replaceStreamingMessageRows(
   if (
     timelineEntries.length !== previousEntries.length ||
     !shallow(previousContext, context) ||
-    !shallow(previousSummaries, turnDiffSummaries) ||
     !shallow(previousLatestTurn, latestTurn) ||
     !shallow(previousExpandedTurns, expandedTurnIds) ||
     !shallow(previousExpandedGroups, expandedWorkGroupIds)
@@ -802,7 +799,7 @@ function replaceStreamingMessageRows(
   }
   if (replacements.size === 0) return previous.rows;
   return previous.rows.map((row) => {
-    if (row.kind !== "message" && row.kind !== "assistant-meta") return row;
+    if (row.kind !== "message") return row;
     const message = replacements.get(row.message);
     return message ? { ...row, message } : row;
   });
