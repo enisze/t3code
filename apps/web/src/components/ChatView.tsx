@@ -244,7 +244,7 @@ import { FileViewModeToggle } from "./FileViewModeToggle";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
 import { WorktreeThreadTabs } from "./chat/WorktreeThreadTabs";
-import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
+import { PanelLayoutControls } from "./chat/PanelLayoutControls";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { resolveEffectiveEnvMode, resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
@@ -3533,12 +3533,6 @@ function ChatViewContent(props: ChatViewProps) {
     }
     useRightPanelStore.getState().toggleVisibility(workspaceThreadRef);
   }, [workspaceThreadRef, closePlanSidebar, closePreviewPanel, planSidebarOpen, rightPanelOpen]);
-  const toggleRightPanelMaximized = useCallback(() => {
-    if (!canMaximizeRightPanel) return;
-    setMaximizedRightPanelThreadKey((threadKey) =>
-      threadKey === routeThreadKey ? null : routeThreadKey,
-    );
-  }, [canMaximizeRightPanel, routeThreadKey]);
   const cleanupRightPanelSurfaces = useCallback(
     (surfaces: readonly RightPanelSurface[]) => {
       if (!workspaceThreadRef) return;
@@ -5905,15 +5899,19 @@ function ChatViewContent(props: ChatViewProps) {
       className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]"
       data-workspace-titlebar-controls
     >
-      {rightPanelOpen && !shouldUsePlanSidebarSheet ? (
-        <span className="pointer-events-auto flex shrink-0">
-          <RightPanelMaximizeControl
-            maximized={rightPanelMaximized}
-            onToggle={toggleRightPanelMaximized}
-          />
-        </span>
-      ) : null}
-      <div className="pointer-events-auto flex h-full items-center">{panelToggleControls}</div>
+      <div className="pointer-events-auto flex h-full items-center">
+        <PanelLayoutControls
+          showTerminalControl={false}
+          terminalAvailable={activeProject !== null}
+          terminalOpen={terminalUiState.terminalOpen}
+          terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
+          rightPanelAvailable={activeProject !== null}
+          rightPanelOpen={rightPanelOpen}
+          rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
+          onToggleTerminal={toggleTerminalVisibility}
+          onToggleRightPanel={toggleRightPanel}
+        />
+      </div>
     </div>
   );
   const rightPanelTabActions = activeProject ? (

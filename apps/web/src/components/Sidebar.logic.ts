@@ -425,7 +425,7 @@ export type SidebarV2Status = "approval" | "input" | "working" | "failed" | "rea
 
 type SidebarV2StatusInput = Pick<
   SidebarThreadSummary,
-  "hasPendingApprovals" | "hasPendingUserInput" | "session"
+  "hasPendingApprovals" | "hasPendingUserInput" | "session" | "latestTurn"
 >;
 
 export function resolveSidebarV2Status(thread: SidebarV2StatusInput): SidebarV2Status {
@@ -438,7 +438,14 @@ export function resolveSidebarV2Status(thread: SidebarV2StatusInput): SidebarV2S
   if (thread.session?.status === "running" || thread.session?.status === "starting") {
     return "working";
   }
-  if (thread.session?.status === "error") {
+  // A session-level error is only this thread's state while it is still the
+  // last word. The session record keeps `error` after a provider process dies,
+  // so a thread that went on to finish a turn would otherwise fly a red flag
+  // forever — sidebar v1 never labelled these rows at all.
+  if (
+    thread.session?.status === "error" &&
+    !isLatestTurnSettled(thread.latestTurn, thread.session)
+  ) {
     return "failed";
   }
   return "ready";
