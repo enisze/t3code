@@ -671,7 +671,10 @@ export default function TasksDock({
           <TooltipPopup side="top">{collapsed ? "Expand" : "Collapse"}</TooltipPopup>
         </Tooltip>
 
-        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+        {/* Full height plus a hidden scrollbar: an overflowing tab strip would
+            otherwise reserve gutter space at its bottom, lifting the tabs and
+            leaving the run button beside it looking low. */}
+        <div className="flex h-full min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {tabs.map((tab) => {
             const active = !collapsed && tab.id === activeTab.id;
             const running = runningSet.has(tab.terminalId);
