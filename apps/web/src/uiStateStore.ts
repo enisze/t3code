@@ -3,7 +3,8 @@ import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
 
 export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
-const THREAD_CHANGED_FILES_EXPANSION_VERSION = 1;
+// Version 1 stored card visibility, not folder expansion.
+const THREAD_CHANGED_FILES_EXPANSION_VERSION = 2;
 const LEGACY_PERSISTED_STATE_KEYS = [
   "t3code:renderer-state:v8",
   "t3code:renderer-state:v7",
@@ -27,7 +28,8 @@ export interface PersistedUiState {
   expandedProjectCwds?: string[];
   projectOrderCwds?: string[];
   defaultAdvertisedEndpointKey?: string | null;
-  threadChangedFilesExpansionVersion?: typeof THREAD_CHANGED_FILES_EXPANSION_VERSION;
+  sidebarProjectScopeKey?: string | null;
+  threadChangedFilesExpansionVersion?: number;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
 }
 
@@ -41,6 +43,10 @@ export interface UiProjectState {
   // projects start hidden again on every reload.
   showHiddenProjects: boolean;
   projectOrder: string[];
+  // Logical project key the sidebar list is scoped to, or null for "all
+  // projects". Lives here so routes that unmount the sidebar (Settings)
+  // cannot reset the filter.
+  sidebarProjectScopeKey: string | null;
 }
 
 export interface UiThreadState {
@@ -64,6 +70,7 @@ const initialState: UiState = {
   projectHiddenById: {},
   showHiddenProjects: false,
   projectOrder: [],
+  sidebarProjectScopeKey: null,
   threadLastVisitedAtById: {},
   worktreeLastActivityAtByKey: {},
   threadChangedFilesExpandedById: {},
@@ -104,6 +111,10 @@ function sanitizeBooleanRecord(value: unknown): Record<string, boolean> {
       (entry): entry is [string, boolean] => entry[0].length > 0 && typeof entry[1] === "boolean",
     ),
   );
+}
+
+function sanitizeOptionalKey(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 function sanitizeTimestampRecord(value: unknown): Record<string, string> {
@@ -156,11 +167,8 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
         ? sanitizePersistedThreadChangedFilesExpanded(parsed.threadChangedFilesExpandedById)
         : {},
-    defaultAdvertisedEndpointKey:
-      typeof parsed.defaultAdvertisedEndpointKey === "string" &&
-      parsed.defaultAdvertisedEndpointKey.length > 0
-        ? parsed.defaultAdvertisedEndpointKey
-        : null,
+    defaultAdvertisedEndpointKey: sanitizeOptionalKey(parsed.defaultAdvertisedEndpointKey),
+    sidebarProjectScopeKey: sanitizeOptionalKey(parsed.sidebarProjectScopeKey),
   };
 }
 
@@ -233,6 +241,7 @@ export function persistState(state: UiState): void {
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         worktreeLastActivityAtByKey: state.worktreeLastActivityAtByKey,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
+        sidebarProjectScopeKey: state.sidebarProjectScopeKey,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
         threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
       } satisfies PersistedUiState),
@@ -351,6 +360,17 @@ export function setDefaultAdvertisedEndpointKey(state: UiState, key: string | nu
   return {
     ...state,
     defaultAdvertisedEndpointKey: nextKey,
+  };
+}
+
+export function setSidebarProjectScopeKey(state: UiState, projectKey: string | null): UiState {
+  const nextKey = sanitizeOptionalKey(projectKey);
+  if (state.sidebarProjectScopeKey === nextKey) {
+    return state;
+  }
+  return {
+    ...state,
+    sidebarProjectScopeKey: nextKey,
   };
 }
 
@@ -480,6 +500,7 @@ interface UiStateStore extends UiState {
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
+  setSidebarProjectScopeKey: (projectKey: string | null) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   setProjectHidden: (projectIds: string | readonly string[], hidden: boolean) => void;
   setShowHiddenProjects: (show: boolean) => void;
@@ -502,6 +523,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
+  setSidebarProjectScopeKey: (projectKey) =>
+    set((state) => setSidebarProjectScopeKey(state, projectKey)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
   setProjectHidden: (projectIds, hidden) =>

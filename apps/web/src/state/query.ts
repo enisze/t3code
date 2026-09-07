@@ -58,3 +58,10 @@ export function useEnvironmentQuery<A, E>(
     refresh,
   };
 }
+
+export function formatEnvironmentQueryError(cause: Cause.Cause<unknown>): string {
+  const error = Cause.squash(cause);
+  return error instanceof Error && error.message.trim().length > 0
+    ? error.message
+    : "The environment request failed.";
+}

@@ -244,7 +244,7 @@ import { FileViewModeToggle } from "./FileViewModeToggle";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
 import { WorktreeThreadTabs } from "./chat/WorktreeThreadTabs";
-import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
+import { PanelLayoutControls } from "./chat/PanelLayoutControls";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { resolveEffectiveEnvMode, resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
@@ -326,6 +326,7 @@ import {
   serverUpdateGuidance,
 } from "../versionSkew";
 import { useAssetUrls } from "../assets/assetUrls";
+import { isImageAttachment } from "../types";
 import {
   buildUnavailableAttachmentsToastCopy,
   reuseMessageAttachments,
@@ -2055,7 +2056,7 @@ function ChatViewContent(props: ChatViewProps) {
           <>
             Client {versionMismatch.clientVersion} is connected to {versionMismatchServerLabel}{" "}
             {versionMismatch.serverVersion}.{" "}
-            {serverUpdateGuidance(versionMismatchSelfUpdate, versionMismatchServerLabel)}
+            {versionMismatchSelfUpdate ? serverUpdateGuidance(versionMismatchSelfUpdate) : null}
           </>
         ),
         // The desktop-managed guidance is already the description; the action
@@ -2318,7 +2319,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
 
       const serverPreviewUrls = serverMessage.attachments.flatMap((attachment) =>
-        attachment.type === "image" && attachment.previewUrl ? [attachment.previewUrl] : [],
+        isImageAttachment(attachment) && attachment.previewUrl ? [attachment.previewUrl] : [],
       );
       if (
         serverPreviewUrls.length === 0 ||
@@ -2406,7 +2407,10 @@ function ChatViewContent(props: ChatViewProps) {
               }
               const handoffPreviewUrl = handoffPreviewUrls[imageIndex];
               imageIndex += 1;
-              if (!handoffPreviewUrl || attachment.previewUrl === handoffPreviewUrl) {
+              if (
+                !handoffPreviewUrl ||
+                (isImageAttachment(attachment) && attachment.previewUrl === handoffPreviewUrl)
+              ) {
                 return attachment;
               }
               changed = true;
@@ -3529,12 +3533,6 @@ function ChatViewContent(props: ChatViewProps) {
     }
     useRightPanelStore.getState().toggleVisibility(workspaceThreadRef);
   }, [workspaceThreadRef, closePlanSidebar, closePreviewPanel, planSidebarOpen, rightPanelOpen]);
-  const toggleRightPanelMaximized = useCallback(() => {
-    if (!canMaximizeRightPanel) return;
-    setMaximizedRightPanelThreadKey((threadKey) =>
-      threadKey === routeThreadKey ? null : routeThreadKey,
-    );
-  }, [canMaximizeRightPanel, routeThreadKey]);
   const cleanupRightPanelSurfaces = useCallback(
     (surfaces: readonly RightPanelSurface[]) => {
       if (!workspaceThreadRef) return;
@@ -5895,14 +5893,25 @@ function ChatViewContent(props: ChatViewProps) {
     />
   );
   const panelLayoutControls = (
-    <div className="workspace-titlebar-controls z-50 gap-1 [-webkit-app-region:no-drag]">
-      {rightPanelOpen && !shouldUsePlanSidebarSheet ? (
-        <RightPanelMaximizeControl
-          maximized={rightPanelMaximized}
-          onToggle={toggleRightPanelMaximized}
+    <div
+      // Keep one viewport anchor inside the header's no-drag region. The header
+      // can shrink behind the right panel without moving the controls.
+      className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]"
+      data-workspace-titlebar-controls
+    >
+      <div className="pointer-events-auto flex h-full items-center">
+        <PanelLayoutControls
+          showTerminalControl={false}
+          terminalAvailable={activeProject !== null}
+          terminalOpen={terminalUiState.terminalOpen}
+          terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
+          rightPanelAvailable={activeProject !== null}
+          rightPanelOpen={rightPanelOpen}
+          rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
+          onToggleTerminal={toggleTerminalVisibility}
+          onToggleRightPanel={toggleRightPanel}
         />
-      ) : null}
-      {panelToggleControls}
+      </div>
     </div>
   );
   const rightPanelTabActions = activeProject ? (
@@ -6188,7 +6197,6 @@ function ChatViewContent(props: ChatViewProps) {
                   <button
                     type="button"
                     aria-label="Scroll to end"
-                    title="Scroll to end"
                     onClick={() => scrollToEnd(true)}
                     className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/60 bg-card px-3 py-1 text-muted-foreground text-xs shadow-sm transition-colors hover:border-border hover:text-foreground hover:cursor-pointer"
                   >

@@ -31,10 +31,13 @@ import { readThreadShell, useProjects, useThread } from "../state/entities";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
 import { primaryServerSettingsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
+import { resolveDefaultThreadEnvMode } from "@t3tools/shared/threadEnvMode";
+import { readT3ProjectFileDefaultThreadEnvMode } from "../lib/t3ProjectFileDefaults";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
 import { activateWorkspaceChat } from "../workspaceContentTabsStore";
 
+import type { ThreadId } from "@t3tools/contracts";
 interface NewThreadOptions {
   branch?: string | null;
   worktreePath?: string | null;
@@ -73,7 +76,10 @@ export function useNewThreadHandler() {
   }, [router]);
 
   return useCallback(
-    (projectRef: ScopedProjectRef, options?: NewThreadOptions): Promise<void> => {
+    (
+      projectRef: ScopedProjectRef,
+      options?: NewThreadOptions,
+    ): Promise<{ readonly threadId: ThreadId } | null> => {
       const {
         addDocuments,
         addImages,
@@ -87,6 +93,8 @@ export function useNewThreadHandler() {
         setModelSelection,
         setPrompt,
       } = useComposerDraftStore.getState();
+      const requestingRouteHref = router.state.location.href;
+      const routeChangedSinceRequest = () => router.state.location.href !== requestingRouteHref;
       const currentRouteTarget = getCurrentRouteTarget();
       // A new thread carries the user's *working mode* from the thread being
       // viewed: model (including options like reasoning effort and context
@@ -133,6 +141,21 @@ export function useNewThreadHandler() {
           candidate.id === projectRef.projectId &&
           candidate.environmentId === projectRef.environmentId,
       );
+      // A project's own setting wins; failing that the repo's `.t3` project
+      // file gets consulted (a read, hence async) before the global default.
+      const resolveDefaultEnvMode = async () => {
+        const consultProjectFile = project !== undefined && project.defaultThreadEnvMode == null;
+        return resolveDefaultThreadEnvMode({
+          projectSetting: project?.defaultThreadEnvMode,
+          projectFile: consultProjectFile
+            ? await readT3ProjectFileDefaultThreadEnvMode(
+                project.environmentId,
+                project.workspaceRoot,
+              )
+            : null,
+          globalDefault: primaryServerSettings.defaultThreadEnvMode,
+        });
+      };
       // A project that pins a model in its settings expects every fresh chat
       // or review to start on that model, so the project's configured default
       // wins outright over both the globally sticky last-used model and the
@@ -181,7 +204,10 @@ export function useNewThreadHandler() {
           // preserved. When the draft is already open and no options were
           // passed, leave it alone entirely — the user may have just picked a
           // branch in the composer.
-          const defaultEnvMode = primaryServerSettings.defaultThreadEnvMode;
+          const defaultEnvMode = hasExplicitWorkspaceOption
+            ? primaryServerSettings.defaultThreadEnvMode
+            : await resolveDefaultEnvMode();
+          if (routeChangedSinceRequest()) return null;
           const workspaceContext = hasExplicitWorkspaceOption
             ? {
                 ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
@@ -236,13 +262,14 @@ export function useNewThreadHandler() {
             currentRouteTarget?.kind === "draft" &&
             currentRouteTarget.draftId === reusableStoredDraftThread.draftId
           ) {
-            return;
+            return { threadId: reusableStoredDraftThread.threadId };
           }
           await router.navigate({
             to: "/draft/$draftId",
             params: { draftId: reusableStoredDraftThread.draftId },
             replace: options?.replace ?? false,
           });
+          return { threadId: reusableStoredDraftThread.threadId };
         })();
       }
 
@@ -276,14 +303,16 @@ export function useNewThreadHandler() {
           ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
           ...(hasStartFromOriginOption ? { startFromOrigin: options?.startFromOrigin } : {}),
         });
-        return Promise.resolve();
+        // Reusing an existing draft: it already carries its thread.
+        return Promise.resolve(null);
       }
 
       const draftId = newDraftId();
       const threadId = newThreadId();
       const createdAt = new Date().toISOString();
-      const initialEnvMode = options?.envMode ?? primaryServerSettings.defaultThreadEnvMode;
       return (async () => {
+        const initialEnvMode = options?.envMode ?? (await resolveDefaultEnvMode());
+        if (routeChangedSinceRequest()) return null;
         setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, draftId, {
           threadId,
           createdAt,
@@ -330,6 +359,7 @@ export function useNewThreadHandler() {
           params: { draftId },
           replace: options?.replace ?? false,
         });
+        return { threadId };
       })();
     },
     [getCurrentRouteTarget, primaryServerSettings, projectGroupingSettings, projects, router],

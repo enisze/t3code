@@ -30,7 +30,8 @@ const EMPTY_REUSED_ATTACHMENTS: ReusedMessageAttachments = {
 export type MessageAttachmentFileLoader = (attachment: ChatAttachment) => Promise<File | null>;
 
 export async function loadMessageAttachmentFile(attachment: ChatAttachment): Promise<File | null> {
-  const url = attachment.previewUrl;
+  // Images and documents both carry a re-readable URL; file/unknown rows do not.
+  const url = "previewUrl" in attachment ? attachment.previewUrl : undefined;
   if (!url) {
     return null;
   }

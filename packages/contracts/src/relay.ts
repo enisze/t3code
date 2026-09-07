@@ -8,7 +8,12 @@ import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 import * as HttpApiSecurity from "effect/unstable/httpapi/HttpApiSecurity";
 import * as OpenApi from "effect/unstable/httpapi/OpenApi";
 
-import { EnvironmentId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  DpopFailureReason,
+  EnvironmentId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 
 export const RelayAgentAwarenessPlatform = Schema.Literal("ios");
@@ -322,6 +327,9 @@ export const RelayAuthInvalidReason = Schema.Literals([
 ]);
 export type RelayAuthInvalidReason = typeof RelayAuthInvalidReason.Type;
 
+export const RelayDpopFailureReason = DpopFailureReason;
+export type RelayDpopFailureReason = typeof RelayDpopFailureReason.Type;
+
 export const RelayInternalErrorReason = Schema.Literals([
   "database_unavailable",
   "persistence_failed",
@@ -335,6 +343,8 @@ export class RelayAuthInvalidError extends Schema.TaggedErrorClass<RelayAuthInva
   {
     code: Schema.Literal("auth_invalid"),
     reason: RelayAuthInvalidReason,
+    // Older relays do not send a DPoP failure category.
+    dpopFailureReason: Schema.optionalKey(RelayDpopFailureReason),
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 401 },
@@ -371,16 +381,34 @@ export class RelayEnvironmentLinkProofInvalidError extends Schema.TaggedErrorCla
   }
 }
 
+export const RelayEnvironmentConnectNotAuthorizedReason = Schema.Literals([
+  "client_proof_key_thumbprint_missing",
+  "environment_link_not_found",
+  "endpoint_provider_not_managed",
+  "managed_endpoint_allocation_not_found",
+  "managed_endpoint_base_domain_not_configured",
+  "managed_endpoint_allocation_not_ready",
+  "managed_endpoint_hostname_invalid",
+  "managed_endpoint_mismatch",
+]);
+export type RelayEnvironmentConnectNotAuthorizedReason =
+  typeof RelayEnvironmentConnectNotAuthorizedReason.Type;
+
 export class RelayEnvironmentConnectNotAuthorizedError extends Schema.TaggedErrorClass<RelayEnvironmentConnectNotAuthorizedError>()(
   "RelayEnvironmentConnectNotAuthorizedError",
   {
     code: Schema.Literal("environment_connect_not_authorized"),
+    // Optional so responses from relays deployed before the reason was
+    // threaded through still decode.
+    reason: Schema.optional(RelayEnvironmentConnectNotAuthorizedReason),
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 403 },
 ) {
   override get message(): string {
-    return "Relay environment connection is not authorized";
+    return this.reason
+      ? `Relay environment connection is not authorized: ${this.reason}`
+      : "Relay environment connection is not authorized";
   }
 }
 
@@ -847,7 +875,7 @@ export const RelayHealthResponse = Schema.Struct({
 });
 export type RelayHealthResponse = typeof RelayHealthResponse.Type;
 
-export const RelayHealthGroup = HttpApiGroup.make("health")
+const RelayHealthGroup = HttpApiGroup.make("health")
   .add(
     HttpApiEndpoint.get("health", "/health", {
       success: RelayHealthResponse,
@@ -856,7 +884,7 @@ export const RelayHealthGroup = HttpApiGroup.make("health")
   )
   .annotate(OpenApi.Description, "Service health and readiness.");
 
-export const RelayMetadataGroup = HttpApiGroup.make("metadata")
+const RelayMetadataGroup = HttpApiGroup.make("metadata")
   .add(
     HttpApiEndpoint.get("authorizationServer", "/.well-known/oauth-authorization-server", {
       success: RelayAuthorizationServerMetadata,
@@ -918,7 +946,7 @@ export const RelayUnregisterDeviceEndpoint = HttpApiEndpoint.delete(
   },
 ).annotate(OpenApi.Summary, "Unregister a mobile device");
 
-export const RelayMobileGroup = HttpApiGroup.make("mobile")
+const RelayMobileGroup = HttpApiGroup.make("mobile")
   .add(
     RelayRegisterDeviceEndpoint,
     RelayRegisterLiveActivityEndpoint,
@@ -928,7 +956,7 @@ export const RelayMobileGroup = HttpApiGroup.make("mobile")
   .annotate(OpenApi.Description, "Mobile push-notification and Live Activity registration.")
   .middleware(RelayDpopClientAuth);
 
-export const RelayClientGroup = HttpApiGroup.make("client")
+const RelayClientGroup = HttpApiGroup.make("client")
   .add(
     HttpApiEndpoint.get("listEnvironments", "/v1/environments", {
       headers: RelayBearerRequestHeaders,
@@ -997,7 +1025,7 @@ export const RelayExchangeDpopAccessTokenEndpoint = HttpApiEndpoint.post(
     "Bootstrap endpoint. Send the DPoP proof JWT in the dpop header and the Clerk token in subject_token. The returned access token is bound to the proof key.",
   );
 
-export const RelayTokenGroup = HttpApiGroup.make("token")
+const RelayTokenGroup = HttpApiGroup.make("token")
   .add(RelayExchangeDpopAccessTokenEndpoint)
   .annotate(OpenApi.Description, "OAuth token exchange for DPoP-bound client access.");
 
@@ -1028,12 +1056,12 @@ export const RelayGetEnvironmentStatusEndpoint = HttpApiEndpoint.post(
   },
 ).annotate(OpenApi.Summary, "Check environment status");
 
-export const RelayDpopClientGroup = HttpApiGroup.make("dpopClient")
+const RelayDpopClientGroup = HttpApiGroup.make("dpopClient")
   .add(RelayConnectEnvironmentEndpoint, RelayGetEnvironmentStatusEndpoint)
   .annotate(OpenApi.Description, "DPoP-authenticated client access to linked environments.")
   .middleware(RelayDpopClientAuth);
 
-export const RelayServerGroup = HttpApiGroup.make("server")
+const RelayServerGroup = HttpApiGroup.make("server")
   .add(
     HttpApiEndpoint.post(
       "publishAgentActivity",

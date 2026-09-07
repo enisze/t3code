@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -23,6 +24,7 @@ import {
   classifyMergeability,
   decodeGitHubPullRequestJson,
   decodeGitHubPullRequestListJson,
+  type NormalizedGitHubPullRequestRecord,
 } from "./gitHubPullRequests.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -52,6 +54,19 @@ export class GitHubCliAuthenticationError extends Schema.TaggedErrorClass<GitHub
 ) {
   get detail(): string {
     return "GitHub CLI is not authenticated. Run `gh auth login` and retry.";
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in execute: ${this.detail}`;
+  }
+}
+
+export class GitHubCliRateLimitError extends Schema.TaggedErrorClass<GitHubCliRateLimitError>()(
+  "GitHubCliRateLimitError",
+  gitHubCliFailureFields,
+) {
+  get detail(): string {
+    return "GitHub API rate limit exceeded. Run `gh api rate_limit` to inspect the quota and reset time.";
   }
 
   override get message(): string {
@@ -236,6 +251,7 @@ export class GitHubRepositoryDecodeError extends Schema.TaggedErrorClass<GitHubR
 export const GitHubCliError = Schema.Union([
   GitHubCliUnavailableError,
   GitHubCliAuthenticationError,
+  GitHubCliRateLimitError,
   GitHubAccountNotLoggedInError,
   GitHubPullRequestNotFoundError,
   GitHubRepositoryNotFoundError,
@@ -273,6 +289,9 @@ export function fromVcsError(
     if (error.failureKind === "authentication") {
       return new GitHubCliAuthenticationError({ ...context, cause: error });
     }
+    if (error.failureKind === "rate-limited") {
+      return new GitHubCliRateLimitError({ ...context, cause: error });
+    }
     if (error.failureKind === "not-found") {
       return new GitHubPullRequestNotFoundError({ ...context, cause: error });
     }
@@ -300,6 +319,10 @@ export interface GitHubPullRequestSummary {
   readonly baseRefName: string;
   readonly headRefName: string;
   readonly state?: "open" | "closed" | "merged";
+  readonly isDraft?: boolean;
+  readonly closedAt?: string | null;
+  readonly mergedAt?: string | null;
+  readonly updatedAt?: string;
   readonly mergeability?: "clean" | "conflicting" | "blocked" | "unknown";
   readonly checks?: "passing" | "failing" | "pending" | "unknown";
   readonly failedCheckCount?: number;
@@ -307,6 +330,14 @@ export interface GitHubPullRequestSummary {
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
   readonly headRepositoryOwnerLogin?: string | null;
+}
+
+function pullRequestSummary(input: NormalizedGitHubPullRequestRecord): GitHubPullRequestSummary {
+  const { updatedAt, ...summary } = input;
+  return {
+    ...summary,
+    ...(Option.isSome(updatedAt) ? { updatedAt: DateTime.formatIso(updatedAt.value) } : {}),
+  };
 }
 
 export interface GitHubRepositoryCloneUrls {
@@ -322,6 +353,9 @@ export class GitHubCli extends Context.Service<
       readonly cwd: string;
       readonly args: ReadonlyArray<string>;
       readonly timeoutMs?: number;
+      /** Piped to the child's stdin, for payloads that must never appear in argv. */
+      readonly stdin?: string;
+      readonly maxOutputBytes?: number;
     }) => Effect.Effect<VcsProcess.VcsProcessOutput, GitHubCliError>;
 
     readonly listOpenPullRequests: (input: {
@@ -573,11 +607,10 @@ export const make = Effect.gen(function* () {
 
   const execute: GitHubCli["Service"]["execute"] = (input) =>
     Effect.serviceOption(GitHubAccountResolver).pipe(
-      Effect.flatMap(
-        (resolverOption): Effect.Effect<GitHubAccountResolution> =>
-          Option.isNone(resolverOption)
-            ? Effect.succeed({ _tag: "ambient" })
-            : resolverOption.value.resolveForCwd(input.cwd),
+      Effect.flatMap((resolverOption): Effect.Effect<GitHubAccountResolution> =>
+        Option.isNone(resolverOption)
+          ? Effect.succeed({ _tag: "ambient" })
+          : resolverOption.value.resolveForCwd(input.cwd),
       ),
       Effect.flatMap((resolution) => {
         // The project selected an account we can't act as. Refuse instead of
@@ -775,9 +808,7 @@ export const make = Effect.gen(function* () {
                     );
                   }
 
-                  return Effect.succeed(
-                    decoded.success.map(({ updatedAt: _updatedAt, ...summary }) => summary),
-                  );
+                  return Effect.succeed(decoded.success.map(pullRequestSummary));
                 }),
               ),
         ),
@@ -810,9 +841,7 @@ export const make = Effect.gen(function* () {
                 );
               }
 
-              return Effect.succeed(
-                (({ updatedAt: _updatedAt, ...summary }) => summary)(decoded.success),
-              );
+              return Effect.succeed(pullRequestSummary(decoded.success));
             }),
           ),
         ),

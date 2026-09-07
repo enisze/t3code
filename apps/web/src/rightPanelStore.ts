@@ -14,7 +14,15 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
 
-export const RIGHT_PANEL_KINDS = ["plan", "diff", "files", "file", "preview", "terminal"] as const;
+export const RIGHT_PANEL_KINDS = [
+  "plan",
+  "diff",
+  "files",
+  "file",
+  "preview",
+  "terminal",
+  "pull-request",
+] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
 export type RightPanelSurface =
@@ -37,6 +45,23 @@ export type RightPanelSurface =
       revealLine: number | null;
       revealRequestId: number;
     }
+  | {
+      /**
+       * A change request opened beside a thread or in the pull-request list's shared panel.
+       * The reference lives in the id so several pull requests can remain open as peer tabs.
+       */
+      id: `pull-request:${string}`;
+      kind: "pull-request";
+      /**
+       * Which server the change request was read from. The list spans every connected one, so
+       * two of them can hold the same project id; a panel beside a thread leaves this out and
+       * takes the environment from its own ref.
+       */
+      environmentId?: string;
+      projectId: string;
+      repository: string;
+      number: number;
+    }
   | { id: "plan"; kind: "plan" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
@@ -50,7 +75,11 @@ export interface ThreadRightPanelState {
 
 interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
-  open: (ref: ScopedThreadRef, kind: Exclude<RightPanelKind, "file" | "terminal">) => void;
+  open: (
+    ref: ScopedThreadRef,
+    // pull-request surfaces carry a reference, so they open via openPullRequest.
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+  ) => void;
   /**
    * Ensures the fixed Diff/Files tabs exist as the leading surfaces without
    * disturbing the active surface (unless `activateDefault`/`open` is set). Used
@@ -69,6 +98,10 @@ interface RightPanelStoreState {
   ) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
+  openPullRequest: (
+    ref: ScopedThreadRef,
+    target: { environmentId?: string; projectId: string; repository: string; number: number },
+  ) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
@@ -88,7 +121,10 @@ interface RightPanelStoreState {
   show: (ref: ScopedThreadRef) => void;
   close: (ref: ScopedThreadRef) => void;
   toggleVisibility: (ref: ScopedThreadRef) => void;
-  toggle: (ref: ScopedThreadRef, kind: Exclude<RightPanelKind, "file" | "terminal">) => void;
+  toggle: (
+    ref: ScopedThreadRef,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+  ) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
 
@@ -103,12 +139,43 @@ const EMPTY_THREAD_STATE: ThreadRightPanelState = {
  * Every close path (single, close-others, close-to-right, close-all) must
  * preserve them so the two permanent tabs can never be removed.
  */
+export type PullRequestSurface = Extract<RightPanelSurface, { kind: "pull-request" }>;
+
+export function pullRequestSurfaceId(target: {
+  environmentId?: string;
+  projectId: string;
+  repository: string;
+  number: number;
+}): PullRequestSurface["id"] {
+  // The environment leads the id where there is one, so the same change request read from two
+  // servers is two tabs rather than one tab that changes its mind about which server it is on.
+  const scope =
+    target.environmentId === undefined ? "" : `${encodeURIComponent(target.environmentId)}:`;
+  return `pull-request:${scope}${encodeURIComponent(target.projectId)}:${encodeURIComponent(target.repository)}:${target.number}`;
+}
+
+export function pullRequestSurface(target: {
+  environmentId?: string;
+  projectId: string;
+  repository: string;
+  number: number;
+}): PullRequestSurface {
+  return {
+    id: pullRequestSurfaceId(target),
+    kind: "pull-request",
+    ...(target.environmentId === undefined ? {} : { environmentId: target.environmentId }),
+    projectId: target.projectId,
+    repository: target.repository,
+    number: target.number,
+  };
+}
+
 export function isPermanentRightPanelSurface(surface: RightPanelSurface): boolean {
   return surface.kind === "diff" || surface.kind === "files";
 }
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal">,
+  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request">,
 ): RightPanelSurface => {
   switch (kind) {
     case "diff":
@@ -336,6 +403,12 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               : current.surfaces;
             return upsertSurface({ ...current, surfaces: withoutPlaceholder }, surface);
           }),
+        })),
+      openPullRequest: (ref, target) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
+            upsertSurface(current, pullRequestSurface(target)),
+          ),
         })),
       openFile: (ref, relativePath, line) =>
         set((state) => ({
@@ -633,6 +706,14 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
     },
   ),
 );
+
+export function selectSelectedRightPanelSurface(
+  byThreadKey: Record<string, ThreadRightPanelState>,
+  ref: ScopedThreadRef | null | undefined,
+): RightPanelSurface | null {
+  const state = selectThreadRightPanelState(byThreadKey, ref);
+  return state.surfaces.find((surface) => surface.id === state.activeSurfaceId) ?? null;
+}
 
 export function selectThreadRightPanelState(
   byThreadKey: Record<string, ThreadRightPanelState>,

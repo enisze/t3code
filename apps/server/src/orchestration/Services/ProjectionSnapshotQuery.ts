@@ -1,3 +1,8 @@
+export interface ProjectionAccountRoute {
+  readonly path: string;
+  readonly account: GitHubAccountRef;
+}
+
 /**
  * ProjectionSnapshotQuery - Read-model snapshot query service interface.
  *
@@ -7,16 +12,22 @@
  * @module ProjectionSnapshotQuery
  */
 import type {
+  AgentSessionImportSource,
+  ApprovalRequestId,
   CheckpointRef,
-  GitHubAccountRef,
-  ModelSelection,
+  MessageId,
   OrchestrationCheckpointSummary,
+  OrchestrationMessage,
   OrchestrationProject,
   OrchestrationProjectShell,
   OrchestrationReadModel,
+  OrchestrationSearchThreadsInput,
+  OrchestrationSearchThreadsResult,
   OrchestrationShellSnapshot,
   OrchestrationThread,
+  OrchestrationThreadActivity,
   OrchestrationThreadDetailSnapshot,
+  OrchestrationThreadDetailWindow,
   OrchestrationThreadShell,
   ProjectId,
   ThreadId,
@@ -27,24 +38,19 @@ import type * as Effect from "effect/Effect";
 
 import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
 
+import type { GitHubAccountRef, ModelSelection } from "@t3tools/contracts";
 export interface ProjectionSnapshotCounts {
   readonly projectCount: number;
   readonly threadCount: number;
 }
 
-/**
- * A filesystem path that a `git`/`gh` command's cwd can be matched against to
- * discover the GitHub account it should act as. Covers both project workspace
- * roots and thread worktree paths (active AND archived — worktrees for archived
- * threads still exist on disk and must resolve to their project's account).
- */
-export interface ProjectionAccountRoute {
-  readonly path: string;
-  readonly account: GitHubAccountRef;
-}
-
 export interface ProjectionSnapshotSequence {
   readonly snapshotSequence: number;
+}
+
+export interface ProjectionEventReplayStats {
+  readonly eventCount: number;
+  readonly payloadBytes: number;
 }
 
 export interface ProjectionThreadCheckpointContext {
@@ -64,10 +70,25 @@ export interface ProjectionFullThreadDiffContext {
   readonly toCheckpointRef: CheckpointRef | null;
 }
 
+export interface ProjectionThreadDetailQuery {
+  /**
+   * Limit activities before SQLite returns and decodes their payloads.
+   * Any explicit filter omits pinned-request reads. An empty list also skips
+   * the activity query. Omit this option to preserve the full detail response.
+   */
+  readonly activityKinds?: ReadonlyArray<string>;
+}
+
 /**
  * ProjectionSnapshotQueryShape - Service API for read-model snapshots.
  */
 export interface ProjectionSnapshotQueryShape {
+  /** Read the latest request or resolution without loading the thread history. */
+  readonly getUserInputActivity: (input: {
+    readonly threadId: ThreadId;
+    readonly requestId: ApprovalRequestId;
+  }) => Effect.Effect<Option.Option<OrchestrationThreadActivity>, ProjectionRepositoryError>;
+
   /**
    * Read the lightweight command snapshot used to bootstrap the in-memory
    * orchestration engine without hydrating message/activity/checkpoint bodies.
@@ -108,10 +129,20 @@ export interface ProjectionSnapshotQueryShape {
   >;
 
   /**
-   * Read every workspace-root / worktree-path → GitHub account mapping for
-   * projects that have an account attached. Used to resolve which account a
-   * `git`/`gh` command running in a given directory should act as. Includes
-   * archived (but not deleted) threads so their worktrees still resolve.
+   * Search active thread navigation metadata, user messages, and canonical
+   * assistant outputs without hydrating thread detail snapshots.
+   */
+  readonly searchThreads: (
+    input: OrchestrationSearchThreadsInput,
+  ) => Effect.Effect<OrchestrationSearchThreadsResult, ProjectionRepositoryError>;
+
+  /**
+   * Read the latest projection snapshot sequence without hydrating read-model
+   * entities.
+   */
+  /**
+   * Every workspace path that has a provider account attached, so shell
+   * commands can resolve the account for the directory they run in.
    */
   readonly listAccountRoutes: () => Effect.Effect<
     ReadonlyArray<ProjectionAccountRoute>,
@@ -119,9 +150,12 @@ export interface ProjectionSnapshotQueryShape {
   >;
 
   /**
-   * Read the latest projection snapshot sequence without hydrating read-model
-   * entities.
+   * The project default model selection covering `cwd`, if one applies.
    */
+  readonly getDefaultModelSelectionForCwd: (
+    cwd: string,
+  ) => Effect.Effect<Option.Option<ModelSelection>, ProjectionRepositoryError>;
+
   readonly getSnapshotSequence: () => Effect.Effect<
     ProjectionSnapshotSequence,
     ProjectionRepositoryError
@@ -133,22 +167,19 @@ export interface ProjectionSnapshotQueryShape {
   readonly getCounts: () => Effect.Effect<ProjectionSnapshotCounts, ProjectionRepositoryError>;
 
   /**
+   * Measure a persisted event range without decoding its payload bodies.
+   */
+  readonly getEventReplayStats: (input: {
+    readonly fromSequenceExclusive: number;
+    readonly toSequenceInclusive: number;
+  }) => Effect.Effect<ProjectionEventReplayStats, ProjectionRepositoryError>;
+
+  /**
    * Read the active project for an exact workspace root match.
    */
   readonly getActiveProjectByWorkspaceRoot: (
     workspaceRoot: string,
   ) => Effect.Effect<Option.Option<OrchestrationProject>, ProjectionRepositoryError>;
-
-  /**
-   * Resolve the `defaultModelSelection` of the project owning `cwd`, matching
-   * the longest project workspace root or thread worktree path that contains it
-   * (so a worktree checked out outside the project root still resolves). Returns
-   * `None` when `cwd` maps to no project or the owning project has no default
-   * model selection configured.
-   */
-  readonly getDefaultModelSelectionForCwd: (
-    cwd: string,
-  ) => Effect.Effect<Option.Option<ModelSelection>, ProjectionRepositoryError>;
 
   /**
    * Read a single active project shell row by id.
@@ -163,6 +194,15 @@ export interface ProjectionSnapshotQueryShape {
   readonly getFirstActiveThreadIdByProjectId: (
     projectId: ProjectId,
   ) => Effect.Effect<Option.Option<ThreadId>, ProjectionRepositoryError>;
+
+  /** Read completed import sources without loading thread history. */
+  readonly getImportedAgentSessionSources: (projectId: ProjectId) => Effect.Effect<
+    ReadonlyArray<{
+      readonly threadId: ThreadId;
+      readonly source: AgentSessionImportSource;
+    }>,
+    ProjectionRepositoryError
+  >;
 
   /**
    * Read the checkpoint context needed to resolve a single thread diff.
@@ -187,11 +227,35 @@ export interface ProjectionSnapshotQueryShape {
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<OrchestrationThreadShell>, ProjectionRepositoryError>;
 
+  /** Read the active thread and session facts used to ingest provider events. */
+  readonly getThreadRuntimeContext: (
+    threadId: ThreadId,
+  ) => Effect.Effect<
+    Option.Option<Pick<OrchestrationThreadShell, "id" | "title" | "session">>,
+    ProjectionRepositoryError
+  >;
+
+  /**
+   * Read one requested message and whether another non-compaction user message exists.
+   * Newer queued messages count too, preserving first-turn title eligibility.
+   */
+  readonly getTurnStartMessage: (input: {
+    readonly threadId: ThreadId;
+    readonly messageId: MessageId;
+  }) => Effect.Effect<
+    Option.Option<{
+      readonly message: OrchestrationMessage;
+      readonly hasOtherUserMessages: boolean;
+    }>,
+    ProjectionRepositoryError
+  >;
+
   /**
    * Read a single active thread detail snapshot by id.
    */
   readonly getThreadDetailById: (
     threadId: ThreadId,
+    query?: ProjectionThreadDetailQuery,
   ) => Effect.Effect<Option.Option<OrchestrationThread>, ProjectionRepositoryError>;
 
   /**
@@ -199,9 +263,20 @@ export interface ProjectionSnapshotQueryShape {
    * sequence in one consistent transaction, so the returned `snapshotSequence`
    * exactly matches the state reflected in `thread` (no interleaving projector
    * update between the two reads).
+   *
+   * When `window` is provided, the thread's messages, activities, proposed
+   * plans, and checkpoints are bounded to a page of recent turns and the
+   * response carries `page` metadata (see `OrchestrationThreadDetailWindow`).
+   * Without a window the full thread is returned with no `page` field —
+   * pagination is strictly opt-in.
+   *
+   * Activity payloads are projected for clients as they are read in small
+   * sequential batches. Callers still apply the full snapshot projector for
+   * collection-level activity pruning.
    */
   readonly getThreadDetailSnapshot: (
     threadId: ThreadId,
+    window?: OrchestrationThreadDetailWindow,
   ) => Effect.Effect<Option.Option<OrchestrationThreadDetailSnapshot>, ProjectionRepositoryError>;
 }
 

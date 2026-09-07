@@ -20,7 +20,8 @@ export interface CommandPaletteItem {
   readonly value: string;
   readonly searchTerms: ReadonlyArray<string>;
   readonly title: ReactNode;
-  readonly description?: string;
+  // Pickers pass rendered fragments here, not just plain strings.
+  readonly description?: ReactNode;
   readonly timestamp?: string;
   readonly icon: ReactNode;
   readonly disabled?: boolean;

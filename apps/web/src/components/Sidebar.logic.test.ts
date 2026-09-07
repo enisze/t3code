@@ -638,7 +638,7 @@ describe("resolveSidebarV2Status", () => {
     updatedAt: "2026-03-09T10:00:00.000Z",
   };
 
-  const idle = { hasPendingApprovals: false, hasPendingUserInput: false };
+  const idle = { hasPendingApprovals: false, hasPendingUserInput: false, latestTurn: null };
 
   it("prioritizes approval over a running session", () => {
     expect(resolveSidebarV2Status({ ...idle, hasPendingApprovals: true, session })).toBe(
@@ -675,6 +675,22 @@ describe("resolveSidebarV2Status", () => {
         session: { ...session, status: "error" as const, lastError: "boom" },
       }),
     ).toBe("failed");
+    // The session record keeps `error` after a provider process dies, so a
+    // thread that went on to finish a turn must stop reading as failed.
+    expect(
+      resolveSidebarV2Status({
+        ...idle,
+        session: { ...session, status: "error" as const, lastError: "boom" },
+        latestTurn: {
+          turnId: "turn-1" as never,
+          state: "completed" as const,
+          requestedAt: "2026-03-09T10:00:00.000Z",
+          startedAt: "2026-03-09T10:00:01.000Z",
+          completedAt: "2026-03-09T10:00:09.000Z",
+          assistantMessageId: null,
+        },
+      }),
+    ).toBe("ready");
     expect(
       resolveSidebarV2Status({
         ...idle,

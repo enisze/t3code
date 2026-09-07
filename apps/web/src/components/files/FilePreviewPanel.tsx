@@ -7,7 +7,7 @@ import type {
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { VirtualizedFile } from "@pierre/diffs";
 import { Editor } from "@pierre/diffs/editor";
-import { EditorProvider, File, type FileOptions, Virtualizer } from "@pierre/diffs/react";
+import { EditProvider, File, type FileOptions, Virtualizer } from "@pierre/diffs/react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -372,7 +372,7 @@ function EditableFileSurface({
   );
 
   return (
-    <EditorProvider editor={editor}>
+    <EditProvider editor={editor}>
       <div className="flex min-h-0 flex-1">
         <Virtualizer
           className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
@@ -400,7 +400,7 @@ function EditableFileSurface({
           />
         </Virtualizer>
       </div>
-    </EditorProvider>
+    </EditProvider>
   );
 }
 
@@ -573,17 +573,23 @@ export default function FilePreviewPanel({
                   {index > 0 ? (
                     <ChevronRight className="mx-1 size-3.5 shrink-0 text-muted-foreground/60" />
                   ) : null}
-                  <span
-                    className={cn(
-                      "max-w-40 truncate",
-                      crumb.kind === "file"
-                        ? "font-medium text-foreground"
-                        : "text-muted-foreground",
-                    )}
-                    title={crumb.path || projectName}
-                  >
-                    {crumb.label}
-                  </span>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span
+                          className={cn(
+                            "max-w-40 truncate",
+                            crumb.kind === "file"
+                              ? "font-medium text-foreground"
+                              : "text-muted-foreground",
+                          )}
+                        >
+                          {crumb.label}
+                        </span>
+                      }
+                    />
+                    <TooltipPopup>{crumb.path || projectName}</TooltipPopup>
+                  </Tooltip>
                 </div>
               ))}
             </div>

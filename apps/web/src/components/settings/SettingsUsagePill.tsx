@@ -1,6 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import type { ProviderUsage, ProviderUsageWindow, ServerProvider } from "@t3tools/contracts";
+import type {
+  ProviderUsage,
+  ProviderUsageWindow,
+  ProviderUsageWindowKind,
+  ServerProvider,
+} from "@t3tools/contracts";
 import { useParams } from "@tanstack/react-router";
 import { ChevronUpIcon, GaugeIcon, RefreshCwIcon } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
@@ -13,8 +18,48 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { resolveThreadRouteRef } from "../../threadRoutes";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { ProviderUsageMeters } from "./ProviderUsageSection";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 type ProviderWithUsage = ServerProvider & { readonly usage: ProviderUsage };
+
+/**
+ * Providers publish quota windows as `usageLimits`; this widget and the meters
+ * it renders were written against the older `usage` shape. Adapt at the edge so
+ * every connected instance shows up, whatever it reports.
+ *
+ * `usageLimits.windows[].id` already carries the same slugs the legacy `kind`
+ * union uses (`five_hour`, `primary`, …), so it maps straight across; anything
+ * unrecognized falls back to `unknown`, which only affects ordering and label.
+ */
+const LEGACY_WINDOW_KINDS = new Set<string>([
+  "five_hour",
+  "seven_day",
+  "seven_day_opus",
+  "seven_day_sonnet",
+  "monthly",
+  "primary",
+  "secondary",
+  "overage",
+  "unknown",
+]);
+
+function resolveProviderUsage(provider: ServerProvider): ProviderUsage | null {
+  if (provider.usage !== undefined && provider.usage.windows.length > 0) return provider.usage;
+  const limits = provider.usageLimits;
+  if (limits === undefined || limits.windows.length === 0) return null;
+  return {
+    source: provider.driver === "claude" ? "claude" : "codex",
+    fetchedAt: limits.checkedAt,
+    planLabel: null,
+    windows: limits.windows.map((window): ProviderUsageWindow => ({
+      kind: (LEGACY_WINDOW_KINDS.has(window.id) ? window.id : "unknown") as ProviderUsageWindowKind,
+      label: window.label,
+      usedPercent: window.usedPercent,
+      resetsAt: window.resetsAt ?? null,
+      windowMinutes: window.windowDurationMins ?? null,
+    })),
+  };
+}
 
 function summaryColor(usedPercent: number): string {
   if (usedPercent >= 90) return "var(--color-red-500)";
@@ -90,10 +135,12 @@ export function SettingsUsagePill() {
     })();
   }, [primaryEnvironment, refreshServerProviders]);
 
-  const withUsage = providers.filter(
-    (provider): provider is ProviderWithUsage =>
-      provider.usage !== undefined && provider.usage.windows.length > 0,
-  );
+  // Every connected instance that reports windows, so several Claude and Codex
+  // accounts each get their own meters rather than only the first.
+  const withUsage = providers.flatMap((provider): ProviderWithUsage[] => {
+    const usage = resolveProviderUsage(provider);
+    return usage === null ? [] : [{ ...provider, usage }];
+  });
   if (withUsage.length === 0) return null;
 
   // Summary reflects only the active chat's provider instance (its own model
@@ -105,7 +152,7 @@ export function SettingsUsagePill() {
     null;
   const activeProvider =
     activeInstanceId !== null
-      ? providers.find((provider) => provider.instanceId === activeInstanceId)
+      ? withUsage.find((provider) => provider.instanceId === activeInstanceId)
       : undefined;
   // Summarize the hourly window, not the max across windows, so the collapsed
   // number reflects the short-term limit users hit mid-session. Every window
@@ -136,18 +183,24 @@ export function SettingsUsagePill() {
           <span className="flex-1 truncate text-[13px] font-medium text-foreground">
             Usage limits
           </span>
-          <span
-            className="shrink-0 text-xs font-medium tabular-nums"
-            title={summaryTitle}
-            style={{
-              color:
-                activePercent === null
-                  ? "var(--color-muted-foreground)"
-                  : summaryColor(activePercent),
-            }}
-          >
-            {activePercent === null ? "—" : `${Math.round(activePercent)}%`}
-          </span>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span
+                  className="shrink-0 text-xs font-medium tabular-nums"
+                  style={{
+                    color:
+                      activePercent === null
+                        ? "var(--color-muted-foreground)"
+                        : summaryColor(activePercent),
+                  }}
+                >
+                  {activePercent === null ? "—" : `${Math.round(activePercent)}%`}
+                </span>
+              }
+            />
+            <TooltipPopup>{summaryTitle}</TooltipPopup>
+          </Tooltip>
           <ChevronUpIcon
             className={cn(
               "size-3.5 shrink-0 text-muted-foreground transition-transform",
@@ -160,7 +213,6 @@ export function SettingsUsagePill() {
           onClick={refreshProviders}
           disabled={isRefreshing}
           aria-label="Refresh usage limits"
-          title="Refresh usage limits"
           className={cn(
             "mr-1 shrink-0 rounded-md p-1.5 text-muted-foreground outline-none",
             "transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:bg-muted/40",

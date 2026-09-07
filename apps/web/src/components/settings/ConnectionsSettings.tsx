@@ -533,21 +533,25 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   );
   const [isRevealDialogOpen, setIsRevealDialogOpen] = useState(false);
 
+  // Servers that no longer return the credential cannot offer a shareable link.
+  const credential = pairingLink.credential;
   const currentOriginPairingUrl = useMemo(
-    () => resolveCurrentOriginPairingUrl(pairingLink.credential),
-    [pairingLink.credential],
+    () => (credential === undefined ? null : resolveCurrentOriginPairingUrl(credential)),
+    [credential],
   );
   const hostedPairingUrl = useMemo(
     () =>
-      endpointUrl != null && endpointUrl !== ""
-        ? resolveHostedPairingUrl(endpointUrl, pairingLink.credential)
+      endpointUrl != null && endpointUrl !== "" && credential !== undefined
+        ? resolveHostedPairingUrl(endpointUrl, credential)
         : null,
-    [endpointUrl, pairingLink.credential],
+    [endpointUrl, credential],
   );
   const endpointPairingUrl = useMemo(() => {
     const endpoint = selectPairingEndpoint(endpoints, defaultEndpointKey);
-    return endpoint ? resolveAdvertisedEndpointPairingUrl(endpoint, pairingLink.credential) : null;
-  }, [defaultEndpointKey, endpoints, pairingLink.credential]);
+    return endpoint && credential !== undefined
+      ? resolveAdvertisedEndpointPairingUrl(endpoint, credential)
+      : null;
+  }, [defaultEndpointKey, endpoints, credential]);
   const endpointCopyOptions = useMemo(() => {
     const options: Array<{
       readonly key: string;
@@ -555,11 +559,12 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
       readonly url: string;
       readonly detail: string;
     }> = [];
+    if (credential === undefined) return options;
     for (const endpoint of endpoints) {
       if (endpoint.status === "unavailable") {
         continue;
       }
-      const url = resolveAdvertisedEndpointPairingUrl(endpoint, pairingLink.credential);
+      const url = resolveAdvertisedEndpointPairingUrl(endpoint, credential);
       options.push({
         key: endpointDefaultPreferenceKey(endpoint),
         label: endpoint.label,
@@ -568,15 +573,16 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
       });
     }
     return options;
-  }, [endpoints, pairingLink.credential]);
+  }, [endpoints, credential]);
   const shareablePairingUrl =
     endpointPairingUrl ??
     (endpointUrl != null && endpointUrl !== ""
-      ? (hostedPairingUrl ?? resolveDesktopPairingUrl(endpointUrl, pairingLink.credential))
+      ? (hostedPairingUrl ??
+        (credential === undefined ? null : resolveDesktopPairingUrl(endpointUrl, credential)))
       : isLoopbackHostname(window.location.hostname)
         ? null
         : currentOriginPairingUrl);
-  const revealValue = shareablePairingUrl ?? pairingLink.credential;
+  const revealValue = shareablePairingUrl ?? credential ?? null;
   const isShareableHostedAppPairingUrl =
     shareablePairingUrl !== null && isHostedAppPairingUrl(shareablePairingUrl);
   const localNetworkPairingHost = useMemo(
@@ -638,8 +644,9 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   );
 
   const handleCopyCode = useCallback(() => {
-    copyPairingValue(pairingLink.credential, "code");
-  }, [copyPairingValue, pairingLink.credential]);
+    if (credential === undefined) return;
+    copyPairingValue(credential, "code");
+  }, [copyPairingValue, credential]);
 
   const handleCopyDefaultLink = useCallback(() => {
     if (!shareablePairingUrl) return;
@@ -776,11 +783,18 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
               ) : null}
             </Popover>
           </div>
-          <p className="text-xs text-muted-foreground" title={expiresAbsolute}>
-            {formatExpiresInLabel(pairingLink.expiresAt, nowMs)}
-            <span aria-hidden> · </span>
-            <AccessScopeSummary scopes={pairingLink.scopes} label="Pairing link scopes" />
-          </p>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <p className="text-xs text-muted-foreground">
+                  {formatExpiresInLabel(pairingLink.expiresAt, nowMs)}
+                  <span aria-hidden> · </span>
+                  <AccessScopeSummary scopes={pairingLink.scopes} label="Pairing link scopes" />
+                </p>
+              }
+            />
+            <TooltipPopup>{expiresAbsolute}</TooltipPopup>
+          </Tooltip>
           {shareablePairingUrl === null ? (
             <p className="text-[11px] text-muted-foreground/70">
               Copy the token and pair from another client using this backend&apos;s reachable host.
@@ -860,7 +874,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
               <DialogPanel className="space-y-4">
                 <Textarea
                   readOnly
-                  value={revealValue}
+                  value={revealValue ?? ""}
                   rows={shareablePairingUrl ? 4 : 3}
                   className="text-xs leading-relaxed"
                   onFocus={(event) => event.currentTarget.select()}
@@ -1255,12 +1269,16 @@ const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow({
             {endpoint.label}
           </h3>
           {shouldShowEndpointUrl ? (
-            <p
-              className="min-w-0 truncate text-xs leading-5 text-muted-foreground"
-              title={endpoint.httpBaseUrl}
-            >
-              {endpoint.httpBaseUrl}
-            </p>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <p className="min-w-0 truncate text-xs leading-5 text-muted-foreground">
+                    {endpoint.httpBaseUrl}
+                  </p>
+                }
+              />
+              <TooltipPopup>{endpoint.httpBaseUrl}</TooltipPopup>
+            </Tooltip>
           ) : null}
           {!isAvailable ? (
             <span className="shrink-0 rounded-md border border-border/70 px-1 py-0.5 text-[10px] text-muted-foreground">
@@ -3289,12 +3307,18 @@ export function ConnectionsSettings() {
                 ) : null}
                 <div className="rounded-md border border-border/70 bg-muted/20 px-3 py-2">
                   <p className="text-xs font-medium text-muted-foreground">HTTPS endpoint</p>
-                  <p
-                    className="mt-1 truncate text-sm text-foreground"
-                    title={pendingTailscaleServeBaseUrl ?? undefined}
-                  >
-                    {pendingTailscaleServeBaseUrl ?? "Pending MagicDNS endpoint"}
-                  </p>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <p className="mt-1 truncate text-sm text-foreground">
+                          {pendingTailscaleServeBaseUrl ?? "Pending MagicDNS endpoint"}
+                        </p>
+                      }
+                    />
+                    <TooltipPopup>
+                      {pendingTailscaleServeBaseUrl ?? "Pending MagicDNS endpoint"}
+                    </TooltipPopup>
+                  </Tooltip>
                 </div>
               </DialogPanel>
               <DialogFooter>

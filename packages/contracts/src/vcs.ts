@@ -76,6 +76,7 @@ export interface VcsProcessTimeoutFailure {
 export const VcsProcessExitFailureKind = Schema.Literals([
   "authentication",
   "not-found",
+  "rate-limited",
   // The working directory couldn't be resolved to a repository the provider can
   // act on — it isn't a git repository, has no remotes, or none of its remotes
   // point to the provider's host. Distinct from `not-found` (the change request
@@ -151,21 +152,23 @@ export class VcsProcessExitError extends Schema.TaggedErrorClass<VcsProcessExitE
     const detail =
       failureKind === "authentication"
         ? "Authentication failed."
-        : failureKind === "not-found"
-          ? context.command === "glab"
-            ? "Merge request not found."
-            : context.command === "gh" || context.command === "az"
-              ? "Pull request not found."
-              : "VCS resource not found."
-          : failureKind === "repository-not-found"
-            ? "No repository found for this directory. It may not be a git repository, or its remotes don't point to the expected host."
-            : failureKind === "permission-denied"
-              ? "The authenticated account lacks permission for this operation."
-              : failureKind === "merge-blocked"
-                ? "The change request can't be merged (conflicts, failing checks, branch protection, or a disallowed merge method)."
-                : failureKind === "provider-unavailable"
-                  ? "The source control provider is temporarily unavailable."
-                  : "Process exited with a non-zero status.";
+        : failureKind === "rate-limited"
+          ? "API rate limit exceeded."
+          : failureKind === "not-found"
+            ? context.command === "glab"
+              ? "Merge request not found."
+              : context.command === "gh" || context.command === "az"
+                ? "Pull request not found."
+                : "VCS resource not found."
+            : failureKind === "repository-not-found"
+              ? "No repository found for this directory. It may not be a git repository, or its remotes don't point to the expected host."
+              : failureKind === "permission-denied"
+                ? "The authenticated account lacks permission for this operation."
+                : failureKind === "merge-blocked"
+                  ? "The change request can't be merged (conflicts, failing checks, branch protection, or a disallowed merge method)."
+                  : failureKind === "provider-unavailable"
+                    ? "The source control provider is temporarily unavailable."
+                    : "Process exited with a non-zero status.";
 
     return new VcsProcessExitError({
       ...context,

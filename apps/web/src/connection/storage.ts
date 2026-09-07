@@ -6,6 +6,7 @@ import {
   ConnectionTargetStore,
   EMPTY_CONNECTION_CATALOG_DOCUMENT,
   EnvironmentCacheStore,
+  putRemoteDpopTokenInCatalog,
   registerConnectionInCatalog,
   removeCatalogValue,
   removeConnectionFromCatalog,
@@ -32,6 +33,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import { projectFaviconCache } from "../assets/projectFaviconCache";
 
 const DATABASE_NAME = "t3code:connection-runtime";
 const DATABASE_VERSION = 4;
@@ -51,9 +53,12 @@ const StoredShellSnapshot = Schema.Struct({
 const StoredShellSnapshotJson = Schema.fromJsonString(StoredShellSnapshot);
 // v2 stores the snapshot sequence alongside the thread so a warm cache can
 // resume via `afterSequence` instead of re-downloading the full thread body.
-// Older v1 entries (no sequence) fail to decode and are treated as a cold cache.
+// v3 adds windowed (paginated) snapshots carrying `page` metadata. The bump
+// exists for rollback safety: a pre-pagination client would decode a windowed
+// v2 record, silently drop the unknown `page` field, and treat the partial
+// thread as complete forever. Older entries fail to decode → cold cache.
 const StoredThreadSnapshot = Schema.Struct({
-  schemaVersion: Schema.Literal(2),
+  schemaVersion: Schema.Literal(3),
   environmentId: EnvironmentId,
   threadId: ThreadId,
   snapshot: OrchestrationThreadDetailSnapshot,
@@ -443,15 +448,7 @@ export const connectionStorageLayer = Layer.effectContext(
             ),
           ),
         ),
-      put: (token) =>
-        catalog.update((document) => ({
-          ...document,
-          remoteDpopTokens: replaceCatalogValue(
-            document.remoteDpopTokens,
-            (value) => value.environmentId,
-            token,
-          ),
-        })),
+      put: (token) => catalog.update((document) => putRemoteDpopTokenInCatalog(document, token)),
       remove: (environmentId) =>
         catalog.update((document) => ({
           ...document,
@@ -465,6 +462,7 @@ export const connectionStorageLayer = Layer.effectContext(
     const cacheStore = EnvironmentCacheStore.of({
       loadShell: (environmentId) =>
         readDatabaseValue(database, SHELL_STORE_NAME, environmentId).pipe(
+          Effect.tap(() => Effect.promise(() => projectFaviconCache.hydrate())),
           Effect.flatMap((raw) => {
             if (typeof raw !== "string") {
               return Effect.succeed(Option.none());
@@ -561,7 +559,7 @@ export const connectionStorageLayer = Layer.effectContext(
       saveThread: (environmentId, snapshot) =>
         Effect.gen(function* () {
           const encoded = yield* encodeStoredThreadSnapshot({
-            schemaVersion: 2,
+            schemaVersion: 3,
             environmentId,
             threadId: snapshot.thread.id,
             snapshot,
@@ -642,6 +640,7 @@ export const connectionStorageLayer = Layer.effectContext(
       clear: (environmentId) =>
         Effect.all(
           [
+            Effect.promise(() => projectFaviconCache.clearEnvironment(environmentId)),
             removeDatabaseValue(database, SHELL_STORE_NAME, environmentId),
             removeDatabaseValuesInRange(
               database,

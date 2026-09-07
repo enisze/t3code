@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
 
 import type { ClaudeSettings } from "@t3tools/contracts";
@@ -50,7 +50,7 @@ export const makeClaudeCredentialsServiceName = Effect.fn("makeClaudeCredentials
     const configDir = yield* resolveClaudeConfigDir(config);
     const defaultConfigDir = path.join(NodeOS.homedir(), ".claude");
     if (configDir === defaultConfigDir) return CLAUDE_KEYCHAIN_SERVICE;
-    const suffix = createHash("sha256").update(configDir).digest("hex").slice(0, 8);
+    const suffix = NodeCrypto.createHash("sha256").update(configDir).digest("hex").slice(0, 8);
     return `${CLAUDE_KEYCHAIN_SERVICE}-${suffix}`;
   },
 );

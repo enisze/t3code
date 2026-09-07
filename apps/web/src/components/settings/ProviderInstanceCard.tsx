@@ -47,6 +47,7 @@ import { ProviderUsageMeters } from "./ProviderUsageSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import { readCustomModelEntries, type CustomModelDefinition } from "@t3tools/shared/model";
 import {
   getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
@@ -115,7 +116,7 @@ function nextConfigBlobWithValue(
 
 export function deriveProviderModelsForDisplay(input: {
   readonly liveModels: ReadonlyArray<ServerProviderModel> | undefined;
-  readonly customModels: ReadonlyArray<string>;
+  readonly customModels: ReadonlyArray<CustomModelDefinition>;
 }): ReadonlyArray<ServerProviderModel> {
   const liveCustomModelsBySlug = new Map(
     Arr.filterMap(input.liveModels ?? [], (model) =>
@@ -124,12 +125,12 @@ export function deriveProviderModelsForDisplay(input: {
   );
   const serverModels = input.liveModels?.filter((model) => !model.isCustom) ?? [];
   const customModels = input.customModels.map(
-    (slug) =>
-      liveCustomModelsBySlug.get(slug) ?? {
-        slug,
-        name: slug,
+    (entry) =>
+      liveCustomModelsBySlug.get(entry.slug) ?? {
+        slug: entry.slug,
+        name: entry.name || entry.slug,
         isCustom: true,
-        capabilities: null,
+        capabilities: entry.capabilities,
       },
   );
   return [...serverModels, ...customModels];
@@ -453,7 +454,11 @@ export function ProviderInstanceCard({
     ? instance.driver
     : null;
 
-  const customModels = readConfigStringArray(instance.config, "customModels");
+  // Upstream stores custom models as {slug,name,capabilities} entries rather
+  // than bare slugs; readCustomModelEntries tolerates both shapes.
+  const customModels = readCustomModelEntries(
+    (instance.config as Record<string, unknown> | undefined)?.["customModels"],
+  );
   // Server-returned models may lag behind settings writes. Treat probe
   // models as the source for built-ins only; custom rows come directly
   // from the current instance config so add/remove reflects immediately.
@@ -509,7 +514,7 @@ export function ProviderInstanceCard({
     );
   };
 
-  const updateCustomModels = (next: ReadonlyArray<string>) => {
+  const updateCustomModels = (next: ReadonlyArray<CustomModelDefinition>) => {
     const nextConfig = nextConfigBlobWithValue(instance.config, "customModels", [...next]);
     const { config: _omit, ...rest } = instance;
     onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);

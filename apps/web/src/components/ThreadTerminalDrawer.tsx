@@ -67,6 +67,11 @@ import { terminalEnvironment } from "../state/terminal";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
 import { useAtomCommand } from "../state/use-atom-command";
 
+import {
+  INITIAL_TERMINAL_OUTPUT_CURSOR,
+  readTerminalOutputUpdate,
+  type TerminalOutputCursor,
+} from "@t3tools/client-runtime/state/terminal";
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
 const MULTI_CLICK_SELECTION_ACTION_DELAY_MS = 260;
@@ -84,6 +89,20 @@ function clampDrawerHeight(height: number): number {
 
 function writeSystemMessage(terminal: Terminal, message: string): void {
   terminal.write(`\r\n[terminal] ${message}\r\n`);
+}
+
+/**
+ * A retained buffer whose head was evicted starts at an arbitrary byte offset,
+ * which lands in the middle of whatever escape sequence was being written.
+ * Replaying from there makes the terminal print that sequence's tail as literal
+ * text — a run of stray characters above the first real line. Resynchronize on
+ * the first line break instead; a replay is scrollback, so losing its partial
+ * leading line costs nothing.
+ */
+function resyncTruncatedReplay(buffer: string, headWasEvicted: boolean): string {
+  if (!headWasEvicted) return buffer;
+  const firstLineBreak = buffer.indexOf("\n");
+  return firstLineBreak === -1 ? "" : buffer.slice(firstLineBreak + 1);
 }
 
 function writeTerminalBuffer(terminal: Terminal, buffer: string): void {
@@ -358,18 +377,31 @@ export function TerminalViewport({
       input: { threadId, terminalId, data },
     }),
   );
-  const resizeTerminal = useEffectEvent((cols: number, rows: number) =>
-    runTerminalResize({
+  const lastSentSizeRef = useRef<{ cols: number; rows: number } | null>(null);
+  const resizeTerminal = useEffectEvent((cols: number, rows: number) => {
+    if (cols <= 0 || rows <= 0) return Promise.resolve(undefined);
+    const lastSent = lastSentSizeRef.current;
+    // Every SIGWINCH makes a themed shell repaint its prompt, so a size the PTY
+    // already has is not a harmless no-op — it is a duplicated prompt line.
+    if (lastSent !== null && lastSent.cols === cols && lastSent.rows === rows) {
+      return Promise.resolve(undefined);
+    }
+    lastSentSizeRef.current = { cols, rows };
+    return runTerminalResize({
       environmentId,
       input: { threadId, terminalId, cols, rows },
-    }),
-  );
-  const terminalBuffer = terminalSession.buffer;
+    });
+  });
+  // The session keeps output as chunks and evicts the oldest once the retained
+  // byte cap is hit, so the flattened string loses its head over time. Diffing
+  // it by prefix wrote the wrong slice into xterm and printed garbage; read the
+  // delta through the cursor API instead.
+  const terminalOutput = terminalSession.output;
   const terminalError = terminalSession.error;
   const terminalStatus = terminalSession.status;
   const terminalVersion = terminalSession.version;
+  const outputCursorRef = useRef<TerminalOutputCursor>(INITIAL_TERMINAL_OUTPUT_CURSOR);
   const previousSessionRef = useRef({
-    buffer: terminalBuffer,
     error: terminalError,
     status: terminalStatus,
     version: terminalVersion,
@@ -391,8 +423,11 @@ export function TerminalViewport({
       lineHeight: 1,
       fontSize: 12,
       scrollback: 5_000,
+      // Nerd Font families lead the stack: prompts like powerlevel10k draw
+      // branch and status icons from the private-use area, which the plain
+      // system monospace fonts render as empty boxes.
       fontFamily:
-        '"SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace',
+        '"MesloLGS NF", "JetBrainsMono Nerd Font", "FiraCode Nerd Font", "Hack Nerd Font", "SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace',
       theme: terminalThemeFromApp(mount),
     });
     terminal.loadAddon(fitAddon);
@@ -401,8 +436,10 @@ export function TerminalViewport({
 
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
+    outputCursorRef.current = INITIAL_TERMINAL_OUTPUT_CURSOR;
+    // A fresh terminal has told the PTY nothing about its size yet.
+    lastSentSizeRef.current = null;
     previousSessionRef.current = {
-      buffer: "",
       status: "closed",
       error: null,
       version: 0,
@@ -739,7 +776,6 @@ export function TerminalViewport({
   useEffect(() => {
     const terminal = terminalRef.current;
     const current = {
-      buffer: terminalBuffer,
       error: terminalError,
       status: terminalStatus,
       version: terminalVersion,
@@ -750,19 +786,21 @@ export function TerminalViewport({
     }
 
     const previous = previousSessionRef.current;
+    const update = readTerminalOutputUpdate(terminalOutput, outputCursorRef.current);
+    outputCursorRef.current = update.cursor;
+    if (update.type === "append") {
+      // Appending must not disturb an in-progress selection: output arriving
+      // while the user drags to copy would otherwise wipe it every time.
+      terminal.write(update.data);
+    } else if (update.type === "reset") {
+      const headWasEvicted = (terminalOutput.chunks[0]?.startOffset ?? 0) > 0;
+      writeTerminalBuffer(terminal, resyncTruncatedReplay(update.data, headWasEvicted));
+      terminal.clearSelection();
+    }
+
     if (current.version === previous.version) {
       return;
     }
-
-    if (
-      current.buffer.length >= previous.buffer.length &&
-      current.buffer.startsWith(previous.buffer)
-    ) {
-      terminal.write(current.buffer.slice(previous.buffer.length));
-    } else {
-      writeTerminalBuffer(terminal, current.buffer);
-    }
-    terminal.clearSelection();
 
     if (current.error !== null && current.error !== previous.error) {
       writeSystemMessage(terminal, current.error);
@@ -793,7 +831,7 @@ export function TerminalViewport({
       });
     }
     previousSessionRef.current = current;
-  }, [autoFocus, terminalBuffer, terminalError, terminalStatus, terminalVersion]);
+  }, [autoFocus, terminalOutput, terminalError, terminalStatus, terminalVersion]);
 
   useEffect(() => {
     if (!autoFocus) return;

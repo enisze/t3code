@@ -730,6 +730,21 @@ export default function DiffPanel({
     });
   }, [codeViewFiles, gitStatusQuery.data?.workingTree.files, selectedTurnId]);
 
+  // Totals for the whole selection, summed from the same per-file stats the
+  // navigator lists, so the header count always matches the rendered diff.
+  const changeSummary = useMemo(
+    () =>
+      navigatorFiles.reduce(
+        (totals, file) => ({
+          fileCount: totals.fileCount + 1,
+          additions: totals.additions + file.additions,
+          deletions: totals.deletions + file.deletions,
+        }),
+        { fileCount: 0, additions: 0, deletions: 0 },
+      ),
+    [navigatorFiles],
+  );
+
   const openDiffFile = useCallback(
     (filePath: string) => {
       openDiffFilePrimaryAction({
@@ -860,7 +875,7 @@ export default function DiffPanel({
     <button
       type="button"
       onClick={() => openDiffFile(focusedFile.filePath)}
-      title={`${focusedFile.filePath} — open file`}
+      aria-label={`${focusedFile.filePath} — open file`}
       className="inline-flex h-6 min-w-0 max-w-full items-center gap-1.5 rounded-md border border-border/70 bg-muted/40 px-2 text-xs outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
     >
       <PierreEntryIcon
@@ -963,12 +978,24 @@ export default function DiffPanel({
                 </DropdownMenuSub>
               </DropdownMenuContent>
             </DropdownMenu>
+            {changeSummary.fileCount > 0 ? (
+              <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground tabular-nums">
+                <span>
+                  {changeSummary.fileCount} {changeSummary.fileCount === 1 ? "file" : "files"}
+                </span>
+                <span className="font-mono text-emerald-600 dark:text-emerald-400">
+                  +{changeSummary.additions}
+                </span>
+                <span className="font-mono text-red-600 dark:text-red-400">
+                  −{changeSummary.deletions}
+                </span>
+              </span>
+            ) : null}
             {selectedTurnId === null &&
               selectedGitScope === "branch" &&
               selectedGitSource?.baseRef && (
                 <div
                   className="flex min-w-0 max-w-full items-center gap-2 overflow-hidden text-xs text-muted-foreground"
-                  title={`${selectedGitSource.headRef ?? "HEAD"} → ${selectedGitSource.baseRef}`}
                   aria-label={`Comparing ${selectedGitSource.headRef ?? "HEAD"} against ${selectedGitSource.baseRef}`}
                 >
                   <span className="min-w-0 max-w-48 truncate">
@@ -1064,12 +1091,16 @@ export default function DiffPanel({
                                     />
                                   </div>
                                 ) : choice.remote ? (
-                                  <span
-                                    className="flex justify-end text-muted-foreground"
-                                    title="Remote only"
-                                  >
-                                    <CheckIcon aria-hidden="true" className="size-3" />
-                                  </span>
+                                  <Tooltip>
+                                    <TooltipTrigger
+                                      render={
+                                        <span className="flex justify-end text-muted-foreground">
+                                          <CheckIcon aria-hidden="true" className="size-3" />
+                                        </span>
+                                      }
+                                    />
+                                    <TooltipPopup>Remote only</TooltipPopup>
+                                  </Tooltip>
                                 ) : null}
                               </div>
                             </ComboboxItem>
