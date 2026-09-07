@@ -853,7 +853,10 @@ export default function TasksDock({
           className="relative min-h-0 bg-background p-1.5"
           style={{ height: `${bodyHeight}px` }}
         >
-          {activeTerminalId !== null && activeTerminalStarted ? (
+          {/* A shell tab has no command to configure and nothing to "run": it is a
+              terminal, so it opens one. Only script tabs get the run-first empty
+              states below. */}
+          {activeTerminalId !== null && (activeIsShell || activeTerminalStarted) ? (
             <TerminalViewport
               key={activeTerminalId}
               threadRef={threadRef}
