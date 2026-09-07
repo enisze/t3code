@@ -363,12 +363,21 @@ export function TerminalViewport({
       input: { threadId, terminalId, data },
     }),
   );
-  const resizeTerminal = useEffectEvent((cols: number, rows: number) =>
-    runTerminalResize({
+  const lastSentSizeRef = useRef<{ cols: number; rows: number } | null>(null);
+  const resizeTerminal = useEffectEvent((cols: number, rows: number) => {
+    if (cols <= 0 || rows <= 0) return Promise.resolve(undefined);
+    const lastSent = lastSentSizeRef.current;
+    // Every SIGWINCH makes a themed shell repaint its prompt, so a size the PTY
+    // already has is not a harmless no-op — it is a duplicated prompt line.
+    if (lastSent !== null && lastSent.cols === cols && lastSent.rows === rows) {
+      return Promise.resolve(undefined);
+    }
+    lastSentSizeRef.current = { cols, rows };
+    return runTerminalResize({
       environmentId,
       input: { threadId, terminalId, cols, rows },
-    }),
-  );
+    });
+  });
   // The session keeps output as chunks and evicts the oldest once the retained
   // byte cap is hit, so the flattened string loses its head over time. Diffing
   // it by prefix wrote the wrong slice into xterm and printed garbage; read the
@@ -411,6 +420,8 @@ export function TerminalViewport({
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
     outputCursorRef.current = INITIAL_TERMINAL_OUTPUT_CURSOR;
+    // A fresh terminal has told the PTY nothing about its size yet.
+    lastSentSizeRef.current = null;
     previousSessionRef.current = {
       status: "closed",
       error: null,
@@ -758,10 +769,6 @@ export function TerminalViewport({
     }
 
     const previous = previousSessionRef.current;
-    if (current.version === previous.version) {
-      return;
-    }
-
     const update = readTerminalOutputUpdate(terminalOutput, outputCursorRef.current);
     outputCursorRef.current = update.cursor;
     if (update.type === "append") {
@@ -771,6 +778,10 @@ export function TerminalViewport({
     } else if (update.type === "reset") {
       writeTerminalBuffer(terminal, update.data);
       terminal.clearSelection();
+    }
+
+    if (current.version === previous.version) {
+      return;
     }
 
     if (current.error !== null && current.error !== previous.error) {
