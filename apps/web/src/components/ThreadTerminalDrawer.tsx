@@ -67,7 +67,11 @@ import { terminalEnvironment } from "../state/terminal";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
 import { useAtomCommand } from "../state/use-atom-command";
 
-import { terminalOutputText } from "@t3tools/client-runtime/state/terminal";
+import {
+  INITIAL_TERMINAL_OUTPUT_CURSOR,
+  readTerminalOutputUpdate,
+  type TerminalOutputCursor,
+} from "@t3tools/client-runtime/state/terminal";
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
 const MULTI_CLICK_SELECTION_ACTION_DELAY_MS = 260;
@@ -365,14 +369,16 @@ export function TerminalViewport({
       input: { threadId, terminalId, cols, rows },
     }),
   );
-  // upstream renamed TerminalSessionState.buffer to a structured .output;
-  // terminalOutputText flattens it back to the string this drawer renders.
-  const terminalBuffer = terminalOutputText(terminalSession.output);
+  // The session keeps output as chunks and evicts the oldest once the retained
+  // byte cap is hit, so the flattened string loses its head over time. Diffing
+  // it by prefix wrote the wrong slice into xterm and printed garbage; read the
+  // delta through the cursor API instead.
+  const terminalOutput = terminalSession.output;
   const terminalError = terminalSession.error;
   const terminalStatus = terminalSession.status;
   const terminalVersion = terminalSession.version;
+  const outputCursorRef = useRef<TerminalOutputCursor>(INITIAL_TERMINAL_OUTPUT_CURSOR);
   const previousSessionRef = useRef({
-    buffer: terminalBuffer,
     error: terminalError,
     status: terminalStatus,
     version: terminalVersion,
@@ -404,8 +410,8 @@ export function TerminalViewport({
 
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
+    outputCursorRef.current = INITIAL_TERMINAL_OUTPUT_CURSOR;
     previousSessionRef.current = {
-      buffer: "",
       status: "closed",
       error: null,
       version: 0,
@@ -742,7 +748,6 @@ export function TerminalViewport({
   useEffect(() => {
     const terminal = terminalRef.current;
     const current = {
-      buffer: terminalBuffer,
       error: terminalError,
       status: terminalStatus,
       version: terminalVersion,
@@ -757,15 +762,16 @@ export function TerminalViewport({
       return;
     }
 
-    if (
-      current.buffer.length >= previous.buffer.length &&
-      current.buffer.startsWith(previous.buffer)
-    ) {
-      terminal.write(current.buffer.slice(previous.buffer.length));
-    } else {
-      writeTerminalBuffer(terminal, current.buffer);
+    const update = readTerminalOutputUpdate(terminalOutput, outputCursorRef.current);
+    outputCursorRef.current = update.cursor;
+    if (update.type === "append") {
+      // Appending must not disturb an in-progress selection: output arriving
+      // while the user drags to copy would otherwise wipe it every time.
+      terminal.write(update.data);
+    } else if (update.type === "reset") {
+      writeTerminalBuffer(terminal, update.data);
+      terminal.clearSelection();
     }
-    terminal.clearSelection();
 
     if (current.error !== null && current.error !== previous.error) {
       writeSystemMessage(terminal, current.error);
@@ -796,7 +802,7 @@ export function TerminalViewport({
       });
     }
     previousSessionRef.current = current;
-  }, [autoFocus, terminalBuffer, terminalError, terminalStatus, terminalVersion]);
+  }, [autoFocus, terminalOutput, terminalError, terminalStatus, terminalVersion]);
 
   useEffect(() => {
     if (!autoFocus) return;
