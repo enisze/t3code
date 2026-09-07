@@ -730,6 +730,21 @@ export default function DiffPanel({
     });
   }, [codeViewFiles, gitStatusQuery.data?.workingTree.files, selectedTurnId]);
 
+  // Totals for the whole selection, summed from the same per-file stats the
+  // navigator lists, so the header count always matches the rendered diff.
+  const changeSummary = useMemo(
+    () =>
+      navigatorFiles.reduce(
+        (totals, file) => ({
+          fileCount: totals.fileCount + 1,
+          additions: totals.additions + file.additions,
+          deletions: totals.deletions + file.deletions,
+        }),
+        { fileCount: 0, additions: 0, deletions: 0 },
+      ),
+    [navigatorFiles],
+  );
+
   const openDiffFile = useCallback(
     (filePath: string) => {
       openDiffFilePrimaryAction({
@@ -963,6 +978,19 @@ export default function DiffPanel({
                 </DropdownMenuSub>
               </DropdownMenuContent>
             </DropdownMenu>
+            {changeSummary.fileCount > 0 ? (
+              <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground tabular-nums">
+                <span>
+                  {changeSummary.fileCount} {changeSummary.fileCount === 1 ? "file" : "files"}
+                </span>
+                <span className="font-mono text-emerald-600 dark:text-emerald-400">
+                  +{changeSummary.additions}
+                </span>
+                <span className="font-mono text-red-600 dark:text-red-400">
+                  −{changeSummary.deletions}
+                </span>
+              </span>
+            ) : null}
             {selectedTurnId === null &&
               selectedGitScope === "branch" &&
               selectedGitSource?.baseRef && (

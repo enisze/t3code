@@ -246,7 +246,13 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         {props.layoutControls}
       </div>
       <div
-        className="flex h-9 shrink-0 items-center gap-1 border-b border-border/60 px-2"
+        className={cn(
+          "flex h-9 shrink-0 items-center gap-1 border-b border-border/60 px-2",
+          // Inline, the titlebar layout controls are a fixed overlay centered in
+          // the topbar band, which reaches into this row. Keep the tab actions
+          // clear of that column instead of letting them collide.
+          props.mode === "inline" && "pr-28",
+        )}
         data-right-panel-tabbar
       >
         <ScrollArea
