@@ -88,10 +88,10 @@ function readStoredCollapsed(): boolean {
 }
 
 // Restore the last-opened tab so the dock resumes where it was left, rather
-// than snapping back to Setup on every mount. Defaults to the Run tab.
-function readStoredActiveTab(): string {
-  if (typeof window === "undefined") return TAB_RUN;
-  return window.localStorage.getItem(ACTIVE_TAB_STORAGE_KEY) ?? TAB_RUN;
+// than snapping back to Setup on every mount.
+function readStoredActiveTab(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(ACTIVE_TAB_STORAGE_KEY);
 }
 
 const runShortcutLabel = () =>
@@ -152,7 +152,7 @@ export default function TasksDock({
   onDeleteScript,
   onAddTerminalContext,
 }: TasksDockProps) {
-  const [activeTabId, setActiveTabId] = useState<string>(readStoredActiveTab);
+  const [storedActiveTabId, setActiveTabId] = useState<string | null>(readStoredActiveTab);
   // Terminal ids started this mount — lets the viewport render optimistically the
   // moment we launch, before the metadata subscription reflects the session.
   const [startedTerminalIds, setStartedTerminalIds] = useState<ReadonlySet<string>>(
@@ -266,6 +266,10 @@ export default function TasksDock({
     return taskTabs;
   }, [setupScript, runScriptEntry, customScripts, shellIds]);
 
+  // With no run script configured, Run is an empty "configure me" pane — a
+  // plain shell is the useful landing tab. An explicit choice still wins.
+  const defaultTabId = runScriptEntry === null ? TASK_SHELL_TERMINAL_ID : TAB_RUN;
+  const activeTabId = storedActiveTabId ?? defaultTabId;
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId) ?? tabs[0]!,
     [tabs, activeTabId],
@@ -289,16 +293,20 @@ export default function TasksDock({
 
   useEffect(() => {
     if (typeof window !== "undefined") {
-      window.localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, activeTabId);
+      // Only an explicit pick is remembered; persisting the derived default
+      // would pin the dock to whatever it happened to open on first.
+      if (storedActiveTabId !== null) {
+        window.localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, storedActiveTabId);
+      }
     }
-  }, [activeTabId]);
+  }, [storedActiveTabId]);
 
   // Keep the active tab valid as scripts/terminals change (e.g. a closed
-  // terminal tab); fall back to the Run tab when it disappears.
+  // terminal tab); fall back to the default when it disappears.
   useEffect(() => {
     if (tabs.some((tab) => tab.id === activeTabId)) return;
-    setActiveTabId(TAB_RUN);
-  }, [activeTabId, tabs]);
+    setActiveTabId(defaultTabId);
+  }, [activeTabId, defaultTabId, tabs]);
 
   // Refit the terminal whenever the dock body resizes.
   useEffect(() => {
