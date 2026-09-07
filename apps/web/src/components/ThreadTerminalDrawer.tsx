@@ -91,6 +91,20 @@ function writeSystemMessage(terminal: Terminal, message: string): void {
   terminal.write(`\r\n[terminal] ${message}\r\n`);
 }
 
+/**
+ * A retained buffer whose head was evicted starts at an arbitrary byte offset,
+ * which lands in the middle of whatever escape sequence was being written.
+ * Replaying from there makes the terminal print that sequence's tail as literal
+ * text — a run of stray characters above the first real line. Resynchronize on
+ * the first line break instead; a replay is scrollback, so losing its partial
+ * leading line costs nothing.
+ */
+function resyncTruncatedReplay(buffer: string, headWasEvicted: boolean): string {
+  if (!headWasEvicted) return buffer;
+  const firstLineBreak = buffer.indexOf("\n");
+  return firstLineBreak === -1 ? "" : buffer.slice(firstLineBreak + 1);
+}
+
 function writeTerminalBuffer(terminal: Terminal, buffer: string): void {
   terminal.write("\u001bc");
   if (buffer.length > 0) {
@@ -409,8 +423,11 @@ export function TerminalViewport({
       lineHeight: 1,
       fontSize: 12,
       scrollback: 5_000,
+      // Nerd Font families lead the stack: prompts like powerlevel10k draw
+      // branch and status icons from the private-use area, which the plain
+      // system monospace fonts render as empty boxes.
       fontFamily:
-        '"SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace',
+        '"MesloLGS NF", "JetBrainsMono Nerd Font", "FiraCode Nerd Font", "Hack Nerd Font", "SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace',
       theme: terminalThemeFromApp(mount),
     });
     terminal.loadAddon(fitAddon);
@@ -776,7 +793,8 @@ export function TerminalViewport({
       // while the user drags to copy would otherwise wipe it every time.
       terminal.write(update.data);
     } else if (update.type === "reset") {
-      writeTerminalBuffer(terminal, update.data);
+      const headWasEvicted = (terminalOutput.chunks[0]?.startOffset ?? 0) > 0;
+      writeTerminalBuffer(terminal, resyncTruncatedReplay(update.data, headWasEvicted));
       terminal.clearSelection();
     }
 
