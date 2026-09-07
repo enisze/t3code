@@ -3,6 +3,10 @@ import ReactDOM from "react-dom/client";
 import { createHashHistory, createBrowserHistory } from "@tanstack/react-router";
 
 import "./index.css";
+// The terminal drawer renders xterm.js, whose stylesheet positions the hidden
+// helper textarea it uses for input. Without it that textarea is a visible,
+// resizable box over the terminal.
+import "@xterm/xterm/css/xterm.css";
 
 import { isElectron } from "./env";
 import { hasCloudPublicConfig } from "./cloud/publicConfig";
