@@ -61,7 +61,10 @@ const DEFAULT_TASK_ROWS = 30;
 
 const COLLAPSED_STORAGE_KEY = "t3code:tasks-dock-collapsed";
 const HEIGHT_STORAGE_KEY = "t3code:tasks-dock-height";
-const ACTIVE_TAB_STORAGE_KEY = "t3code:tasks-dock-active-tab";
+// v2: the previous key was written on every render, including the derived
+// default, so every existing install has a tab pinned that the user never
+// picked. A new key starts them on the shell default instead.
+const ACTIVE_TAB_STORAGE_KEY = "t3code:tasks-dock-active-tab:v2";
 const MIN_BODY_HEIGHT = 140;
 const DEFAULT_BODY_HEIGHT = 280;
 
@@ -266,9 +269,10 @@ export default function TasksDock({
     return taskTabs;
   }, [setupScript, runScriptEntry, customScripts, shellIds]);
 
-  // With no run script configured, Run is an empty "configure me" pane — a
-  // plain shell is the useful landing tab. An explicit choice still wins.
-  const defaultTabId = runScriptEntry === null ? TASK_SHELL_TERMINAL_ID : TAB_RUN;
+  // Opening the dock should give you a shell, not a task. Setup/Run are still a
+  // click away and an explicit pick is still remembered, but the dock no longer
+  // lands on a tab whose only affordance is running a command.
+  const defaultTabId = TASK_SHELL_TERMINAL_ID;
   const activeTabId = storedActiveTabId ?? defaultTabId;
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId) ?? tabs[0]!,
