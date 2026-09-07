@@ -42,7 +42,24 @@ Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
 Combine keys with `!` for not, `&&` for and, `||` for or, and parentheses:
 
 ```json
-{ "key": "mod+j", "command": "terminal.toggle", "when": "terminalOpen && !terminalFocus" }
+[
+  { "key": "mod+j", "command": "terminal.toggle" },
+  { "key": "mod+d", "command": "terminal.split", "when": "terminalFocus" },
+  { "key": "mod+n", "command": "terminal.new", "when": "terminalFocus" },
+  { "key": "mod+w", "command": "terminal.close", "when": "terminalFocus" },
+  { "key": "mod+shift+j", "command": "preview.toggle" },
+  { "key": "mod+r", "command": "preview.refresh", "when": "previewFocus" },
+  { "key": "mod+l", "command": "preview.focusUrl", "when": "previewFocus" },
+  { "key": "mod+=", "command": "preview.zoomIn", "when": "previewFocus" },
+  { "key": "mod+-", "command": "preview.zoomOut", "when": "previewFocus" },
+  { "key": "mod+0", "command": "preview.resetZoom", "when": "previewFocus" },
+  { "key": "mod+k", "command": "commandPalette.toggle", "when": "!terminalFocus" },
+  { "key": "mod+p", "command": "file.open", "when": "!terminalFocus" },
+  { "key": "mod+n", "command": "chat.new", "when": "!terminalFocus" },
+  { "key": "mod+shift+o", "command": "chat.new", "when": "!terminalFocus" },
+  { "key": "mod+shift+n", "command": "chat.newLocal", "when": "!terminalFocus" },
+  { "key": "mod+o", "command": "editor.openFavorite" }
+]
 ```
 
 ## Precedence
@@ -67,7 +84,22 @@ shortcut such as `alt+w`.
 Many defaults include `!terminalFocus` so they do not intercept terminal input.
 Keep that condition when remapping them if you want the same behavior.
 
-## Desktop quit shortcut
+- `terminal.toggle`: open/close terminal drawer
+- `terminal.split`: split terminal (in focused terminal context by default)
+- `terminal.new`: create new terminal (in focused terminal context by default)
+- `terminal.close`: close/kill the focused terminal (in focused terminal context by default)
+- `preview.toggle`: open/close the in-app browser preview panel (desktop app only)
+- `preview.refresh`: reload the active preview tab (in focused preview context by default)
+- `preview.focusUrl`: focus the URL input of the preview panel (in focused preview context by default)
+- `preview.zoomIn`: zoom the preview viewport in one step (in focused preview context by default)
+- `preview.zoomOut`: zoom the preview viewport out one step (in focused preview context by default)
+- `preview.resetZoom`: reset the preview zoom to 100% (in focused preview context by default)
+- `commandPalette.toggle`: open or close the global command palette
+- `file.open`: search the active project or worktree and open the selected file
+- `chat.new`: create a new chat thread preserving the active thread's branch/worktree state
+- `chat.newLocal`: create a new chat thread for the active project in a new environment (local/worktree determined by app settings (default `local`))
+- `editor.openFavorite`: open current project/worktree in the last-used editor
+- `script.{id}.run`: run a project script by id (for example `script.test.run`)
 
 Use `Cmd+Q` on macOS or `Ctrl+Q` on Windows and Linux. In the default **Hold** mode,
 hold for 1.2 seconds or press twice within 500 milliseconds. Holding requires

@@ -367,7 +367,12 @@ export async function executeAtomQuery<A, E>(
     }),
   );
   return executeAtomCommand(
-    () => Effect.runPromiseExit(query, { signal: options.signal }),
+    // The signal arrives either positionally (cancellable commands pass their
+    // controller's) or on the options; honour whichever is set.
+    () => {
+      const abortSignal = signal ?? options.signal;
+      return Effect.runPromiseExit(query, abortSignal ? { signal: abortSignal } : undefined);
+    },
     options,
     reporter,
   );

@@ -49,6 +49,7 @@ import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
+import * as GitHubAccountResolver from "./sourceControl/GitHubAccountResolver.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
@@ -324,9 +325,7 @@ const PullRequestServiceLive = PullRequestService.layer.pipe(
 const GitManagerLayerLive = GitManager.layer.pipe(
   Layer.provideMerge(ProjectSetupScriptRunner.layer.pipe(Layer.provide(ServerSettingsLayerLive))),
   // GitManager copies configured files into new worktrees; the fork provides the
-  // copier here so the server graph resolves it. Layer.suspend defers the
-  // reference past module init — the copier module is part of an import cycle,
-  // so touching it eagerly leaves the binding in its temporal dead zone.
+  // copier here so the server graph resolves it.
   Layer.provideMerge(projectWorktreeFileCopierLayer),
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
@@ -769,6 +768,11 @@ export const makeServerLayer = Layer.unwrap(
     );
 
     return serverApplicationLayer.pipe(
+      // Ambient per-project GitHub account resolver. Placed above the runtime
+      // services (which provide `ProjectionSnapshotQuery`) and the global
+      // `VcsProcess.layer` so it can consume both; kept in the merged runtime
+      // context so `GitHubCli.execute` finds it via `Effect.serviceOption`.
+      Layer.provideMerge(GitHubAccountResolver.layer),
       Layer.provideMerge(runtimeServicesLive),
       Layer.provide(activationLayer),
       Layer.provideMerge(serverRelayBrokerTracingLayer),

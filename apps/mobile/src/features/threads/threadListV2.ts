@@ -12,6 +12,8 @@ import {
   activeThreadAnchorTimestampMs,
   resolveSettledThreadTimestamp,
   sortPinnedThreadsByOrderKey,
+  sortThreads,
+  type ThreadSortInput,
 } from "@t3tools/client-runtime/state/thread-sort";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
@@ -150,28 +152,12 @@ function parseTimestampMs(isoDate: string): number {
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
-/**
- * v2 sort: static order, newest anchor on top. Activity NEVER reorders the
- * list — a row holds its position between lifecycle transitions. The anchor
- * is creation time until an un-settle re-anchors it (see
- * activeThreadAnchorTimestampMs), so an un-settled thread surfaces at the
- * top instead of sinking back to its creation-order slot. Mirrors web's
- * sortThreadsForSidebar.
- */
-export function sortThreadsForListV2<
-  T extends {
-    readonly id: string;
-    readonly createdAt: string;
-    readonly unsettledAt?: string | null | undefined;
-  },
->(threads: readonly T[]): T[] {
-  // .sort() on a copy, not .toSorted(): Hermes doesn't ship the ES2023
-  // change-by-copy array methods.
-  return [...threads].sort(
-    (left, right) =>
-      activeThreadAnchorTimestampMs(right) - activeThreadAnchorTimestampMs(left) ||
-      left.id.localeCompare(right.id),
-  );
+/** Keep the chats users touched most recently at the top, matching web's
+    sortThreadsForSidebarV2. */
+export function sortThreadsForListV2<T extends { readonly id: string } & ThreadSortInput>(
+  threads: readonly T[],
+): T[] {
+  return sortThreads(threads, "updated_at");
 }
 
 export interface ThreadListV2Item {

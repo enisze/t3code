@@ -17,8 +17,8 @@ import { resolveAttachmentPath } from "../attachmentStore.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
-  buildContinuationSummaryPrompt,
   buildPrContentPrompt,
+  buildContinuationSummaryPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import * as TextGeneration from "./TextGeneration.ts";
@@ -467,9 +467,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
         modelSelection: input.modelSelection,
       });
 
-      return {
-        summary: generated.summary.trim(),
-      };
+      return { summary: generated.summary.trim() };
     });
 
   return {
