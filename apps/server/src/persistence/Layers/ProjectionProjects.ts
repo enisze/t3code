@@ -2,12 +2,14 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 
 import {
   GitHubAccountRef,
   ModelSelection,
+  ProjectIconOverride,
   ProjectScript,
   ProjectWorktreeCopyFiles,
 } from "@t3tools/contracts";
@@ -24,6 +26,8 @@ const ProjectionProjectDbRow = ProjectionProject.mapFields(
   Struct.assign({
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
     reviewModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
+    autoPull: Schema.Number,
+    projectIcon: Schema.NullOr(Schema.fromJsonString(ProjectIconOverride)),
     gitHubAccount: Schema.NullOr(Schema.fromJsonString(GitHubAccountRef)),
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
     worktreeCopyFiles: Schema.fromJsonString(ProjectWorktreeCopyFiles),
@@ -68,8 +72,8 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           ${row.worktreeBranchPrefix},
           ${row.defaultWorktreeBranch},
           ${row.defaultThreadEnvMode ?? null},
-          ${row.autoPull},
-          ${row.projectIcon === undefined ? null : JSON.stringify(row.projectIcon)},
+          ${row.autoPull ? 1 : 0},
+          ${row.projectIcon ? JSON.stringify(row.projectIcon) : null},
           ${row.faviconPath},
           ${row.previewPort},
           ${JSON.stringify(row.worktreeCopyFiles)},
@@ -174,11 +178,13 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
 
   const getById: ProjectionProjectRepositoryShape["getById"] = (input) =>
     getProjectionProjectRow(input).pipe(
+      Effect.map(Option.map((row) => ({ ...row, autoPull: row.autoPull === 1 }))),
       Effect.mapError(toPersistenceSqlError("ProjectionProjectRepository.getById:query")),
     );
 
   const listAll: ProjectionProjectRepositoryShape["listAll"] = () =>
     listProjectionProjectRows().pipe(
+      Effect.map((rows) => rows.map((row) => ({ ...row, autoPull: row.autoPull === 1 }))),
       Effect.mapError(toPersistenceSqlError("ProjectionProjectRepository.listAll:query")),
     );
 

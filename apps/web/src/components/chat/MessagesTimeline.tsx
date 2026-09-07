@@ -908,14 +908,20 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         {documents.length > 0 && (
           <div className="mb-2 flex max-w-[420px] flex-wrap gap-2">
             {documents.map((document) => (
-              <span
-                key={document.id}
-                className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-border/70 bg-background/70 px-2 py-1 text-xs text-foreground/90"
-                title={document.name}
-              >
-                <PaperclipIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 truncate">{document.name}</span>
-              </span>
+              <Tooltip key={document.id}>
+                <TooltipTrigger
+                  render={
+                    <span className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-border/70 bg-background/70 px-2 py-1 text-xs text-foreground/90">
+                      <PaperclipIcon
+                        aria-hidden
+                        className="size-3.5 shrink-0 text-muted-foreground"
+                      />
+                      <span className="min-w-0 truncate">{document.name}</span>
+                    </span>
+                  }
+                />
+                <TooltipPopup>{document.name}</TooltipPopup>
+              </Tooltip>
             ))}
           </div>
         )}

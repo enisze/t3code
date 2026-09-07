@@ -121,11 +121,6 @@ const DEFAULT_BINDINGS = compile([
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
   {
-    shortcut: modShortcut("p"),
-    command: "filePicker.toggle",
-    whenAst: whenNot(whenIdentifier("terminalFocus")),
-  },
-  {
     shortcut: modShortcut("f", { shiftKey: true }),
     command: "projectSearch.toggle",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
@@ -406,10 +401,7 @@ describe("shortcutLabelForCommand", () => {
       "⌘K",
     );
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "file.open", "MacIntel"), "⌘P");
-    assert.strictEqual(
-      shortcutLabelForCommand(DEFAULT_BINDINGS, "filePicker.toggle", "MacIntel"),
-      "⌘P",
-    );
+    assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "file.open", "MacIntel"), "⌘P");
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "projectSearch.toggle", "MacIntel"),
       "⇧⌘F",
@@ -609,20 +601,20 @@ describe("chat/editor shortcuts", () => {
     );
   });
 
-  it("matches filePicker.toggle shortcut outside terminal focus", () => {
+  it("matches file.open shortcut outside terminal focus", () => {
     assert.strictEqual(
       resolveShortcutCommand(event({ key: "p", metaKey: true }), DEFAULT_BINDINGS, {
         platform: "MacIntel",
         context: { terminalFocus: false },
       }),
-      "filePicker.toggle",
+      "file.open",
     );
     assert.notStrictEqual(
       resolveShortcutCommand(event({ key: "p", metaKey: true }), DEFAULT_BINDINGS, {
         platform: "MacIntel",
         context: { terminalFocus: true },
       }),
-      "filePicker.toggle",
+      "file.open",
     );
   });
 

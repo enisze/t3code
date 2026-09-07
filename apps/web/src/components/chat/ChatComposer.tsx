@@ -3092,9 +3092,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       className="relative flex max-w-56 items-center gap-2 rounded-lg border border-border/80 bg-background py-1.5 pl-2 pr-8 text-xs"
                     >
                       <FileIcon className="size-4 shrink-0 text-muted-foreground" />
-                      <span className="min-w-0 truncate" title={document.name}>
-                        {document.name}
-                      </span>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={<span className="min-w-0 truncate">{document.name}</span>}
+                        />
+                        <TooltipPopup>{document.name}</TooltipPopup>
+                      </Tooltip>
                       <Button
                         variant="ghost"
                         size="icon-xs"

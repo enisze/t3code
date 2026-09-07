@@ -59,13 +59,24 @@ it.effect("reports implemented tools separately from locally available executabl
       if (input.command === "gh" && input.args[0] === "--version") {
         return Effect.succeed(processOutput("gh version 2.83.0\n"));
       }
-      if (input.command === "gh" && input.args.join(" ") === "auth status") {
+      if (input.command === "gh" && input.args.join(" ") === "auth status --json hosts") {
         return Effect.succeed(
-          processOutput(`github.com
-  ✓ Logged in to github.com account juliusmarminge (keyring)
-  - Active account: true
-  - Git operations protocol: ssh
-`),
+          processOutput(
+            JSON.stringify({
+              hosts: {
+                "github.com": [
+                  {
+                    state: "success",
+                    active: true,
+                    host: "github.com",
+                    login: "juliusmarminge",
+                    tokenSource: "keyring",
+                    gitProtocol: "ssh",
+                  },
+                ],
+              },
+            }),
+          ),
         );
       }
       return Effect.fail(
@@ -164,13 +175,24 @@ it.effect("probes provider authentication without exposing token details", () =>
       if (input.args[0] === "--version") {
         return Effect.succeed(processOutput(`${input.command} version test\n`));
       }
-      if (input.command === "gh" && input.args.join(" ") === "auth status") {
+      if (input.command === "gh" && input.args.join(" ") === "auth status --json hosts") {
         return Effect.succeed(
-          processOutput(`github.com
-  ✓ Logged in to github.com account octocat (keyring)
-  - Active account: true
-  - Git operations protocol: ssh
-`),
+          processOutput(
+            JSON.stringify({
+              hosts: {
+                "github.com": [
+                  {
+                    state: "success",
+                    active: true,
+                    host: "github.com",
+                    login: "octocat",
+                    tokenSource: "keyring",
+                    gitProtocol: "ssh",
+                  },
+                ],
+              },
+            }),
+          ),
         );
       }
       if (input.command === "glab" && input.args.join(" ") === "auth status") {

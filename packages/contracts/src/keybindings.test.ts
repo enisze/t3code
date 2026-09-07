@@ -66,12 +66,6 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedCommandPalette.command, "commandPalette.toggle");
 
-    const parsedFilePicker = yield* decode(KeybindingRule, {
-      key: "mod+p",
-      command: "filePicker.toggle",
-    });
-    assert.strictEqual(parsedFilePicker.command, "filePicker.toggle");
-
     const parsedProjectSearch = yield* decode(KeybindingRule, {
       key: "mod+shift+f",
       command: "projectSearch.toggle",
@@ -232,11 +226,11 @@ it.effect("drops resolved rules with commands this build does not know", () =>
     const parsed = yield* decode(ResolvedKeybindingsConfig, [
       { command: "terminal.toggle", shortcut },
       { command: "someFuture.toggle", shortcut },
-      { command: "filePicker.toggle", shortcut },
+      { command: "file.open", shortcut },
     ]);
     assert.deepEqual(
       parsed.map((rule) => rule.command),
-      ["terminal.toggle", "filePicker.toggle"],
+      ["terminal.toggle", "file.open"],
     );
   }),
 );

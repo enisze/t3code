@@ -1,3 +1,8 @@
+export interface ProjectionAccountRoute {
+  readonly path: string;
+  readonly account: GitHubAccountRef;
+}
+
 /**
  * ProjectionSnapshotQuery - Read-model snapshot query service interface.
  *
@@ -33,6 +38,7 @@ import type * as Effect from "effect/Effect";
 
 import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
 
+import type { GitHubAccountRef, ModelSelection } from "@t3tools/contracts";
 export interface ProjectionSnapshotCounts {
   readonly projectCount: number;
   readonly threadCount: number;
@@ -134,6 +140,22 @@ export interface ProjectionSnapshotQueryShape {
    * Read the latest projection snapshot sequence without hydrating read-model
    * entities.
    */
+  /**
+   * Every workspace path that has a provider account attached, so shell
+   * commands can resolve the account for the directory they run in.
+   */
+  readonly listAccountRoutes: () => Effect.Effect<
+    ReadonlyArray<ProjectionAccountRoute>,
+    ProjectionRepositoryError
+  >;
+
+  /**
+   * The project default model selection covering `cwd`, if one applies.
+   */
+  readonly getDefaultModelSelectionForCwd: (
+    cwd: string,
+  ) => Effect.Effect<Option.Option<ModelSelection>, ProjectionRepositoryError>;
+
   readonly getSnapshotSequence: () => Effect.Effect<
     ProjectionSnapshotSequence,
     ProjectionRepositoryError

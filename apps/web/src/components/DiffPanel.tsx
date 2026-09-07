@@ -860,7 +860,7 @@ export default function DiffPanel({
     <button
       type="button"
       onClick={() => openDiffFile(focusedFile.filePath)}
-      title={`${focusedFile.filePath} — open file`}
+      aria-label={`${focusedFile.filePath} — open file`}
       className="inline-flex h-6 min-w-0 max-w-full items-center gap-1.5 rounded-md border border-border/70 bg-muted/40 px-2 text-xs outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
     >
       <PierreEntryIcon
@@ -968,7 +968,6 @@ export default function DiffPanel({
               selectedGitSource?.baseRef && (
                 <div
                   className="flex min-w-0 max-w-full items-center gap-2 overflow-hidden text-xs text-muted-foreground"
-                  title={`${selectedGitSource.headRef ?? "HEAD"} → ${selectedGitSource.baseRef}`}
                   aria-label={`Comparing ${selectedGitSource.headRef ?? "HEAD"} against ${selectedGitSource.baseRef}`}
                 >
                   <span className="min-w-0 max-w-48 truncate">
@@ -1064,12 +1063,16 @@ export default function DiffPanel({
                                     />
                                   </div>
                                 ) : choice.remote ? (
-                                  <span
-                                    className="flex justify-end text-muted-foreground"
-                                    title="Remote only"
-                                  >
-                                    <CheckIcon aria-hidden="true" className="size-3" />
-                                  </span>
+                                  <Tooltip>
+                                    <TooltipTrigger
+                                      render={
+                                        <span className="flex justify-end text-muted-foreground">
+                                          <CheckIcon aria-hidden="true" className="size-3" />
+                                        </span>
+                                      }
+                                    />
+                                    <TooltipPopup>Remote only</TooltipPopup>
+                                  </Tooltip>
                                 ) : null}
                               </div>
                             </ComboboxItem>

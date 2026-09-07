@@ -13,6 +13,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { resolveThreadRouteRef } from "../../threadRoutes";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { ProviderUsageMeters } from "./ProviderUsageSection";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 type ProviderWithUsage = ServerProvider & { readonly usage: ProviderUsage };
 
@@ -136,18 +137,24 @@ export function SettingsUsagePill() {
           <span className="flex-1 truncate text-[13px] font-medium text-foreground">
             Usage limits
           </span>
-          <span
-            className="shrink-0 text-xs font-medium tabular-nums"
-            title={summaryTitle}
-            style={{
-              color:
-                activePercent === null
-                  ? "var(--color-muted-foreground)"
-                  : summaryColor(activePercent),
-            }}
-          >
-            {activePercent === null ? "—" : `${Math.round(activePercent)}%`}
-          </span>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span
+                  className="shrink-0 text-xs font-medium tabular-nums"
+                  style={{
+                    color:
+                      activePercent === null
+                        ? "var(--color-muted-foreground)"
+                        : summaryColor(activePercent),
+                  }}
+                >
+                  {activePercent === null ? "—" : `${Math.round(activePercent)}%`}
+                </span>
+              }
+            />
+            <TooltipPopup>{summaryTitle}</TooltipPopup>
+          </Tooltip>
           <ChevronUpIcon
             className={cn(
               "size-3.5 shrink-0 text-muted-foreground transition-transform",
@@ -160,7 +167,6 @@ export function SettingsUsagePill() {
           onClick={refreshProviders}
           disabled={isRefreshing}
           aria-label="Refresh usage limits"
-          title="Refresh usage limits"
           className={cn(
             "mr-1 shrink-0 rounded-md p-1.5 text-muted-foreground outline-none",
             "transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:bg-muted/40",

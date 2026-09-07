@@ -160,7 +160,15 @@ export class VcsProcessExitError extends Schema.TaggedErrorClass<VcsProcessExitE
               : context.command === "gh" || context.command === "az"
                 ? "Pull request not found."
                 : "VCS resource not found."
-            : "Process exited with a non-zero status.";
+            : failureKind === "repository-not-found"
+              ? "No repository found for this directory. It may not be a git repository, or its remotes don't point to the expected host."
+              : failureKind === "permission-denied"
+                ? "The authenticated account lacks permission for this operation."
+                : failureKind === "merge-blocked"
+                  ? "The change request can't be merged (conflicts, failing checks, branch protection, or a disallowed merge method)."
+                  : failureKind === "provider-unavailable"
+                    ? "The source control provider is temporarily unavailable."
+                    : "Process exited with a non-zero status.";
 
     return new VcsProcessExitError({
       ...context,

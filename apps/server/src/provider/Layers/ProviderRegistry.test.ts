@@ -200,6 +200,7 @@ function recordingMockSpawnerLayer(
   },
 ) {
   const commands: Array<{
+    readonly command: string;
     readonly args: ReadonlyArray<string>;
     readonly env: NodeJS.ProcessEnv | undefined;
   }> = [];
@@ -207,12 +208,13 @@ function recordingMockSpawnerLayer(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) => {
       const cmd = command as unknown as {
+        command: string;
         args: ReadonlyArray<string>;
         options?: {
           readonly env?: NodeJS.ProcessEnv;
         };
       };
-      commands.push({ args: cmd.args, env: cmd.options?.env });
+      commands.push({ command: cmd.command, args: cmd.args, env: cmd.options?.env });
       return Effect.succeed(mockHandle(handler(cmd.args)));
     }),
   );
@@ -2816,8 +2818,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           );
           assert.strictEqual(status.status, "ready");
           // The home is resolved through the host Path before it reaches the env.
+          // Only the Claude CLI's own invocations carry the config dir; the
+          // status check also shells out to the macOS keychain for this
+          // instance's credentials, which is a different executable.
           assert.deepStrictEqual(
-            recorded.commands.map((command) => command.env?.CLAUDE_CONFIG_DIR),
+            recorded.commands
+              .filter((command) => command.command.includes("claude"))
+              .map((command) => command.env?.CLAUDE_CONFIG_DIR),
             [(yield* Path.Path).resolve(claudeConfigDir)],
           );
         }).pipe(Effect.provide(recorded.layer));

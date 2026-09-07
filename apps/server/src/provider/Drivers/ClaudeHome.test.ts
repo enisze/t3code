@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -99,7 +99,7 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const configDir = path.resolve(NodeOS.homedir(), ".claude-personal");
-        const suffix = createHash("sha256").update(configDir).digest("hex").slice(0, 8);
+        const suffix = NodeCrypto.createHash("sha256").update(configDir).digest("hex").slice(0, 8);
 
         expect(yield* makeClaudeCredentialsServiceName({ homePath: "~/.claude-personal" })).toBe(
           `${CLAUDE_KEYCHAIN_SERVICE}-${suffix}`,

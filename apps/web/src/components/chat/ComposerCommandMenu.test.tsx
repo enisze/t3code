@@ -58,8 +58,7 @@ describe("ComposerCommandMenu", () => {
     );
 
     expect(markup).toContain("Browser");
-    expect(markup).toContain('data-slot="badge"');
-    expect(markup).toContain(">App Skill</span>");
+    expect(markup).toContain("App");
     expect(markup).toContain("Open and control the in-app browser");
     expect(markup).toContain("<svg");
   });
@@ -92,10 +91,11 @@ describe("ComposerCommandMenu", () => {
       />,
     );
 
-    expect(markup).toContain('<span class="text-secondary-label">/skill:</span>Ask Matt');
-    expect(markup).toContain('data-slot="badge"');
-    expect(markup).toContain("lucide-folder");
-    expect(markup).toContain(">Repo</span>");
+    // Skills reached through the slash trigger group under "Skills" rather
+    // than being dropped alongside built-in and provider commands.
+    expect(markup).toContain(">Skills</div>");
+    expect(markup).toContain("/skill:ask-matt");
+    expect(markup).toContain("Repo");
     expect(markup).toContain("Find the right skill or workflow");
   });
 });

@@ -609,6 +609,22 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 @layer components {
+  /* The brand only earns its space once the sidebar header is wide enough;
+     below that the collapse trigger stands alone. Container queries (not
+     breakpoints) because the sidebar is resizable independently of the
+     viewport. */
+  .sidebar-brand {
+    display: none;
+  }
+
+  @media (min-width: 48rem) {
+    @container sidebar-header (min-width: 13.5rem) {
+      .sidebar-brand {
+        display: flex;
+      }
+    }
+  }
+
   /* Each maintainer palette gives the same line art its own material: rose
      vellum, forest drafting paper, marine cyanotype, copper, and violet ink.
      These colors stay deliberately deep at the top edge so the white stage

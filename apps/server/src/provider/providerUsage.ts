@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import * as CodexSchema from "effect-codex-app-server/schema";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import { makeClaudeCredentialsServiceName, resolveClaudeConfigDir } from "./Drivers/ClaudeHome.ts";
 import { spawnAndCollect } from "./providerSnapshot.ts";
@@ -266,7 +267,7 @@ const resolveClaudeAccessToken = Effect.fn("resolveClaudeAccessToken")(function*
   );
   if (fromFile) return fromFile;
 
-  if (process.platform !== "darwin") return null;
+  if ((yield* HostProcessPlatform) !== "darwin") return null;
 
   // Each non-default CLAUDE_CONFIG_DIR gets its own keychain entry
   // (`Claude Code-credentials-<sha256(configDir)[:8]>`); the default account

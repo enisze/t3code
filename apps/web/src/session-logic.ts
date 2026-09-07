@@ -2,6 +2,10 @@ import * as Option from "effect/Option";
 import * as Arr from "effect/Array";
 import { shallow } from "zustand/vanilla/shallow";
 import {
+  commandDetailRepeatsCommand,
+  extractCommandOutputText,
+} from "@t3tools/client-runtime/work-log/presentation";
+import {
   ApprovalRequestId,
   isToolLifecycleItemType,
   type OrchestrationLatestTurn,
@@ -722,6 +726,16 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const requestKind = extractWorkLogRequestKind(payload);
   if (detail) {
     entry.detail = detail;
+  } else if (activity.kind === "runtime.error" || activity.kind === "runtime.warning") {
+    // The row label is a generic tone word (or a shorter truncation), so the
+    // retained message is the only place the diagnostic text survives.
+    const message = asTrimmedString(payload?.message);
+    if (
+      message &&
+      normalizePreviewForComparison(message) !== normalizePreviewForComparison(activity.summary)
+    ) {
+      entry.detail = message;
+    }
   }
   if (commandPreview.command) {
     entry.command = commandPreview.command;
@@ -1162,6 +1176,11 @@ function isCommandToolDetail(payload: Record<string, unknown> | null, heading: s
   );
 }
 
+function extractToolOutput(payload: Record<string, unknown> | null): string | null {
+  const output = extractCommandOutputText(payload?.data);
+  return output ? stripTrailingExitCode(output).output : null;
+}
+
 function extractToolDetail(
   payload: Record<string, unknown> | null,
   heading: string,
@@ -1170,12 +1189,35 @@ function extractToolDetail(
   const detail = rawDetail ? stripTrailingExitCode(rawDetail).output : null;
   const normalizedHeading = normalizePreviewForComparison(heading);
   const normalizedDetail = normalizePreviewForComparison(detail);
+  const commandTool = isCommandToolDetail(payload, heading);
+  const commandPreview = commandTool
+    ? extractToolCommand(payload)
+    : { command: null, rawCommand: null };
+  const command = commandPreview.command;
 
-  if (detail && normalizedHeading !== normalizedDetail) {
+  // The row already shows the command; its detail line is only worth the space
+  // when it carries the output rather than echoing the command back.
+  if (commandTool && command) {
+    const output = extractToolOutput(payload);
+    if (output) return output;
+  }
+
+  const data = asRecord(payload?.data);
+  const repeatsCommand =
+    detail !== null &&
+    commandDetailRepeatsCommand({
+      detail,
+      command,
+      rawCommand: commandPreview.rawCommand,
+      toolName: data?.toolName,
+      data,
+    });
+
+  if (detail && normalizedHeading !== normalizedDetail && (!commandTool || !repeatsCommand)) {
     return detail;
   }
 
-  if (isCommandToolDetail(payload, heading)) {
+  if (commandTool) {
     return null;
   }
 

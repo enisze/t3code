@@ -303,14 +303,16 @@ describe("ClientSettings sidebar v2", () => {
     expect(decodeClientSettings({ sidebarV2Enabled: true }).sidebarV2ConfiguredByUser).toBe(false);
   });
 
-  it("drops the retired sidebar v2 beta keys, resetting everyone to the default", () => {
+  // Upstream retired the v2 beta keys; this fork still ships the v2 sidebar
+  // behind them, so decoding keeps them alongside legacySidebarEnabled.
+  it("keeps the sidebar v2 beta keys alongside the legacy sidebar flag", () => {
     const decoded = decodeClientSettings({
       sidebarV2Enabled: false,
       sidebarV2ConfiguredByUser: true,
     });
     expect(decoded.legacySidebarEnabled).toBe(false);
-    expect(decoded).not.toHaveProperty("sidebarV2Enabled");
-    expect(decoded).not.toHaveProperty("sidebarV2ConfiguredByUser");
+    expect(decoded.sidebarV2Enabled).toBe(false);
+    expect(decoded.sidebarV2ConfiguredByUser).toBe(true);
   });
 
   it("preserves an explicit legacy sidebar opt-in", () => {

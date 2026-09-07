@@ -153,7 +153,7 @@ it.effect("uses gh json listing for non-open change request state queries", () =
       "--limit",
       "10",
       "--json",
-      "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner,mergeable,mergeStateStatus,statusCheckRollup",
+      "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
     ]);
     assert.strictEqual(changeRequests[0]?.provider, "github");
     assert.strictEqual(changeRequests[0]?.state, "merged");
@@ -211,22 +211,33 @@ it.effect("creates GitHub PRs through provider-neutral input names", () =>
   }),
 );
 
-const GH_AUTH_STATUS_ACTIVE_PLUS_STALE = `github.com
-  ✓ Logged in to github.com account active-user (keyring)
-  - Active account: true
-  - Git operations protocol: ssh
-  - Token: gho_************************************
-  - Token scopes: 'gist', 'read:org', 'repo'
-
-  X Failed to log in to github.com account stale-user (keyring)
-  - The token in keyring is invalid.
-  - To re-authenticate, run: gh auth login -h github.com
-  - To forget about this account, run: gh auth logout -h github.com -u stale-user
-`;
-
 it("accepts active authenticated GitHub accounts when another account fails", () => {
   const auth = GitHubSourceControlProvider.discovery.parseAuth(
-    processResult(GH_AUTH_STATUS_ACTIVE_PLUS_STALE),
+    processResult(
+      JSON.stringify({
+        hosts: {
+          "github.com": [
+            {
+              state: "success",
+              active: true,
+              host: "github.com",
+              login: "active-user",
+              tokenSource: "keyring",
+              gitProtocol: "ssh",
+            },
+            {
+              state: "error",
+              active: false,
+              host: "github.com",
+              login: "stale-user",
+              tokenSource: "keyring",
+              gitProtocol: "ssh",
+              error: "The token in keyring is invalid.",
+            },
+          ],
+        },
+      }),
+    ),
   );
 
   assert.deepStrictEqual(
@@ -243,14 +254,25 @@ it("accepts active authenticated GitHub accounts when another account fails", ()
   );
 });
 
-it("parses GitHub auth status from stderr when stdout is empty (older gh)", () => {
+it("parses GitHub auth JSON from stdout when stderr has warnings", () => {
   const auth = GitHubSourceControlProvider.discovery.parseAuth(
-    processResult("", {
-      stderr: `github.com
-  ✓ Logged in to github.com account active-user (keyring)
-  - Active account: true
-`,
-    }),
+    processResult(
+      JSON.stringify({
+        hosts: {
+          "github.com": [
+            {
+              state: "success",
+              active: true,
+              host: "github.com",
+              login: "active-user",
+              tokenSource: "keyring",
+              gitProtocol: "ssh",
+            },
+          ],
+        },
+      }),
+      { stderr: "warning: ignored diagnostic from gh\n" },
+    ),
   );
 
   assert.deepStrictEqual(
@@ -270,19 +292,38 @@ it("parses GitHub auth status from stderr when stdout is empty (older gh)", () =
 it("parses GitHub auth status accounts by host and active state", () => {
   assert.deepStrictEqual(
     parseGitHubAuthStatus(
-      `github.com
-  ✓ Logged in to github.com account active-user (keyring)
-  - Active account: true
-  - Git operations protocol: ssh
-
-  X Failed to log in to github.com account stale-user (keyring)
-  - The token in keyring is invalid.
-
-github.example.test
-  ✓ Logged in to github.example.test account enterprise-user (keyring)
-  - Active account: false
-  - Git operations protocol: ssh
-`,
+      JSON.stringify({
+        hosts: {
+          "github.com": [
+            {
+              state: "success",
+              active: true,
+              host: "github.com",
+              login: "active-user",
+              tokenSource: "keyring",
+              gitProtocol: "ssh",
+            },
+            {
+              state: "error",
+              active: false,
+              host: "github.com",
+              login: "stale-user",
+              tokenSource: "keyring",
+              gitProtocol: "ssh",
+            },
+          ],
+          "github.example.test": [
+            {
+              state: "success",
+              active: false,
+              host: "github.example.test",
+              login: "enterprise-user",
+              tokenSource: "keyring",
+              gitProtocol: "ssh",
+            },
+          ],
+        },
+      }),
     ).accounts,
     [
       {
@@ -297,7 +338,7 @@ github.example.test
         account: "stale-user",
         authenticated: false,
         active: false,
-        error: "The token in keyring is invalid.",
+        error: null,
       },
       {
         host: "github.example.test",
@@ -310,15 +351,24 @@ github.example.test
   );
 });
 
-it("reports unauthenticated when GitHub accounts exist but none are valid", () => {
+it("reports unauthenticated when GitHub JSON has accounts but none are valid", () => {
   const auth = GitHubSourceControlProvider.discovery.parseAuth(
     processResult(
-      `github.com
-  X Failed to log in to github.com account stale-user (keyring)
-  - The token in keyring is invalid.
-  - To re-authenticate, run: gh auth login -h github.com
-`,
-      { exitCode: ChildProcessSpawner.ExitCode(1) },
+      JSON.stringify({
+        hosts: {
+          "github.com": [
+            {
+              state: "error",
+              active: true,
+              host: "github.com",
+              login: "stale-user",
+              tokenSource: "keyring",
+              gitProtocol: "ssh",
+              error: "The token in keyring is invalid.",
+            },
+          ],
+        },
+      }),
     ),
   );
 

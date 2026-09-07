@@ -48,6 +48,7 @@ import {
 import type { ProjectScript, ResolvedKeybindingsConfig, ServerSettings } from "@t3tools/contracts";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import type { NewProjectScriptInput } from "../ProjectScriptDialog";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 /**
  * Per-project settings page. Hosts every project-scoped setting (name, git
  * defaults, files copied into new worktrees, agents, scripts, preview) in the
@@ -127,12 +128,16 @@ export function ProjectSettingsPanel(props: {
                 if (event.key === "Enter") event.currentTarget.blur();
               }}
             />
-            <span
-              className="truncate text-[11px] text-muted-foreground"
-              title={project.workspaceRoot}
-            >
-              <code>{project.workspaceRoot}</code>
-            </span>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span className="truncate text-[11px] text-muted-foreground">
+                    <code>{project.workspaceRoot}</code>
+                  </span>
+                }
+              />
+              <TooltipPopup>{project.workspaceRoot}</TooltipPopup>
+            </Tooltip>
           </label>
         </div>
       </SettingsSection>
