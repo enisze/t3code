@@ -1,6 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import type { ProviderUsage, ProviderUsageWindow, ServerProvider } from "@t3tools/contracts";
+import type {
+  ProviderUsage,
+  ProviderUsageWindow,
+  ProviderUsageWindowKind,
+  ServerProvider,
+} from "@t3tools/contracts";
 import { useParams } from "@tanstack/react-router";
 import { ChevronUpIcon, GaugeIcon, RefreshCwIcon } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
@@ -16,6 +21,45 @@ import { ProviderUsageMeters } from "./ProviderUsageSection";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 type ProviderWithUsage = ServerProvider & { readonly usage: ProviderUsage };
+
+/**
+ * Providers publish quota windows as `usageLimits`; this widget and the meters
+ * it renders were written against the older `usage` shape. Adapt at the edge so
+ * every connected instance shows up, whatever it reports.
+ *
+ * `usageLimits.windows[].id` already carries the same slugs the legacy `kind`
+ * union uses (`five_hour`, `primary`, …), so it maps straight across; anything
+ * unrecognized falls back to `unknown`, which only affects ordering and label.
+ */
+const LEGACY_WINDOW_KINDS = new Set<string>([
+  "five_hour",
+  "seven_day",
+  "seven_day_opus",
+  "seven_day_sonnet",
+  "monthly",
+  "primary",
+  "secondary",
+  "overage",
+  "unknown",
+]);
+
+function resolveProviderUsage(provider: ServerProvider): ProviderUsage | null {
+  if (provider.usage !== undefined && provider.usage.windows.length > 0) return provider.usage;
+  const limits = provider.usageLimits;
+  if (limits === undefined || limits.windows.length === 0) return null;
+  return {
+    source: provider.driver === "claude" ? "claude" : "codex",
+    fetchedAt: limits.checkedAt,
+    planLabel: null,
+    windows: limits.windows.map((window): ProviderUsageWindow => ({
+      kind: (LEGACY_WINDOW_KINDS.has(window.id) ? window.id : "unknown") as ProviderUsageWindowKind,
+      label: window.label,
+      usedPercent: window.usedPercent,
+      resetsAt: window.resetsAt ?? null,
+      windowMinutes: window.windowDurationMins ?? null,
+    })),
+  };
+}
 
 function summaryColor(usedPercent: number): string {
   if (usedPercent >= 90) return "var(--color-red-500)";
@@ -91,10 +135,12 @@ export function SettingsUsagePill() {
     })();
   }, [primaryEnvironment, refreshServerProviders]);
 
-  const withUsage = providers.filter(
-    (provider): provider is ProviderWithUsage =>
-      provider.usage !== undefined && provider.usage.windows.length > 0,
-  );
+  // Every connected instance that reports windows, so several Claude and Codex
+  // accounts each get their own meters rather than only the first.
+  const withUsage = providers.flatMap((provider): ProviderWithUsage[] => {
+    const usage = resolveProviderUsage(provider);
+    return usage === null ? [] : [{ ...provider, usage }];
+  });
   if (withUsage.length === 0) return null;
 
   // Summary reflects only the active chat's provider instance (its own model
@@ -106,7 +152,7 @@ export function SettingsUsagePill() {
     null;
   const activeProvider =
     activeInstanceId !== null
-      ? providers.find((provider) => provider.instanceId === activeInstanceId)
+      ? withUsage.find((provider) => provider.instanceId === activeInstanceId)
       : undefined;
   // Summarize the hourly window, not the max across windows, so the collapsed
   // number reflects the short-term limit users hit mid-session. Every window

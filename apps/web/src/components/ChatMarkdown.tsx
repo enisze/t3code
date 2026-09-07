@@ -107,8 +107,11 @@ import {
 
 const CHAT_MARKDOWN_MEDIA_MAX_WIDTH_CLASS_NAME = "max-w-[min(100%,30rem)]";
 
+// A 30rem square is most of the message column, which is far more room than an
+// avatar or an OpenGraph thumbnail earns. Cap the height lower so inline media
+// reads as media; a real screenshot is still one click from full size.
 const CHAT_MARKDOWN_MEDIA_BOUNDS_CLASS_NAME = cn(
-  "max-h-[30rem]",
+  "max-h-64",
   CHAT_MARKDOWN_MEDIA_MAX_WIDTH_CLASS_NAME,
 );
 const CHAT_MARKDOWN_MEDIA_FRAME_CLASS_NAME = "rounded-lg border border-border/40";
