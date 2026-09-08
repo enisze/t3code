@@ -1,3 +1,4 @@
+import { DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 
 import {
@@ -11,7 +12,7 @@ import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsL
 
 const AUTO_SETTLE_MIN_DAYS = 1;
 const AUTO_SETTLE_MAX_DAYS = 90;
-const AUTO_SETTLE_DEFAULT_DAYS = 3;
+const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS;
 
 function AutoSettleDaysInput({
   value,

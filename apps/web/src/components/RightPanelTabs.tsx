@@ -235,24 +235,21 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     >
       <div
         className={cn(
-          "workspace-topbar justify-end gap-1 pl-2",
+          "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center justify-end gap-1 pl-2 pr-3",
           !ownsDesktopTitleBar && "[--workspace-topbar-height:--spacing(11)]",
-          props.mode === "inline" ? "pr-28" : "pr-3",
-          ownsDesktopTitleBar && "wco:pr-[calc(var(--workspace-native-controls-inset)+6rem)]",
+          ownsDesktopTitleBar && "wco:pr-[var(--workspace-native-controls-inset)]",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         )}
       >
+        {props.layoutControls ? (
+          // The panel's own collapse control leads the header; the git actions
+          // stay on the trailing edge.
+          <div className="me-auto flex h-full shrink-0 items-center">{props.layoutControls}</div>
+        ) : null}
         {props.headerActions}
-        {props.layoutControls}
       </div>
       <div
-        className={cn(
-          "flex h-9 shrink-0 items-center gap-1 border-b border-border/60 px-2",
-          // Inline, the titlebar layout controls are a fixed overlay centered in
-          // the topbar band, which reaches into this row. Keep the tab actions
-          // clear of that column instead of letting them collide.
-          props.mode === "inline" && "pr-28",
-        )}
+        className="flex h-9 shrink-0 items-center gap-1 border-b border-border/60 px-2"
         data-right-panel-tabbar
       >
         <ScrollArea

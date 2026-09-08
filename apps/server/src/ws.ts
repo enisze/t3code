@@ -1395,6 +1395,20 @@ const makeWsRpcLayer = (
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
+      // A worktree the request produced is a second checkout, and refreshing the
+      // repository the request came from does not touch its cached status. A
+      // reused worktree still holds the branch it had before, pull request
+      // included, so the thread's change request would only surface on the next
+      // poll or when its first turn ends.
+      const refreshGitStatusWithWorktree = (cwd: string, worktreePath: string | null) =>
+        refreshGitStatus(cwd).pipe(
+          Effect.andThen(
+            worktreePath === null || worktreePath === cwd
+              ? Effect.void
+              : refreshGitStatus(worktreePath),
+          ),
+        );
+
       return WsRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
@@ -2725,7 +2739,11 @@ const makeWsRpcLayer = (
             WS_METHODS.gitPreparePullRequestThread,
             gitWorkflow
               .preparePullRequestThread(input)
-              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+              .pipe(
+                Effect.tap((result) =>
+                  refreshGitStatusWithWorktree(input.cwd, result.worktreePath),
+                ),
+              ),
             { "rpc.aggregate": "git" },
           ),
         [WS_METHODS.vcsListRefs]: (input) =>
@@ -2735,7 +2753,13 @@ const makeWsRpcLayer = (
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsCreateWorktree,
-            gitWorkflow.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            gitWorkflow
+              .createWorktree(input)
+              .pipe(
+                Effect.tap((result) =>
+                  refreshGitStatusWithWorktree(input.cwd, result.worktree.path),
+                ),
+              ),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>

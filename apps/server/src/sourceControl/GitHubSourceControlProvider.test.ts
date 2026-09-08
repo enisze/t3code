@@ -182,6 +182,42 @@ it.effect("treats empty non-open change request listing output as no results", (
   }),
 );
 
+it.effect("enriches open change requests with per-PR review state", () =>
+  Effect.gen(function* () {
+    let reviewedNumber: number | null = null;
+    const provider = yield* makeProvider({
+      listOpenPullRequests: () =>
+        Effect.succeed([
+          {
+            number: 99,
+            title: "Needs review",
+            url: "https://github.com/pingdotgg/t3code/pull/99",
+            baseRefName: "main",
+            headRefName: "feature/review",
+            state: "open",
+          },
+        ]),
+      readPullRequestReviewState: (input) => {
+        reviewedNumber = input.number;
+        return Effect.succeed({ mergeability: "conflicting", unresolvedReviewThreadCount: 3 });
+      },
+    });
+
+    const changeRequests = yield* provider.listChangeRequests({
+      cwd: "/repo",
+      headSelector: "feature/review",
+      state: "open",
+      limit: 1,
+    });
+
+    // `gh pr list` can't report review threads or a computed mergeability, so the
+    // open PR has to be enriched by the per-PR review-state lookup.
+    assert.strictEqual(reviewedNumber, 99);
+    assert.strictEqual(changeRequests[0]?.unresolvedReviewThreadCount, 3);
+    assert.strictEqual(changeRequests[0]?.mergeability, "conflicting");
+  }),
+);
+
 it.effect("creates GitHub PRs through provider-neutral input names", () =>
   Effect.gen(function* () {
     let createInput: Parameters<GitHubCli.GitHubCli["Service"]["createPullRequest"]>[0] | null =

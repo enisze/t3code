@@ -3019,14 +3019,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         ),
                     )
                     .map((image) => (
-                      <div
-                        key={image.id}
-                        className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
-                      >
+                      <div key={image.id} className="group relative shrink-0">
                         {image.previewUrl ? (
                           <button
                             type="button"
-                            className="h-full w-full cursor-zoom-in"
+                            className="block cursor-zoom-in overflow-hidden rounded-lg border border-border/80 bg-muted/40"
                             aria-label={`Preview ${image.name}`}
                             onClick={() => {
                               const preview = buildExpandedImagePreview(composerImages, image.id);
@@ -3037,11 +3034,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             <img
                               src={image.previewUrl}
                               alt={image.name}
-                              className="h-full w-full object-cover"
+                              className="h-20 w-auto max-w-64 object-contain"
                             />
                           </button>
                         ) : (
-                          <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground/70">
+                          <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-lg border border-border/80 bg-background px-1 text-center text-[10px] text-muted-foreground/70">
                             {image.name}
                           </div>
                         )}
@@ -3070,7 +3067,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         <Button
                           variant="ghost"
                           size="icon-xs"
-                          className="absolute right-1 top-1 bg-background/80 hover:bg-background/90"
+                          className="absolute -right-1.5 -top-1.5 size-5 rounded-full border border-border/80 bg-background text-muted-foreground shadow-sm hover:bg-accent hover:text-foreground"
                           onClick={() => removeComposerImage(image.id)}
                           aria-label={`Remove ${image.name}`}
                         >

@@ -7700,6 +7700,81 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("refreshes the checkout a worktree request produced, not only its repository", () =>
+    Effect.gen(function* () {
+      const refreshStatus = vi.fn((_: string) =>
+        Effect.succeed({
+          isRepo: true,
+          hasPrimaryRemote: true,
+          isDefaultRef: false,
+          refName: "feature/demo",
+          hasWorkingTreeChanges: false,
+          workingTree: { files: [], insertions: 0, deletions: 0 },
+          hasUpstream: true,
+          aheadCount: 0,
+          behindCount: 0,
+          pr: null,
+        }),
+      );
+      yield* buildAppUnderTest({
+        config: { cwd: "/tmp/repo" },
+        layers: {
+          vcsDriver: {
+            isInsideWorkTree: () => Effect.succeed(true),
+          },
+          gitVcsDriver: {
+            createWorktree: () =>
+              Effect.succeed({
+                worktree: { path: "/tmp/wt-created", refName: "feature/demo" },
+              }),
+          },
+          gitManager: {
+            preparePullRequestThread: () =>
+              Effect.succeed({
+                pullRequest: {
+                  number: 1,
+                  title: "Demo PR",
+                  url: "https://example.com/pr/1",
+                  baseBranch: "main",
+                  headBranch: "feature/demo",
+                  state: "open" as const,
+                },
+                branch: "feature/demo",
+                worktreePath: "/tmp/wt-prepared",
+                isOnPullRequestHead: true,
+              }),
+          },
+          vcsStatusBroadcaster: { refreshStatus },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.vcsCreateWorktree]({
+            cwd: "/tmp/repo",
+            refName: "feature/demo",
+            path: null,
+          }),
+        ),
+      );
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitPreparePullRequestThread]({
+            cwd: "/tmp/repo",
+            reference: "1",
+            mode: "worktree",
+          }),
+        ),
+      );
+
+      assert.deepEqual(
+        refreshStatus.mock.calls.map((call) => call[0]),
+        ["/tmp/repo", "/tmp/wt-created", "/tmp/repo", "/tmp/wt-prepared"],
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc git.pull errors", () =>
     Effect.gen(function* () {
       const gitError = new GitCommandError({

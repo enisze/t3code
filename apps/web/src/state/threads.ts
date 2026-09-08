@@ -13,6 +13,7 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentSnapshotAtom } from "./shell";
 
 export const threadEnvironment = createThreadEnvironmentAtoms(connectionAtomRuntime);
@@ -28,6 +29,16 @@ export const environmentThreadShells = createEnvironmentThreadShellAtoms({
 const EMPTY_THREAD_STATE_ATOM = Atom.make(AsyncResult.success(EMPTY_ENVIRONMENT_THREAD_STATE)).pipe(
   Atom.withLabel("web-environment-thread:empty"),
 );
+
+/**
+ * Restarts a thread's detail subscription from scratch. A terminated load (a
+ * protocol defect, or a defect in the state machine itself) is deliberately
+ * not retried on a timer, so without this the thread stays stopped until the
+ * environment hands out a new session or the app returns to the foreground.
+ */
+export function retryThreadDetail(environmentId: EnvironmentId, threadId: ThreadId): void {
+  appAtomRegistry.refresh(environmentThreads.stateAtom(environmentId, threadId));
+}
 
 export function useEnvironmentThread(
   environmentId: EnvironmentId | null,

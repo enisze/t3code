@@ -49,6 +49,7 @@ import { followStreamInEnvironment } from "./runtime.ts";
 import {
   applyServerConfigProjection,
   type ServerConfigProjection,
+  withoutCachedProviderUsage,
   withoutEnvironmentThemes,
 } from "./serverConfigProjection.ts";
 
@@ -378,14 +379,19 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
         ),
       ),
     );
+    const withoutCachedState = (config: ServerConfig) =>
+      withoutCachedProviderUsage(withoutEnvironmentThemes(config));
     const state = yield* SubscriptionRef.make<Option.Option<ServerConfigProjection>>(
-      // Stripped on load as well as on save: a cache written by an earlier
-      // build can still carry published themes.
-      Option.map(cachedConfig, (cached) => ({
-        config: withoutEnvironmentThemes(cached),
-        latestEvent: cachedConfigSnapshotEvent(withoutEnvironmentThemes(cached)),
-        source: "cache" as const,
-      })),
+      // Strip on load as well as save: an earlier build may have persisted
+      // machine-current state that must not flash as authoritative on reload.
+      Option.map(cachedConfig, (cached) => {
+        const config = withoutCachedState(cached);
+        return {
+          config,
+          latestEvent: cachedConfigSnapshotEvent(config),
+          source: "cache" as const,
+        };
+      }),
     );
     const persistence = yield* Queue.sliding<ServerConfig>(1);
     const pendingPersistence = yield* Ref.make<Option.Option<ServerConfig>>(Option.none());
@@ -393,7 +399,7 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
     const persist = Effect.fn("EnvironmentServerConfigState.persist")(function* (
       config: ServerConfig,
     ) {
-      return yield* cache.saveServerConfig(environmentId, withoutEnvironmentThemes(config)).pipe(
+      return yield* cache.saveServerConfig(environmentId, withoutCachedState(config)).pipe(
         Effect.as(true),
         Effect.catch((error) =>
           Effect.logWarning("Could not persist cached server configuration.").pipe(
