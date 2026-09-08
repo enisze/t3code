@@ -573,6 +573,17 @@ const inputSignalsMatch = (left: PreviewInputSignal, right: PreviewInputSignal):
   );
 };
 
+/**
+ * Whether T3 Code currently owns the OS foreground.
+ *
+ * `WebContents.focus()` focuses the owning window on macOS and Linux, so
+ * taking native focus for the preview browser drags the whole app in front of
+ * whatever the user is doing. Agents drive the preview unattended, so native
+ * focus is only ever safe while the app is already frontmost -- in the
+ * background CDP focus emulation carries the keystroke on its own.
+ */
+const isAppFrontmost = (): boolean => webContents.getFocusedWebContents() !== null;
+
 const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function* (
   artifactDirectory: string,
   pictureInPicturePreloadPath: string,
@@ -2354,9 +2365,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const openDevTools = Effect.fn("PreviewManager.openDevTools")(function* (tabId: string) {
     const wc = yield* requireWebContents(tabId);
     if (wc.isDevToolsOpened()) {
-      yield* attempt({ operation: "openDevTools.focus", tabId, webContentsId: wc.id }, () =>
-        wc.devToolsWebContents?.focus(),
-      );
+      if (isAppFrontmost()) {
+        yield* attempt({ operation: "openDevTools.focus", tabId, webContentsId: wc.id }, () =>
+          wc.devToolsWebContents?.focus(),
+        );
+      }
       return;
     }
     yield* detachControlSession(wc.id);
@@ -2531,7 +2544,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             wc.ipc.on(ELEMENT_PICKED_CHANNEL, onMessage);
             wc.once("destroyed", onDestroyed);
             wc.once("did-start-navigation", onNavigated);
-            if (!wc.isFocused()) wc.focus();
+            if (isAppFrontmost() && !wc.isFocused()) wc.focus();
             wc.send(START_PICK_CHANNEL, annotationTheme);
           });
         });
@@ -3897,16 +3910,20 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       }
     });
 
-    // Focus the guest WebContents itself, not its containing BrowserWindow. This
-    // activates native keyboard behavior for hidden/background previews without
-    // changing which thread is mounted in the UI. Restore the previous renderer
-    // after dispatch so automation never leaves the app's input focus behind.
+    // Native focus activates real keyboard behavior for a guest that isn't the
+    // mounted tab, and the previous renderer is restored after dispatch so
+    // automation never leaves the app's input focus behind. It also raises the
+    // app, so skip it unless T3 Code is already frontmost: focus emulation
+    // alone delivers the key, and an agent pressing a key must never yank the
+    // user out of the app they're working in.
     yield* Effect.gen(function* () {
-      yield* attempt(
-        { operation: "automationPress.focusWebContents", tabId, webContentsId: wc.id },
-        () => wc.focus(),
-      );
-      yield* send("Page.bringToFront");
+      if (previouslyFocused !== null) {
+        yield* attempt(
+          { operation: "automationPress.focusWebContents", tabId, webContentsId: wc.id },
+          () => wc.focus(),
+        );
+        yield* send("Page.bringToFront");
+      }
       yield* send("Emulation.setFocusEmulationEnabled", { enabled: true });
       yield* expectAgentInput(tabId, keySequence.signal);
       keyDownAttempted = true;

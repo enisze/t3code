@@ -3956,6 +3956,85 @@ describe("PreviewManager", () => {
     ),
   );
 
+  // Native focus raises the app on macOS and Linux. Agents press keys in the
+  // preview while the user is off in another app, so a background press has to
+  // ride on focus emulation alone.
+  effectIt.effect("presses keys without taking the foreground while backgrounded", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let humanInput: ((_event: unknown, signal: unknown) => void) | undefined;
+        const sendCommand = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+          if (
+            method === "Input.dispatchKeyEvent" &&
+            (params?.["type"] === "keyDown" || params?.["type"] === "rawKeyDown")
+          ) {
+            humanInput?.({}, { kind: "key", key: params["key"], code: params["code"] ?? "Digit1" });
+          }
+          return undefined;
+        });
+        const focus = vi.fn();
+        // Nothing in the app holds keyboard focus: T3 Code is not frontmost.
+        getFocusedWebContents.mockReturnValue(null as never);
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          isDevToolsOpened: () => false,
+          focus,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: {
+            on: vi.fn((channel: string, listener: typeof humanInput) => {
+              if (channel === "preview:human-input") humanInput = listener;
+            }),
+            off: vi.fn(),
+          },
+          send: vi.fn(),
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setIgnoreMenuShortcuts: vi.fn(),
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand,
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+
+        yield* manager.createTab("tab_background");
+        yield* manager.registerWebview("tab_background", 42);
+        yield* manager.automationPress("tab_background", { key: "x" });
+
+        const methods = sendCommand.mock.calls.map(([method]) => method);
+        expect(focus).not.toHaveBeenCalled();
+        expect(methods).not.toContain("Page.bringToFront");
+        expect(sendCommand).toHaveBeenCalledWith("Emulation.setFocusEmulationEnabled", {
+          enabled: true,
+        });
+        expect(
+          sendCommand.mock.calls.filter(
+            ([method, params]) =>
+              method === "Input.dispatchKeyEvent" && params?.["type"] === "keyDown",
+          ),
+        ).toHaveLength(1);
+        expect(
+          sendCommand.mock.calls.filter(
+            ([method, params]) =>
+              method === "Input.dispatchKeyEvent" && params?.["type"] === "keyUp",
+          ),
+        ).toHaveLength(1);
+      }),
+    ),
+  );
+
   effectIt.effect("still interrupts agent control for a different human pointer event", () =>
     withManager((manager) =>
       Effect.gen(function* () {

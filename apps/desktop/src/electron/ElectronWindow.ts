@@ -32,6 +32,16 @@ const ElectronWindowCreateOptions = Schema.Struct({
   }),
 });
 
+/**
+ * `activateApp: false` reveals a window without stealing the foreground, for
+ * reveals the user did not ask for (a window recreated after the backend
+ * restarts). User-driven reveals -- launch, dock activation, `t3 app`, a menu
+ * command -- leave it unset and bring the app forward.
+ */
+export interface RevealOptions {
+  readonly activateApp?: boolean;
+}
+
 const ElectronWindowOperation = Schema.Literals([
   "list-windows",
   "get-focused-window",
@@ -86,7 +96,10 @@ export class ElectronWindow extends Context.Service<
     readonly focusedMainOrFirst: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
     readonly setMain: (window: Electron.BrowserWindow) => Effect.Effect<void>;
     readonly clearMain: (window: Option.Option<Electron.BrowserWindow>) => Effect.Effect<void>;
-    readonly reveal: (window: Electron.BrowserWindow) => Effect.Effect<void>;
+    readonly reveal: (
+      window: Electron.BrowserWindow,
+      options?: RevealOptions,
+    ) => Effect.Effect<void>;
     readonly sendAll: (channel: string, ...args: readonly unknown[]) => Effect.Effect<void>;
     readonly destroyAll: Effect.Effect<void>;
     readonly syncAllAppearance: <E, R>(
@@ -207,7 +220,7 @@ export const make = Effect.gen(function* () {
         }
         return Option.none();
       }),
-    reveal: (window) =>
+    reveal: (window, options) =>
       Effect.try({
         try: () => {
           if (window.isDestroyed()) {
@@ -216,6 +229,16 @@ export const make = Effect.gen(function* () {
 
           if (window.isMinimized()) {
             window.restore();
+          }
+
+          // A reveal nobody asked for must stay out of the user's way: put the
+          // window on screen without taking the keyboard or pulling the app in
+          // front of whatever they are doing.
+          if (options?.activateApp === false) {
+            if (!window.isVisible()) {
+              window.showInactive();
+            }
+            return;
           }
 
           if (!window.isVisible()) {
