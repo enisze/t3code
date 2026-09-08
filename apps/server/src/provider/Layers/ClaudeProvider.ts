@@ -45,6 +45,7 @@ import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 import {
   type ClaudeScopedLimitNames,
   claudeUsageResponseToLimits,
+  resolveClaudeUsageLimits,
   recordClaudeUsageResponse,
 } from "./claudeUsageLimits.ts";
 import {
@@ -617,7 +618,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         ...(authMetadata ? authMetadata : {}),
       },
       ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
-      usageLimits,
+      usageLimits: resolveClaudeUsageLimits(usageLimits, usage),
     },
   });
 });

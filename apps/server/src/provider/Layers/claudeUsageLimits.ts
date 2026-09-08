@@ -12,6 +12,7 @@
  */
 import type { SDKControlGetUsageResponse, SDKRateLimitInfo } from "@anthropic-ai/claude-agent-sdk";
 import type {
+  ProviderUsage,
   ProviderUsageLimitsUpdate,
   ServerProviderUsageLimits,
   ServerProviderUsageWindow,
@@ -29,6 +30,27 @@ import {
 
 const SESSION_MINS = 5 * 60;
 const WEEK_MINS = 7 * 24 * 60;
+
+/** The direct account read follows get_usage and refreshes its matching windows. */
+export function resolveClaudeUsageLimits(
+  sdkLimits: ServerProviderUsageLimits,
+  accountUsage: ProviderUsage | undefined,
+): ServerProviderUsageLimits {
+  if (!accountUsage?.windows.length) return sdkLimits;
+  const windows = new Map(sdkLimits.windows.map((window) => [window.id, window]));
+  for (const window of accountUsage.windows) {
+    const existing = windows.get(window.kind);
+    windows.set(window.kind, {
+      id: window.kind,
+      kind: window.kind === "five_hour" ? "session" : "weekly",
+      label: existing?.label ?? window.label,
+      usedPercent: window.usedPercent,
+      ...(window.resetsAt ? { resetsAt: window.resetsAt } : {}),
+      ...(window.windowMinutes !== null ? { windowDurationMins: window.windowMinutes } : {}),
+    });
+  }
+  return makeUsageLimits({ checkedAt: accountUsage.fetchedAt, windows: windows.values() });
+}
 
 /**
  * The account-wide windows, keyed by the SDK's `rateLimitType`. Model-scoped
