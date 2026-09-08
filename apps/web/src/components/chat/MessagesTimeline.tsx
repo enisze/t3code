@@ -149,6 +149,8 @@ const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FADE_HEADER = <div className="h-10 sm:h-12" />;
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
+export const TIMELINE_MINIMAP_PREVIEW_MAX_LENGTH = 400;
+const TIMELINE_MINIMAP_WHITESPACE = /\s/u;
 
 // ---------------------------------------------------------------------------
 // Props (public API)
@@ -326,8 +328,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   );
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
   const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
+  const scrollMeasurementFrameRef = useRef<number | null>(null);
 
-  const handleScroll = useCallback(() => {
+  const measureScrollPosition = useCallback(() => {
     const state = listRef.current?.getState?.();
     const isAtEnd = resolveTimelineIsAtEnd(state);
     if (isAtEnd !== undefined) {
@@ -353,14 +356,38 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         rowTop < scrollBottom &&
         rowTop + Math.max(1, rowHeight ?? 1) > scrollTop;
 
-      strip.dataset.inView = inView ? "true" : "false";
+      const nextInView = inView ? "true" : "false";
+      if (strip.dataset.inView !== nextInView) {
+        strip.dataset.inView = nextInView;
+      }
     }
   }, [listRef, minimapItems, minimapStripMap, onIsAtEndChange]);
 
+  const handleScroll = useCallback(() => {
+    if (scrollMeasurementFrameRef.current !== null) {
+      return;
+    }
+    // The sentinel also makes synchronous requestAnimationFrame test doubles
+    // safe: the callback can clear it before requestAnimationFrame returns.
+    scrollMeasurementFrameRef.current = -1;
+    const frame = requestAnimationFrame(() => {
+      scrollMeasurementFrameRef.current = null;
+      measureScrollPosition();
+    });
+    if (scrollMeasurementFrameRef.current === -1) {
+      scrollMeasurementFrameRef.current = frame;
+    }
+  }, [measureScrollPosition]);
+
   useEffect(() => {
-    const frame = requestAnimationFrame(handleScroll);
-    return () => cancelAnimationFrame(frame);
-  }, [handleScroll, rows.length]);
+    handleScroll();
+    return () => {
+      if (scrollMeasurementFrameRef.current !== null) {
+        cancelAnimationFrame(scrollMeasurementFrameRef.current);
+        scrollMeasurementFrameRef.current = null;
+      }
+    };
+  }, [handleScroll]);
 
   useEffect(() => {
     if (!timelineViewportElement) {
@@ -385,7 +412,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [timelineViewportElement, rows.length]);
+  }, [timelineViewportElement]);
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
@@ -571,8 +598,29 @@ function resolveFinalAssistantTextForTurn(
   return finalAssistantText;
 }
 
-function compactMinimapPreview(text: string | null | undefined) {
-  const compact = text?.replace(/\s+/g, " ").trim() ?? "";
+export function compactMinimapPreview(text: string | null | undefined) {
+  if (!text) return null;
+
+  let compact = "";
+  let pendingSpace = false;
+  for (const character of text) {
+    if (TIMELINE_MINIMAP_WHITESPACE.test(character)) {
+      pendingSpace = compact.length > 0;
+      continue;
+    }
+    const separatorLength = pendingSpace ? 1 : 0;
+    if (compact.length + separatorLength + character.length > TIMELINE_MINIMAP_PREVIEW_MAX_LENGTH) {
+      return compact;
+    }
+    if (pendingSpace) {
+      compact += " ";
+      pendingSpace = false;
+    }
+    compact += character;
+    if (compact.length === TIMELINE_MINIMAP_PREVIEW_MAX_LENGTH) {
+      return compact;
+    }
+  }
   return compact.length > 0 ? compact : null;
 }
 
