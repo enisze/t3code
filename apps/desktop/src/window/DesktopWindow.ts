@@ -295,6 +295,12 @@ export const make = Effect.gen(function* () {
   // createMainIfBackendReady, which gates the post-readiness window
   // open in development and the macOS "activate without windows" path.
   const backendReadyRef = yield* Ref.make(false);
+  // Whether a user action is waiting on the main window, consumed by the
+  // reveal that follows window creation. Launch counts, so it starts set. A
+  // window created for any other reason -- most visibly one recreated after
+  // the primary backend restarts -- must appear without pulling the app in
+  // front of whatever the user is doing.
+  const pendingActivationRef = yield* Ref.make(true);
   // The transient "Connecting to WSL" splash window, tracked separately so it
   // is never mistaken for the real main window.
   const splashWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
@@ -758,7 +764,13 @@ export const make = Effect.gen(function* () {
       if (persistedSettings.mainWindowMaximized) {
         window.maximize();
       }
-      void runPromise(Effect.andThen(electronWindow.reveal(window), dismissConnectingSplash));
+      void runPromise(
+        Effect.gen(function* () {
+          const activateApp = yield* Ref.getAndSet(pendingActivationRef, false);
+          yield* electronWindow.reveal(window, { activateApp });
+          yield* dismissConnectingSplash;
+        }),
+      );
     });
 
     loadApplication();
@@ -791,6 +803,7 @@ export const make = Effect.gen(function* () {
   }).pipe(Effect.withSpan("desktop.window.ensureMain"));
 
   const revealOrCreateMain = Effect.gen(function* () {
+    yield* Ref.set(pendingActivationRef, true);
     const window = yield* ensureMain;
     yield* electronWindow.reveal(window);
     return window;
@@ -855,6 +868,7 @@ export const make = Effect.gen(function* () {
     ensureMain,
     revealOrCreateMain,
     activate: Effect.gen(function* () {
+      yield* Ref.set(pendingActivationRef, true);
       const existingWindow = yield* currentMainWindow;
       if (Option.isSome(existingWindow)) {
         yield* electronWindow.reveal(existingWindow.value);

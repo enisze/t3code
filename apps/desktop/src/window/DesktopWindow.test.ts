@@ -6,6 +6,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
@@ -209,6 +210,7 @@ function makeTestLayer(input: {
   ) => Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
   readonly previewZoomReapplies?: number[];
+  readonly reveals?: Queue.Queue<ElectronWindow.RevealOptions | undefined>;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -257,7 +259,8 @@ function makeTestLayer(input: {
     focusedMainOrFirst: Ref.get(input.mainWindow),
     setMain: (window) => Ref.set(input.mainWindow, Option.some(window)),
     clearMain: () => Ref.set(input.mainWindow, Option.none()),
-    reveal: () => Effect.void,
+    reveal: (_window, options) =>
+      input.reveals ? Queue.offer(input.reveals, options).pipe(Effect.asVoid) : Effect.void,
     sendAll: () => Effect.void,
     destroyAll: Effect.void,
     syncAllAppearance: (sync) => sync(input.window),
@@ -627,6 +630,52 @@ describe("DesktopWindow", () => {
         }
         readyToShow();
         assert.equal(fakeWindow.maximize.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  // Bringing the app to the front is only ever right when the user asked for
+  // the window. A window recreated on its own -- the primary backend restarts
+  // while the user has no window open -- must not yank them out of whatever
+  // app they are working in.
+  it.effect("only takes the foreground for reveals the user asked for", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const reveals = yield* Queue.unbounded<ElectronWindow.RevealOptions | undefined>();
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        reveals,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        const revealWindow = () => {
+          const readyToShow = fakeWindow.windowListeners.get("ready-to-show");
+          if (!readyToShow) {
+            throw new Error("window ready-to-show listener was not registered");
+          }
+          readyToShow();
+          return Queue.take(reveals);
+        };
+
+        // Launch: the user opened the app, so the window belongs in front.
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        assert.deepEqual(yield* revealWindow(), { activateApp: true });
+
+        // The window is gone and the backend restarts by itself.
+        yield* Ref.set(mainWindow, Option.none());
+        yield* desktopWindow.handleBackendNotReady;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        assert.deepEqual(yield* revealWindow(), { activateApp: false });
+
+        // Dock or taskbar activation is a user action again.
+        yield* Ref.set(mainWindow, Option.none());
+        yield* desktopWindow.activate;
+        assert.deepEqual(yield* revealWindow(), { activateApp: true });
       }).pipe(Effect.provide(layer));
     }),
   );
