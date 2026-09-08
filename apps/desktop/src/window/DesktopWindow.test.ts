@@ -676,6 +676,17 @@ describe("DesktopWindow", () => {
         yield* Ref.set(mainWindow, Option.none());
         yield* desktopWindow.activate;
         assert.deepEqual(yield* revealWindow(), { activateApp: true });
+
+        // Activating with a window already up reveals it directly, so nothing
+        // is left waiting on a window. The next window to open on its own --
+        // the user closed this one and the backend restarted -- still has to
+        // stay out of the foreground.
+        yield* desktopWindow.activate;
+        assert.deepEqual(yield* Queue.take(reveals), undefined);
+        yield* Ref.set(mainWindow, Option.none());
+        yield* desktopWindow.handleBackendNotReady;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        assert.deepEqual(yield* revealWindow(), { activateApp: false });
       }).pipe(Effect.provide(layer));
     }),
   );

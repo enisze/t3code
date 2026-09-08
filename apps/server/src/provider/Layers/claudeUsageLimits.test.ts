@@ -1,9 +1,73 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { claudeRateLimitEventToUpdate, claudeUsageResponseToLimits } from "./claudeUsageLimits.ts";
+import {
+  claudeRateLimitEventToUpdate,
+  claudeUsageResponseToLimits,
+  resolveClaudeUsageLimits,
+} from "./claudeUsageLimits.ts";
 
 const checkedAt = "2026-07-18T10:00:00.000Z";
 const noNames = { overageIncluded: undefined } as const;
+
+describe("resolveClaudeUsageLimits", () => {
+  const sdk = claudeUsageResponseToLimits({
+    checkedAt,
+    response: {
+      rate_limits_available: true,
+      rate_limits: {
+        five_hour: { utilization: 81, resets_at: "2026-07-18T14:00:00Z" },
+        seven_day: { utilization: 40, resets_at: null },
+      },
+    },
+  }).limits;
+
+  it("publishes the direct account percentage while retaining SDK-only windows", () => {
+    const limits = resolveClaudeUsageLimits(sdk, {
+      source: "claude",
+      fetchedAt: checkedAt,
+      planLabel: null,
+      windows: [
+        {
+          kind: "five_hour",
+          label: "5-hour",
+          usedPercent: 90,
+          resetsAt: "2026-07-18T14:00:00Z",
+          windowMinutes: 300,
+        },
+      ],
+    });
+    expect(limits.windows).toEqual([
+      { ...sdk.windows[0], usedPercent: 90, resetsAt: "2026-07-18T14:00:00Z" },
+      sdk.windows[1],
+    ]);
+  });
+
+  it("uses the SDK reading when the direct fetch fails", () => {
+    expect(resolveClaudeUsageLimits(sdk, undefined)).toBe(sdk);
+  });
+
+  it("reports OAuth windows even when the SDK cannot report limits", () => {
+    const limits = resolveClaudeUsageLimits(
+      { checkedAt, windows: [], unavailable: { reason: "unsupported" } },
+      {
+        source: "claude",
+        fetchedAt: checkedAt,
+        planLabel: null,
+        windows: [
+          {
+            kind: "seven_day",
+            label: "Weekly",
+            usedPercent: 90,
+            resetsAt: null,
+            windowMinutes: 10080,
+          },
+        ],
+      },
+    );
+    expect(limits.unavailable).toBeUndefined();
+    expect(limits.windows[0]?.usedPercent).toBe(90);
+  });
+});
 
 describe("claudeUsageResponseToLimits", () => {
   it("maps the session, weekly, and model-scoped weekly windows", () => {

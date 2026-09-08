@@ -295,11 +295,11 @@ export const make = Effect.gen(function* () {
   // createMainIfBackendReady, which gates the post-readiness window
   // open in development and the macOS "activate without windows" path.
   const backendReadyRef = yield* Ref.make(false);
-  // Whether a user action is waiting on the main window, consumed by the
-  // reveal that follows window creation. Launch counts, so it starts set. A
-  // window created for any other reason -- most visibly one recreated after
-  // the primary backend restarts -- must appear without pulling the app in
-  // front of whatever the user is doing.
+  // Whether a user action is waiting on a main window that does not exist yet,
+  // consumed by the reveal that follows window creation. Launch counts, so it
+  // starts set. A window created for any other reason -- most visibly one
+  // recreated after the primary backend restarts -- must appear without
+  // pulling the app in front of whatever the user is doing.
   const pendingActivationRef = yield* Ref.make(true);
   // The transient "Connecting to WSL" splash window, tracked separately so it
   // is never mistaken for the real main window.
@@ -803,8 +803,16 @@ export const make = Effect.gen(function* () {
   }).pipe(Effect.withSpan("desktop.window.ensureMain"));
 
   const revealOrCreateMain = Effect.gen(function* () {
+    const existingWindow = yield* currentMainWindow;
+    if (Option.isSome(existingWindow)) {
+      yield* electronWindow.reveal(existingWindow.value);
+      return existingWindow.value;
+    }
+    // Arm the latch only when this action is the reason a window gets created,
+    // so it cannot sit armed and hand the foreground to the next window that
+    // opens on its own.
     yield* Ref.set(pendingActivationRef, true);
-    const window = yield* ensureMain;
+    const window = yield* createMain;
     yield* electronWindow.reveal(window);
     return window;
   }).pipe(Effect.withSpan("desktop.window.revealOrCreateMain"));
@@ -868,17 +876,23 @@ export const make = Effect.gen(function* () {
     ensureMain,
     revealOrCreateMain,
     activate: Effect.gen(function* () {
-      yield* Ref.set(pendingActivationRef, true);
       const existingWindow = yield* currentMainWindow;
       if (Option.isSome(existingWindow)) {
         yield* electronWindow.reveal(existingWindow.value);
         return;
       }
-      // No real main window yet. While the backend is still cold-booting,
-      // re-reveal the connecting splash so taskbar/dock activation brings it
-      // back instead of doing nothing. Once the backend is ready we fall
-      // through to (re)create the real main -- including retrying a previously
-      // failed open the pool swallowed -- rather than latching onto the splash.
+      // No real main window yet, so whichever one opens next -- now, or once
+      // the backend finishes booting -- is the window this activation asked
+      // for, and its reveal may take the foreground. The latch is armed only
+      // here, never on the path above: left armed behind an existing window it
+      // would donate the foreground to an unrelated window created later, such
+      // as the one that follows a backend restart.
+      yield* Ref.set(pendingActivationRef, true);
+      // While the backend is still cold-booting, re-reveal the connecting
+      // splash so taskbar/dock activation brings it back instead of doing
+      // nothing. Once the backend is ready we fall through to (re)create the
+      // real main -- including retrying a previously failed open the pool
+      // swallowed -- rather than latching onto the splash.
       const backendReady = yield* Ref.get(backendReadyRef);
       if (!backendReady) {
         const splash = yield* Ref.get(splashWindowRef);

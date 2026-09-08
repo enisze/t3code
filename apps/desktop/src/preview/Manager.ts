@@ -3891,6 +3891,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       () => webContents.getFocusedWebContents(),
     );
     let keyDownAttempted = false;
+    let nativeFocusTaken = false;
     const releaseInput = Effect.gen(function* () {
       if (keyDownAttempted) {
         yield* sendCleanup("Input.dispatchKeyEvent", keySequence.keyUp).pipe(Effect.ignore);
@@ -3898,7 +3899,18 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       yield* sendCleanup("Emulation.setFocusEmulationEnabled", { enabled: false }).pipe(
         Effect.ignore,
       );
-      if (previouslyFocused && previouslyFocused.id !== wc.id && !previouslyFocused.isDestroyed()) {
+      // Only hand back a focus this action actually took, and only while the
+      // app still owns the foreground. Dispatch spans the user switching away,
+      // and `focus()` raises the window: restoring from the background pulls
+      // T3 Code in front of the app they just moved to. The guest keeps the
+      // app's input focus instead, until the user comes back and clicks.
+      if (
+        nativeFocusTaken &&
+        isAppFrontmost() &&
+        previouslyFocused &&
+        previouslyFocused.id !== wc.id &&
+        !previouslyFocused.isDestroyed()
+      ) {
         yield* attempt(
           {
             operation: "automationPress.restoreFocusedWebContents",
@@ -3913,15 +3925,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     // Native focus activates real keyboard behavior for a guest that isn't the
     // mounted tab, and the previous renderer is restored after dispatch so
     // automation never leaves the app's input focus behind. It also raises the
-    // app, so skip it unless T3 Code is already frontmost: focus emulation
+    // app, so skip it unless T3 Code is frontmost right now: focus emulation
     // alone delivers the key, and an agent pressing a key must never yank the
     // user out of the app they're working in.
     yield* Effect.gen(function* () {
-      if (previouslyFocused !== null) {
+      if (isAppFrontmost()) {
         yield* attempt(
           { operation: "automationPress.focusWebContents", tabId, webContentsId: wc.id },
           () => wc.focus(),
         );
+        nativeFocusTaken = true;
         yield* send("Page.bringToFront");
       }
       yield* send("Emulation.setFocusEmulationEnabled", { enabled: true });
