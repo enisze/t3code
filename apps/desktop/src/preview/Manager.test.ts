@@ -4035,6 +4035,80 @@ describe("PreviewManager", () => {
     ),
   );
 
+  // The user can leave for another app in the middle of a press. Handing the
+  // focus back then would raise T3 Code over whatever they just switched to.
+  effectIt.effect("does not restore focus once the user has left the app", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let humanInput: ((_event: unknown, signal: unknown) => void) | undefined;
+        let frontmost = true;
+        const restoreFocus = vi.fn();
+        const focus = vi.fn();
+        getFocusedWebContents.mockImplementation(
+          () =>
+            (frontmost ? { id: 7, isDestroyed: () => false, focus: restoreFocus } : null) as never,
+        );
+        const sendCommand = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+          if (
+            method === "Input.dispatchKeyEvent" &&
+            (params?.["type"] === "keyDown" || params?.["type"] === "rawKeyDown")
+          ) {
+            // The press landed; the user switches to another app before the
+            // action releases its input.
+            frontmost = false;
+            humanInput?.({}, { kind: "key", key: params["key"], code: params["code"] ?? "Digit1" });
+          }
+          return undefined;
+        });
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          isDevToolsOpened: () => false,
+          focus,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: {
+            on: vi.fn((channel: string, listener: typeof humanInput) => {
+              if (channel === "preview:human-input") humanInput = listener;
+            }),
+            off: vi.fn(),
+          },
+          send: vi.fn(),
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setIgnoreMenuShortcuts: vi.fn(),
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand,
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+
+        yield* manager.createTab("tab_left");
+        yield* manager.registerWebview("tab_left", 42);
+        yield* manager.automationPress("tab_left", { key: "x" });
+
+        // The app was frontmost when the press started, so taking focus was
+        // safe -- giving it back afterwards is not.
+        expect(focus).toHaveBeenCalledOnce();
+        expect(restoreFocus).not.toHaveBeenCalled();
+        expect(sendCommand).toHaveBeenCalledWith("Emulation.setFocusEmulationEnabled", {
+          enabled: false,
+        });
+      }),
+    ),
+  );
+
   effectIt.effect("still interrupts agent control for a different human pointer event", () =>
     withManager((manager) =>
       Effect.gen(function* () {
