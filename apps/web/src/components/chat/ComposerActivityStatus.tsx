@@ -1,13 +1,19 @@
+import { TriangleAlertIcon } from "lucide-react";
+
 import { Spinner } from "~/components/ui/spinner";
 
-import { threadSyncLabel, type ThreadSyncPhase } from "../../threadSync";
+import { isThreadSyncFailure, threadSyncLabel, type ThreadSyncPhase } from "../../threadSync";
 import { ComposerBanner } from "./ComposerBanner";
 
 export function ComposerActivityRow({ phase }: { readonly phase: ThreadSyncPhase }) {
   return (
     <ComposerBanner.Row>
       <ComposerBanner.Icon>
-        <Spinner />
+        {isThreadSyncFailure(phase) ? (
+          <TriangleAlertIcon aria-hidden className="size-3.5 text-destructive" />
+        ) : (
+          <Spinner />
+        )}
       </ComposerBanner.Icon>
       <ComposerBanner.Content>
         <span

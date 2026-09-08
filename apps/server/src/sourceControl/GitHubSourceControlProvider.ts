@@ -30,6 +30,17 @@ function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeReq
     baseRefName: summary.baseRefName,
     headRefName: summary.headRefName,
     state: summary.state ?? "open",
+    // Merge/review state comes off the `gh pr list` JSON (mergeable,
+    // statusCheckRollup) and drives the merge button and conflict row, so it has
+    // to survive the hop into the change request.
+    ...(summary.mergeability ? { mergeability: summary.mergeability } : {}),
+    ...(summary.checks ? { checks: summary.checks } : {}),
+    ...(summary.failedCheckCount !== undefined
+      ? { failedCheckCount: summary.failedCheckCount }
+      : {}),
+    ...(summary.unresolvedReviewThreadCount !== undefined
+      ? { unresolvedReviewThreadCount: summary.unresolvedReviewThreadCount }
+      : {}),
     ...(summary.isDraft === true ? { isDraft: true } : {}),
     closedAt: summary.closedAt ?? null,
     mergedAt: summary.mergedAt ?? null,
@@ -114,6 +125,33 @@ export const discovery = {
 export const make = Effect.gen(function* () {
   const github = yield* GitHubCli.GitHubCli;
 
+  /**
+   * `gh pr list` always reports mergeability as UNKNOWN and can't report review
+   * threads at all, so the merge button and the unresolved-comment badge could
+   * never see the real state. Resolve it per open change request. Only open ones
+   * are enriched: a merged/closed PR can't be merged, so the extra round trip
+   * would be wasted.
+   */
+  const withReviewState = (cwd: string, changeRequests: ReadonlyArray<ChangeRequest>) =>
+    Effect.forEach(
+      changeRequests,
+      (changeRequest) =>
+        changeRequest.state !== "open"
+          ? Effect.succeed(changeRequest)
+          : github
+              .readPullRequestReviewState({
+                cwd,
+                url: changeRequest.url,
+                number: changeRequest.number,
+              })
+              .pipe(
+                Effect.map((reviewState) =>
+                  reviewState ? { ...changeRequest, ...reviewState } : changeRequest,
+                ),
+              ),
+      { concurrency: 4 },
+    );
+
   const listChangeRequests: SourceControlProvider.SourceControlProvider["Service"]["listChangeRequests"] =
     (input) => {
       if (input.state === "open") {
@@ -124,7 +162,7 @@ export const make = Effect.gen(function* () {
             ...(input.limit !== undefined ? { limit: input.limit } : {}),
           })
           .pipe(
-            Effect.map((items) => items.map(toChangeRequest)),
+            Effect.flatMap((items) => withReviewState(input.cwd, items.map(toChangeRequest))),
             Effect.mapError(
               (error) =>
                 new SourceControlProviderError({
@@ -168,7 +206,8 @@ export const make = Effect.gen(function* () {
             return Effect.sync(() => decodeGitHubPullRequestListJson(raw)).pipe(
               Effect.flatMap((decoded) =>
                 Result.isSuccess(decoded)
-                  ? Effect.succeed(
+                  ? withReviewState(
+                      input.cwd,
                       decoded.success.map((item) => {
                         const { updatedAt, ...summary } = item;
                         return {

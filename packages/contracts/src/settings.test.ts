@@ -289,11 +289,11 @@ describe("ClientSettings environment identification", () => {
 });
 
 describe("ClientSettings sidebar v2", () => {
-  it("defaults the beta off with a three-day auto-settle threshold", () => {
+  it("defaults the beta and time-based auto-settle off", () => {
     const settings = decodeClientSettings({});
     expect(settings.sidebarV2Enabled).toBe(false);
     expect(settings.sidebarV2GroupByProject).toBe(false);
-    expect(settings.sidebarAutoSettleAfterDays).toBe(3);
+    expect(settings.sidebarAutoSettleAfterDays).toBeNull();
   });
 
   it("treats settings written before the beta had a per-channel default as unconfigured", () => {
@@ -358,9 +358,9 @@ describe("ClientSettings composer collapse", () => {
 });
 
 describe("ServerSettings thread settlement", () => {
-  it("defaults merge settlement on and inactivity settlement to three days", () => {
+  it("defaults merge settlement on and inactivity settlement off", () => {
     const settings = decodeServerSettings({});
-    expect(settings.sidebarAutoSettleAfterDays).toBe(3);
+    expect(settings.sidebarAutoSettleAfterDays).toBeNull();
     expect(settings.sidebarAutoSettleOnMerge).toBe(true);
   });
 

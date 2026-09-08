@@ -121,6 +121,12 @@ export function BranchToolbarBranchSelector({
   const createWorktreeMutation = useAtomCommand(vcsEnvironment.createWorktree, {
     reportFailure: false,
   });
+  // Landing on a checkout this client did not just change leaves the server
+  // serving whatever it last read there — including that checkout's change
+  // request. Re-read it so the pill matches the branch the user just picked.
+  const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
+    reportFailure: false,
+  });
   // ---------------------------------------------------------------------------
   // Thread / project state (pushed down from parent to colocate with mutation)
   // ---------------------------------------------------------------------------
@@ -410,6 +416,7 @@ export function BranchToolbarBranchSelector({
       setThreadBranch(refName.name, selectionTarget.nextWorktreePath);
       setIsBranchMenuOpen(false);
       onComposerFocusRequest?.();
+      void refreshVcsStatus({ environmentId, input: { cwd: selectionTarget.checkoutCwd } });
       return;
     }
 
@@ -495,6 +502,10 @@ export function BranchToolbarBranchSelector({
     const target = resolveExactBranchWorktreeInput({ activeProjectCwd, ref });
     if (target.kind === "reuse") {
       setThreadBranch(target.branch, target.worktreePath);
+      void refreshVcsStatus({
+        environmentId,
+        input: { cwd: target.worktreePath ?? activeProjectCwd },
+      });
       return;
     }
 

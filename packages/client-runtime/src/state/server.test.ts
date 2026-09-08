@@ -1,5 +1,7 @@
 import {
   EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
@@ -48,7 +50,10 @@ import {
   waitForDesktopUpdateTarget,
   runDesktopCommitWithReconnectObserver,
 } from "./server.ts";
-import { applyServerConfigProjection } from "./serverConfigProjection.ts";
+import {
+  applyServerConfigProjection,
+  withoutCachedProviderUsage,
+} from "./serverConfigProjection.ts";
 
 const CONFIG = {
   availableEditors: [],
@@ -74,6 +79,44 @@ const TARGET = new PrimaryConnectionTarget({
   label: "Test environment",
   httpBaseUrl: "https://environment.example.test",
   wsBaseUrl: "wss://environment.example.test",
+});
+
+it("drops volatile provider usage from cached configuration", () => {
+  const config = {
+    ...CONFIG,
+    providers: [
+      {
+        instanceId: ProviderInstanceId.make("claude"),
+        driver: ProviderDriverKind.make("claude"),
+        enabled: true,
+        installed: true,
+        version: "1.0.0",
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-09-08T10:00:00.000Z",
+        models: [],
+        slashCommands: [],
+        skills: [],
+        usageLimits: {
+          checkedAt: "2026-09-08T10:00:00.000Z",
+          windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent: 25 }],
+        },
+        usage: {
+          source: "claude",
+          fetchedAt: "2026-09-08T10:00:00.000Z",
+          planLabel: null,
+          windows: [],
+        },
+      },
+    ],
+  } satisfies ServerConfig;
+
+  const cached = withoutCachedProviderUsage(config);
+
+  expect(cached.providers[0]).not.toHaveProperty("usage");
+  expect(cached.providers[0]).not.toHaveProperty("usageLimits");
+  expect(cached.providers[0]?.instanceId).toBe(config.providers[0]?.instanceId);
+  expect(config.providers[0]).toHaveProperty("usageLimits");
 });
 
 function session(client: WsRpcProtocolClient): RpcSession {

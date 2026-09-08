@@ -76,7 +76,9 @@ export const SidebarAutoSettleAfterDays = Schema.Number.check(
   }),
 );
 export type SidebarAutoSettleAfterDays = typeof SidebarAutoSettleAfterDays.Type;
-const DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS: SidebarAutoSettleAfterDays = 3;
+// Seed window offered when a user turns time-based auto-settle on (it ships off
+// by default). Consumers read it via `DEFAULT_SERVER_SETTINGS ?? this`.
+export const DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS: SidebarAutoSettleAfterDays = 3;
 export const MIN_GLASS_OPACITY = 40;
 export const MAX_GLASS_OPACITY = 100;
 export const GlassOpacity = Schema.Int.check(
@@ -400,8 +402,11 @@ export const ClientSettingsSchema = Schema.Struct({
   // (headed by the project name) instead of one activity-sorted list. Off by
   // default so v2 keeps its single-stream shape until the user opts in.
   sidebarV2GroupByProject: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // Off by default: time-based auto-settle silently parks a thread the user
+  // never touched, which reads as "settled itself". Opting in from Settings →
+  // Beta restores DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS as the starting window.
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
+    Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   // Whether `sidebarV2Enabled` reflects an explicit choice in Settings → Beta.
   // Client settings persist as a whole blob, so every user who has ever touched
@@ -929,8 +934,10 @@ export const ServerSettings = Schema.Struct({
   defaultModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  // Off by default (see the client-settings twin above); enabling in Settings
+  // seeds DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS as the initial window.
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
+    Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   sidebarAutoSettleOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   backgroundActivity: BackgroundActivitySettings,

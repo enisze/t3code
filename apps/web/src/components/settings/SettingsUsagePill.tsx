@@ -1,11 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import type {
-  ProviderUsage,
-  ProviderUsageWindow,
-  ProviderUsageWindowKind,
-  ServerProvider,
-} from "@t3tools/contracts";
+import type { ProviderUsage, ProviderUsageWindow, ServerProvider } from "@t3tools/contracts";
 import { useParams } from "@tanstack/react-router";
 import { ChevronUpIcon, GaugeIcon, RefreshCwIcon } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
@@ -18,48 +13,10 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { resolveThreadRouteRef } from "../../threadRoutes";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { ProviderUsageMeters } from "./ProviderUsageSection";
+import { resolveProviderUsage } from "./providerUsage";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 type ProviderWithUsage = ServerProvider & { readonly usage: ProviderUsage };
-
-/**
- * Providers publish quota windows as `usageLimits`; this widget and the meters
- * it renders were written against the older `usage` shape. Adapt at the edge so
- * every connected instance shows up, whatever it reports.
- *
- * `usageLimits.windows[].id` already carries the same slugs the legacy `kind`
- * union uses (`five_hour`, `primary`, …), so it maps straight across; anything
- * unrecognized falls back to `unknown`, which only affects ordering and label.
- */
-const LEGACY_WINDOW_KINDS = new Set<string>([
-  "five_hour",
-  "seven_day",
-  "seven_day_opus",
-  "seven_day_sonnet",
-  "monthly",
-  "primary",
-  "secondary",
-  "overage",
-  "unknown",
-]);
-
-function resolveProviderUsage(provider: ServerProvider): ProviderUsage | null {
-  if (provider.usage !== undefined && provider.usage.windows.length > 0) return provider.usage;
-  const limits = provider.usageLimits;
-  if (limits === undefined || limits.windows.length === 0) return null;
-  return {
-    source: provider.driver === "claude" ? "claude" : "codex",
-    fetchedAt: limits.checkedAt,
-    planLabel: null,
-    windows: limits.windows.map((window): ProviderUsageWindow => ({
-      kind: (LEGACY_WINDOW_KINDS.has(window.id) ? window.id : "unknown") as ProviderUsageWindowKind,
-      label: window.label,
-      usedPercent: window.usedPercent,
-      resetsAt: window.resetsAt ?? null,
-      windowMinutes: window.windowDurationMins ?? null,
-    })),
-  };
-}
 
 function summaryColor(usedPercent: number): string {
   if (usedPercent >= 90) return "var(--color-red-500)";

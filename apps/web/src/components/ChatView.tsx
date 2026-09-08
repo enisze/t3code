@@ -223,7 +223,7 @@ import {
   serverEnvironment,
 } from "../state/server";
 import { terminalEnvironment } from "../state/terminal";
-import { threadEnvironment } from "../state/threads";
+import { retryThreadDetail, threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
@@ -1202,7 +1202,12 @@ function ChatViewContent(props: ChatViewProps) {
   } = props;
   const draftId = routeKind === "draft" ? props.draftId : null;
   const threadSyncPhase = routeKind === "server" ? (props.threadSyncPhase ?? null) : null;
-  const threadDetailLoading = threadSyncPhase === "loading";
+  // "failed" means the load stopped with nothing on screen, so it gates the
+  // same things a load in flight does; only the reason shown to the user differs.
+  const threadDetailUnavailable = threadSyncPhase === "loading" || threadSyncPhase === "failed";
+  const retryThreadDetailLoad = useCallback(() => {
+    retryThreadDetail(environmentId, threadId);
+  }, [environmentId, threadId]);
   const handleNewThread = useNewThreadHandler();
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -1264,10 +1269,10 @@ function ChatViewContent(props: ChatViewProps) {
   const serverThread = useThread(routeThreadRef, { waitForShell: draftThread !== null });
   const loadingServerThread = useMemo(
     () =>
-      threadDetailLoading && routeServerThreadShell
+      threadDetailUnavailable && routeServerThreadShell
         ? buildLoadingThreadFromShell(routeServerThreadShell)
         : null,
-    [routeServerThreadShell, threadDetailLoading],
+    [routeServerThreadShell, threadDetailUnavailable],
   );
   const activeServerThread = serverThread ?? loadingServerThread;
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
@@ -4625,7 +4630,7 @@ function ChatViewContent(props: ChatViewProps) {
       !activeThread ||
       isSendBusy ||
       isConnecting ||
-      threadDetailLoading ||
+      threadDetailUnavailable ||
       activeEnvironmentUnavailable ||
       sendInFlightRef.current
     )
@@ -5136,7 +5141,7 @@ function ChatViewContent(props: ChatViewProps) {
       !activeThread ||
       isSendBusy ||
       isConnecting ||
-      threadDetailLoading ||
+      threadDetailUnavailable ||
       activeEnvironmentUnavailable ||
       sendInFlightRef.current ||
       !composerRef.current?.getSendContext().providerAvailable ||
@@ -5892,6 +5897,22 @@ function ChatViewContent(props: ChatViewProps) {
       onToggleRightPanel={toggleRightPanel}
     />
   );
+  // Open inline, the right panel owns its own header, so the toggle rides in it
+  // at the left instead of floating over the viewport's corner: anchored to the
+  // panel it collapses, and out of the tab row's way.
+  const rightPanelInlineLayoutControls = (
+    <PanelLayoutControls
+      showTerminalControl={false}
+      terminalAvailable={activeProject !== null}
+      terminalOpen={terminalUiState.terminalOpen}
+      terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
+      rightPanelAvailable={activeProject !== null}
+      rightPanelOpen={rightPanelOpen}
+      rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
+      onToggleTerminal={toggleTerminalVisibility}
+      onToggleRightPanel={toggleRightPanel}
+    />
+  );
   const panelLayoutControls = (
     <div
       // Keep one viewport anchor inside the header's no-drag region. The header
@@ -6056,7 +6077,6 @@ function ChatViewContent(props: ChatViewProps) {
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
-      {rightPanelOpen && !shouldUsePlanSidebarSheet ? panelLayoutControls : null}
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
@@ -6071,12 +6091,12 @@ function ChatViewContent(props: ChatViewProps) {
             "bg-background transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none",
             isElectron
               ? cn(
-                  "workspace-topbar drag-region relative px-3 sm:px-5",
+                  "drag-region relative flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center px-3 sm:px-5",
                   reserveTitleBarControlInset &&
                     !inlineRightPanelOwnsTitleBar &&
                     "wco:pr-[var(--workspace-native-controls-inset)]",
                 )
-              : "workspace-topbar pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.75rem)] sm:pl-[calc(env(safe-area-inset-left)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+1.25rem)]",
+              : "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.75rem)] sm:pl-[calc(env(safe-area-inset-left)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+1.25rem)]",
             COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
           )}
         >
@@ -6184,7 +6204,7 @@ function ChatViewContent(props: ChatViewProps) {
                 contentInsetEndAdjustment={timelineComposerLayout.contentInsetEndAdjustment}
                 onIsAtEndChange={onIsAtEndChange}
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
-                hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
+                hideEmptyPlaceholder={isDraftHeroState || threadDetailUnavailable}
                 topFadeEnabled={!hasTimelineTopBanner}
               />
 
@@ -6302,7 +6322,7 @@ function ChatViewContent(props: ChatViewProps) {
                     <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
                   )}
                   {threadSyncPhase && !activeEnvironmentUnavailable ? (
-                    <ThreadSyncStatusPill phase={threadSyncPhase} />
+                    <ThreadSyncStatusPill onRetry={retryThreadDetailLoad} phase={threadSyncPhase} />
                   ) : null}
                   <div
                     className="relative"
@@ -6340,7 +6360,13 @@ function ChatViewContent(props: ChatViewProps) {
                             phase={phase}
                             isConnecting={isConnecting}
                             isSendBusy={isSendBusy}
-                            sendDisabledReason={threadDetailLoading ? "Messages loading" : null}
+                            sendDisabledReason={
+                              threadSyncPhase === "failed"
+                                ? "Messages could not be loaded"
+                                : threadDetailUnavailable
+                                  ? "Messages loading"
+                                  : null
+                            }
                             isPreparingWorktree={isPreparingWorktree}
                             environmentUnavailable={activeEnvironmentUnavailableState}
                             activePendingApproval={activePendingApproval}
@@ -6535,6 +6561,7 @@ function ChatViewContent(props: ChatViewProps) {
         <RightPanelTabs
           mode="inline"
           maximized={rightPanelMaximized}
+          layoutControls={rightPanelInlineLayoutControls}
           headerActions={rightPanelHeaderActions}
           tabActions={rightPanelTabActions}
           surfaces={rightPanelState.surfaces}

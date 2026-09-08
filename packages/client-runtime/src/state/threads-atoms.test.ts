@@ -422,6 +422,47 @@ describe("createEnvironmentThreadStateAtoms", () => {
     }),
   );
 
+  it.effect("restarts a terminated load when the state atom is refreshed", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({ connected: true, httpNone: true });
+      const unmount = h.registry.mount(h.stateAtom);
+      const first = yield* Queue.take(h.subscriptions);
+      yield* Queue.fail(
+        first.events,
+        new RpcClientError.RpcClientError({
+          reason: new RpcClientError.RpcClientDefect({
+            message: "incompatible snapshot",
+            cause: new Error("incompatible snapshot"),
+          }),
+        }),
+      );
+      yield* Deferred.await(first.closed);
+      yield* TestClock.adjust("1 second");
+      expect(Option.isSome(h.registry.get(h.stateAtom).error)).toBe(true);
+      expect(h.counts().opened).toBe(1);
+
+      // What a client's retry action does: refresh the source atom. Neither a
+      // replacement session nor a foreground wakeup arrives while the app sits
+      // in front of a connected environment, so this is the only way out.
+      yield* Effect.sync(() =>
+        h.registry.refresh(h.rawAtoms.stateAtom(h.ref.environmentId, h.ref.threadId)),
+      );
+
+      const next = yield* Queue.take(h.subscriptions);
+      yield* Queue.offer(next.events, { kind: "snapshot", snapshot: SNAPSHOT });
+      yield* Queue.offer(next.events, { kind: "synchronized" });
+      const recovered = yield* observeState(
+        h.registry,
+        h.stateAtom,
+        (state) => state.status === "live",
+      );
+      expect(recovered.error).toEqual(Option.none());
+      expect(recovered.data).toEqual(Option.some(THREAD));
+      unmount();
+      yield* Deferred.await(next.closed);
+    }),
+  );
+
   it.effect("keeps transport loss nonterminal and recovers with a replacement session", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness({ connected: true, httpNone: true });

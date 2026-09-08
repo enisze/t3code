@@ -22,6 +22,22 @@ export function withoutEnvironmentThemes(config: ServerConfig): ServerConfig {
 }
 
 /**
+ * Provider and model metadata is useful while a connection warms up, but quota
+ * is point-in-time account state. Never restore those fields from disk while a
+ * reload is waiting for the server's authoritative snapshot.
+ */
+export function withoutCachedProviderUsage(config: ServerConfig): ServerConfig {
+  let changed = false;
+  const providers = config.providers.map((provider) => {
+    if (provider.usage === undefined && provider.usageLimits === undefined) return provider;
+    changed = true;
+    const { usage: _usage, usageLimits: _usageLimits, ...rest } = provider;
+    return rest;
+  });
+  return changed ? { ...config, providers } : config;
+}
+
+/**
  * A status probe that timed out ships an empty `models` list, which would
  * otherwise wipe the catalogue the picker needs. Since a timeout is usually
  * transient and the instance stays selectable, carry the previously-known
