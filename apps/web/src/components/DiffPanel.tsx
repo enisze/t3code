@@ -41,7 +41,7 @@ import {
 import { buildDiffViewedSignature } from "../lib/diffViewedSignature";
 import { useDiffThemeName } from "../hooks/useDiffThemeName";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
-import { useProject, useThread } from "../state/entities";
+import { useProject, useThread, useThreadShell } from "../state/entities";
 import { resolveThreadRouteRef } from "../threadRoutes";
 import { useWorkspaceThreadRef } from "../lib/workspaceThreadRef";
 import { useClientSettings } from "../hooks/useSettings";
@@ -355,40 +355,61 @@ export default function DiffPanel({
         })
       : null,
   );
+  // The whole selection is shared across the worktree's chats, so switching
+  // between sibling chats leaves the panel on whatever the user was reviewing.
   const diffSelection = useDiffPanelStore((state) =>
-    selectThreadDiffPanelSelection(
-      state,
-      // Turn selection is per chat; the working-tree/branch view is shared
-      // across the worktree via the representative thread.
-      currentThreadRef,
-      workspaceThreadRef,
-    ),
+    selectThreadDiffPanelSelection(state, workspaceThreadRef),
   );
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
-  const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
+  const { orderedTurnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
-  const orderedTurnDiffSummaries = useMemo(
-    () =>
-      [...turnDiffSummaries].toSorted((left, right) => {
-        const leftTurnCount =
-          left.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[left.turnId] ?? 0;
-        const rightTurnCount =
-          right.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[right.turnId] ?? 0;
-        if (leftTurnCount !== rightTurnCount) {
-          return rightTurnCount - leftTurnCount;
-        }
-        return right.completedAt.localeCompare(left.completedAt);
-      }),
-    [inferredCheckpointTurnCountByTurnId, turnDiffSummaries],
-  );
+  // Turn ids and checkpoint ranges belong to one chat, so a shared turn
+  // selection records its owner. When that owner is a sibling of the chat on
+  // screen, the turn view resolves against the owner instead.
+  const turnOwnerThreadRef = useMemo(() => {
+    if (diffSelection.kind !== "turn" || !workspaceThreadRef) return null;
+    if (diffSelection.threadId === currentThreadRef?.threadId) return null;
+    return {
+      environmentId: workspaceThreadRef.environmentId,
+      threadId: diffSelection.threadId,
+    } satisfies ScopedThreadRef;
+  }, [currentThreadRef?.threadId, diffSelection, workspaceThreadRef]);
+  const turnOwnerThread = useThread(turnOwnerThreadRef);
+  const turnOwnerShell = useThreadShell(turnOwnerThreadRef);
+  const turnOwnerSummaries = useTurnDiffSummaries(turnOwnerThread);
+  // The owning chat can be archived out from under a shared selection. Once the
+  // open chat has loaded (so the thread index has arrived) an owner with neither
+  // shell nor detail is gone for good.
+  const isTurnOwnerMissing =
+    turnOwnerThreadRef !== null &&
+    activeThread !== null &&
+    turnOwnerShell === null &&
+    turnOwnerThread === null;
+  const turnScopeSummaries = turnOwnerThreadRef
+    ? turnOwnerSummaries.orderedTurnDiffSummaries
+    : orderedTurnDiffSummaries;
+  const turnScopeCheckpointCounts = turnOwnerThreadRef
+    ? turnOwnerSummaries.inferredCheckpointTurnCountByTurnId
+    : inferredCheckpointTurnCountByTurnId;
 
   useEffect(() => {
-    if (!currentThreadRef || diffSelection.kind !== "turn") return;
+    if (!isTurnOwnerMissing || !workspaceThreadRef) return;
+    // Nothing can resolve this turn any more, so fall back to the worktree's
+    // git-scope view rather than stranding the panel on it.
+    useDiffPanelStore.getState().clearTurnSelection(workspaceThreadRef);
+  }, [isTurnOwnerMissing, workspaceThreadRef]);
+
+  // A vanished turn (compaction, restore) retargets to the owning chat's latest
+  // checkpoint. Reconcile against the owner's turns, not the open chat's.
+  const turnScopeThreadRef = turnOwnerThreadRef ?? currentThreadRef;
+  useEffect(() => {
+    if (!turnScopeThreadRef || !workspaceThreadRef || diffSelection.kind !== "turn") return;
     useDiffPanelStore.getState().reconcileTurnSelection(
-      currentThreadRef,
-      orderedTurnDiffSummaries.map((summary) => summary.turnId),
+      workspaceThreadRef,
+      turnScopeThreadRef,
+      turnScopeSummaries.map((summary) => summary.turnId),
     );
-  }, [currentThreadRef, diffSelection, orderedTurnDiffSummaries]);
+  }, [diffSelection, turnScopeSummaries, turnScopeThreadRef, workspaceThreadRef]);
 
   const selectedTurnId = diffSelection.kind === "turn" ? diffSelection.turnId : null;
   const selectedGitScope: GitScope =
@@ -406,16 +427,15 @@ export default function DiffPanel({
   const selectedTurn =
     selectedTurnId === null
       ? undefined
-      : (orderedTurnDiffSummaries.find((summary) => summary.turnId === selectedTurnId) ??
-        orderedTurnDiffSummaries[0]);
+      : turnScopeSummaries.find((summary) => summary.turnId === selectedTurnId);
   const selectedCheckpointTurnCount =
     selectedTurn &&
-    (selectedTurn.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[selectedTurn.turnId]);
+    (selectedTurn.checkpointTurnCount ?? turnScopeCheckpointCounts[selectedTurn.turnId]);
   const latestTurn = orderedTurnDiffSummaries[0];
   const selectedScopeLabel =
     selectedTurnId === null
       ? GIT_SCOPE_LABELS[selectedGitScope]
-      : selectedTurn?.turnId === latestTurn?.turnId
+      : turnOwnerThreadRef === null && selectedTurn?.turnId === latestTurn?.turnId
         ? "Latest turn"
         : `Turn ${selectedCheckpointTurnCount ?? "?"}`;
   const reviewSectionId = selectedTurn ? `turn:${selectedTurn.turnId}` : selectedGitScope;
@@ -453,8 +473,8 @@ export default function DiffPanel({
   );
   const activeCheckpointDiff = useCheckpointDiff(
     {
-      environmentId: activeThread?.environmentId ?? null,
-      threadId: activeThreadId,
+      environmentId: turnOwnerThreadRef?.environmentId ?? activeThread?.environmentId ?? null,
+      threadId: turnOwnerThreadRef?.threadId ?? activeThreadId,
       fromTurnCount: selectedCheckpointRange?.fromTurnCount ?? null,
       toTurnCount: selectedCheckpointRange?.toTurnCount ?? null,
       ignoreWhitespace: diffIgnoreWhitespace,
@@ -607,9 +627,19 @@ export default function DiffPanel({
 
   const selectedPatch = selectedTurn ? activeCheckpointDiff.data?.diff : gitDiff;
   const isSelectedPatchTruncated = !selectedTurn && selectedGitSource?.truncated === true;
-  const isLoadingSelectedPatch = selectedTurn
-    ? activeCheckpointDiff.isPending
-    : branchDiffPreview.isPending;
+  // A shared turn selection can point at a sibling chat whose detail (and so
+  // its checkpoint list) is still loading. Hold the loading state instead of
+  // briefly falling back to the working-tree diff.
+  const isTurnSelectionResolving =
+    selectedTurnId !== null &&
+    selectedTurn === undefined &&
+    !isTurnOwnerMissing &&
+    (turnOwnerThreadRef ? turnOwnerThread === null : activeThread === null);
+  const isLoadingSelectedPatch = isTurnSelectionResolving
+    ? true
+    : selectedTurn
+      ? activeCheckpointDiff.isPending
+      : branchDiffPreview.isPending;
   const selectedPatchError = selectedTurn ? activeCheckpointDiff.error : branchDiffPreview.error;
   const hasResolvedPatch = typeof selectedPatch === "string";
   const hasNoNetChanges = hasResolvedPatch && selectedPatch.trim().length === 0;
@@ -851,18 +881,18 @@ export default function DiffPanel({
   );
 
   const selectTurn = (turnId: TurnId) => {
-    // Turns belong to this conversation, so the selection keys off the chat's
-    // own ref rather than the shared worktree representative.
-    if (!currentThreadRef) return;
-    useDiffPanelStore.getState().selectTurn(currentThreadRef, turnId);
+    // The selection is shared across the worktree, but the turn itself belongs
+    // to this chat, so record it as the turn's owner.
+    if (!workspaceThreadRef || !currentThreadRef) return;
+    useDiffPanelStore.getState().selectTurn(workspaceThreadRef, currentThreadRef, turnId);
   };
   const selectGitScope = (scope: GitScope) => {
-    if (!workspaceThreadRef || !currentThreadRef) return;
-    useDiffPanelStore.getState().selectGitScope(workspaceThreadRef, currentThreadRef, scope);
+    if (!workspaceThreadRef) return;
+    useDiffPanelStore.getState().selectGitScope(workspaceThreadRef, scope);
   };
   const selectBranchBaseRef = (baseRef: string | null) => {
-    if (!workspaceThreadRef || !currentThreadRef) return;
-    useDiffPanelStore.getState().selectBranchBaseRef(workspaceThreadRef, currentThreadRef, baseRef);
+    if (!workspaceThreadRef) return;
+    useDiffPanelStore.getState().selectBranchBaseRef(workspaceThreadRef, baseRef);
   };
 
   const focusedFileDirName = focusedFile
@@ -939,7 +969,9 @@ export default function DiffPanel({
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   className={
-                    selectedTurnId !== null && selectedTurn?.turnId === latestTurn?.turnId
+                    selectedTurnId !== null &&
+                    turnOwnerThreadRef === null &&
+                    selectedTurn?.turnId === latestTurn?.turnId
                       ? "bg-foreground/[0.08]"
                       : undefined
                   }
@@ -1251,7 +1283,9 @@ export default function DiffPanel({
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Turn diffs are unavailable because this project is not a git repository.
         </div>
-      ) : selectedTurnId !== null && orderedTurnDiffSummaries.length === 0 ? (
+      ) : selectedTurnId !== null &&
+        !isTurnSelectionResolving &&
+        turnScopeSummaries.length === 0 ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           No completed turns yet.
         </div>
