@@ -5814,9 +5814,11 @@ function ChatViewContent(props: ChatViewProps) {
   const onOpenTurnDiff = useCallback(
     (turnId: TurnId, filePath?: string) => {
       if (!isServerThread || !workspaceThreadRef || !activeThreadRef) return;
-      // A turn belongs to this conversation, so its selection is per chat; the
-      // diff surface itself is shared across the worktree.
-      useDiffPanelStore.getState().selectTurn(activeThreadRef, turnId, filePath);
+      // The diff surface is shared across the worktree, so the selection keys
+      // off the representative; the turn itself belongs to this conversation.
+      useDiffPanelStore
+        .getState()
+        .selectTurn(workspaceThreadRef, activeThreadRef, turnId, filePath);
       // Choosing a specific file opens its diff as its own tab in the chat
       // column; the bare "open diff" action lands on the surface navigator.
       if (filePath && contentTabsWorktreeKey) {
