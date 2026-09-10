@@ -2,8 +2,10 @@ import type { AdvertisedEndpoint, DesktopWslState } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
+  buildEndpointCopyOptions,
   isQrShareableEndpoint,
   isWslSettingsRowVisible,
+  selectPairingEndpoint,
   selectQrEndpointOption,
 } from "./ConnectionsSettings.logic";
 
@@ -181,5 +183,70 @@ describe("selectQrEndpointOption", () => {
     const loopbackOnly = options.slice(0, 1);
     expect(selectQrEndpointOption(loopbackOnly, null, null)?.id).toBe("desktop-loopback:4780");
     expect(selectQrEndpointOption([], "anything", "anything")).toBeNull();
+  });
+});
+
+const tailscaleHttpsEndpoint = makeEndpoint({
+  id: "tailscale-magicdns:https://studio.tail1234.ts.net/",
+  label: "Tailscale HTTPS",
+  provider: { id: "tailscale", label: "Tailscale", kind: "private-network", isAddon: true },
+  httpBaseUrl: "https://studio.tail1234.ts.net/",
+  wsBaseUrl: "wss://studio.tail1234.ts.net/",
+  reachability: "private-network",
+  compatibility: { hostedHttpsApp: "compatible", desktopApp: "compatible" },
+  source: "desktop-addon",
+});
+
+describe("buildEndpointCopyOptions", () => {
+  it("offers the endpoint's own URL alongside the hosted app rewrite", () => {
+    const options = buildEndpointCopyOptions([tailscaleHttpsEndpoint], "tok-123");
+
+    const direct = options.find((option) => option.detail === "Backend pairing URL");
+    const hosted = options.find((option) => option.detail === "Hosted app link");
+
+    expect(direct?.url).toBe("https://studio.tail1234.ts.net/pair#token=tok-123");
+    expect(direct?.label).toBe("Tailscale HTTPS");
+    expect(hosted?.url).toContain("host=https%3A%2F%2Fstudio.tail1234.ts.net%2F");
+    expect(new Set(options.map((option) => option.key)).size).toBe(options.length);
+  });
+
+  it("offers only the direct URL for a plain HTTP endpoint", () => {
+    const options = buildEndpointCopyOptions([makeEndpoint({})], "tok-123");
+
+    expect(options.map((option) => option.detail)).toEqual(["Backend pairing URL"]);
+    expect(options[0]?.url).toBe("http://192.168.1.42:4780/pair#token=tok-123");
+  });
+
+  it("drops unavailable endpoints and yields nothing without a credential", () => {
+    expect(buildEndpointCopyOptions([makeEndpoint({ status: "unavailable" })], "tok-123")).toEqual(
+      [],
+    );
+    expect(buildEndpointCopyOptions([makeEndpoint({})], undefined)).toEqual([]);
+  });
+});
+
+describe("selectPairingEndpoint", () => {
+  const lan = makeEndpoint({ isDefault: true });
+  const loopback = makeEndpoint({
+    id: "desktop-loopback:4780",
+    label: "This machine",
+    reachability: "loopback",
+    httpBaseUrl: "http://127.0.0.1:4780",
+  });
+
+  it("honours a saved Tailscale HTTPS default over the LAN endpoint", () => {
+    expect(
+      selectPairingEndpoint([loopback, lan, tailscaleHttpsEndpoint], "tailscale:magicdns:https")
+        ?.label,
+    ).toBe("Tailscale HTTPS");
+  });
+
+  it("falls back to the LAN endpoint when the saved default is not reachable", () => {
+    expect(
+      selectPairingEndpoint(
+        [loopback, lan, { ...tailscaleHttpsEndpoint, status: "unavailable" }],
+        "tailscale:magicdns:https",
+      )?.label,
+    ).toBe("Local network");
   });
 });
