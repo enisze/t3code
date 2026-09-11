@@ -535,6 +535,38 @@ export const isPreviewRefreshShortcut = (input: Electron.Input): boolean =>
   !input.shift &&
   !input.alt;
 
+/**
+ * The editing command a preview guest has to run for a keyboard chord itself.
+ *
+ * macOS routes Cmd+C/X/V/A/Z through the application menu's Edit roles, and a
+ * preview guest ignores menu accelerators so a page can never reach the host's
+ * menu items. That leaves the chords dead inside the preview: selected text
+ * cannot be copied, fields cannot be pasted into. Every other platform maps
+ * them in the renderer, so they are left alone there.
+ */
+export const previewEditingCommand = (
+  input: Electron.Input,
+  platform: NodeJS.Platform,
+): "copy" | "cut" | "paste" | "selectAll" | "undo" | "redo" | undefined => {
+  if (platform !== "darwin" || input.type !== "keyDown") return undefined;
+  if (!input.meta || input.control || input.alt) return undefined;
+  if (input.shift) return input.key.toLowerCase() === "z" ? "redo" : undefined;
+  switch (input.key.toLowerCase()) {
+    case "c":
+      return "copy";
+    case "x":
+      return "cut";
+    case "v":
+      return "paste";
+    case "a":
+      return "selectAll";
+    case "z":
+      return "undo";
+    default:
+      return undefined;
+  }
+};
+
 const isPreviewInputSignal = (value: unknown): value is PreviewInputSignal => {
   if (typeof value !== "object" || value === null || !("kind" in value)) return false;
   if (value.kind === "pointer") {
@@ -1620,6 +1652,23 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
+  /**
+   * Guest webContents with an agent-injected key on the wire, counted so
+   * overlapping presses cannot clear each other. Injected keys carry their own
+   * macOS editing commands (see `makePreviewAutomationKeySequence`) and reach
+   * `before-input-event` just like real ones, so the human clipboard fallback
+   * sits out while one is in flight rather than running the command twice.
+   */
+  const injectedKeyDispatches = new Map<number, number>();
+  const beginInjectedKeyDispatch = (webContentsId: number): void => {
+    injectedKeyDispatches.set(webContentsId, (injectedKeyDispatches.get(webContentsId) ?? 0) + 1);
+  };
+  const endInjectedKeyDispatch = (webContentsId: number): void => {
+    const remaining = (injectedKeyDispatches.get(webContentsId) ?? 0) - 1;
+    if (remaining > 0) injectedKeyDispatches.set(webContentsId, remaining);
+    else injectedKeyDispatches.delete(webContentsId);
+  };
+
   const attachListeners = Effect.fn("PreviewManager.attachListeners")(function* (
     tabId: string,
     wc: Electron.WebContents,
@@ -1864,6 +1913,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           ).pipe(Effect.ignore),
         );
         return;
+      }
+      const editingCommand = previewEditingCommand(input, hostPlatform);
+      // The key still reaches the page: a site with its own clipboard handler
+      // runs after this and keeps the last word on what lands on the clipboard.
+      if (editingCommand !== undefined && !injectedKeyDispatches.has(wc.id)) {
+        runFork(
+          attempt({ operation: `shortcut.${editingCommand}`, tabId, webContentsId: wc.id }, () =>
+            wc[editingCommand](),
+          ).pipe(Effect.ignore),
+        );
       }
     };
     yield* Scope.addFinalizer(
@@ -3895,6 +3954,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const releaseInput = Effect.gen(function* () {
       if (keyDownAttempted) {
         yield* sendCleanup("Input.dispatchKeyEvent", keySequence.keyUp).pipe(Effect.ignore);
+        endInjectedKeyDispatch(wc.id);
       }
       yield* sendCleanup("Emulation.setFocusEmulationEnabled", { enabled: false }).pipe(
         Effect.ignore,
@@ -3940,6 +4000,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       yield* send("Emulation.setFocusEmulationEnabled", { enabled: true });
       yield* expectAgentInput(tabId, keySequence.signal);
       keyDownAttempted = true;
+      beginInjectedKeyDispatch(wc.id);
       yield* send("Input.dispatchKeyEvent", keySequence.keyDown);
     }).pipe(Effect.ensuring(releaseInput));
   });

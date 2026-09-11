@@ -2174,11 +2174,33 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // account in the project's settings — not whichever account happens to be
     // active on the machine.
     const identityEnv = yield* resolveCommitIdentityEnv(cwd);
-    yield* executeGit("GitVcsDriver.commit.commit", cwd, args, {
+    const operation = "GitVcsDriver.commit.commit";
+    const commitResult = yield* executeGit(operation, cwd, args, {
+      allowNonZeroExit: true,
       ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(progress ? { progress } : {}),
       env: identityEnv,
-    }).pipe(Effect.asVoid);
+    });
+    if (commitResult.exitCode !== 0) {
+      // Unlike the general executeGit path, `git commit`'s only arguments are
+      // the commit message we built above — never credentials or other
+      // secrets — so surfacing its stdout/stderr here can't leak anything and
+      // turns hook rejections, GPG-signing failures, and identity errors from
+      // an opaque "exited with a non-zero status" into something actionable.
+      return yield* Effect.fail(
+        new GitCommandError({
+          ...gitCommandContext({ operation, cwd, args }),
+          detail: appendGitOutputToDetail(
+            "Git command exited with a non-zero status.",
+            commitResult.stdout,
+            commitResult.stderr,
+          ),
+          ...(commitResult.exitCode === null ? {} : { exitCode: commitResult.exitCode }),
+          stdoutLength: commitResult.stdout.length,
+          stderrLength: commitResult.stderr.length,
+        }),
+      );
+    }
     const commitSha = yield* runGitStdout("GitVcsDriver.commit.revParseHead", cwd, [
       "rev-parse",
       "HEAD",
