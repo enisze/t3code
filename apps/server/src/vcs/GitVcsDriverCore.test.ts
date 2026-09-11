@@ -2113,6 +2113,33 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.include(status, "?? selected1.txt");
       }),
     );
+
+    it.effect("surfaces git's stderr when a commit hook rejects the commit", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+
+        const hookPath = pathService.join(cwd, ".git", "hooks", "pre-commit");
+        yield* fileSystem.writeFileString(
+          hookPath,
+          ["#!/bin/sh", 'echo "no commits on Fridays" >&2', "exit 1", ""].join("\n"),
+        );
+        yield* fileSystem.chmod(hookPath, 0o755);
+
+        yield* writeTextFile(cwd, "feature.txt", "feature\n");
+        yield* driver.prepareCommitContext(cwd);
+
+        const error = yield* driver.commit(cwd, "Add feature", "").pipe(Effect.flip);
+
+        assert.strictEqual(error._tag, "GitCommandError");
+        assert.equal(error.operation, "GitVcsDriver.commit.commit");
+        // The hook's reason, not just "exited with a non-zero status".
+        assert.match(error.detail, /no commits on Fridays/);
+      }),
+    );
   });
 
   describe("remote operations", () => {
