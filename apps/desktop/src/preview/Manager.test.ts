@@ -67,6 +67,44 @@ describe("isPreviewRefreshShortcut", () => {
   });
 });
 
+describe("previewEditingCommand", () => {
+  const input = (overrides: Partial<Electron.Input> = {}) =>
+    ({
+      type: "keyDown",
+      key: "c",
+      meta: true,
+      control: false,
+      shift: false,
+      alt: false,
+      ...overrides,
+    }) as Electron.Input;
+
+  it("maps the macOS editing chords the guest cannot reach through the menu", () => {
+    expect(PreviewManager.previewEditingCommand(input(), "darwin")).toBe("copy");
+    expect(PreviewManager.previewEditingCommand(input({ key: "x" }), "darwin")).toBe("cut");
+    expect(PreviewManager.previewEditingCommand(input({ key: "v" }), "darwin")).toBe("paste");
+    expect(PreviewManager.previewEditingCommand(input({ key: "a" }), "darwin")).toBe("selectAll");
+    expect(PreviewManager.previewEditingCommand(input({ key: "z" }), "darwin")).toBe("undo");
+    expect(PreviewManager.previewEditingCommand(input({ key: "z", shift: true }), "darwin")).toBe(
+      "redo",
+    );
+  });
+
+  it("leaves everything else to the page and the renderer", () => {
+    expect(PreviewManager.previewEditingCommand(input(), "win32")).toBeUndefined();
+    expect(PreviewManager.previewEditingCommand(input(), "linux")).toBeUndefined();
+    expect(
+      PreviewManager.previewEditingCommand(input({ type: "keyUp" }), "darwin"),
+    ).toBeUndefined();
+    expect(
+      PreviewManager.previewEditingCommand(input({ meta: false, control: true }), "darwin"),
+    ).toBeUndefined();
+    expect(PreviewManager.previewEditingCommand(input({ alt: true }), "darwin")).toBeUndefined();
+    expect(PreviewManager.previewEditingCommand(input({ shift: true }), "darwin")).toBeUndefined();
+    expect(PreviewManager.previewEditingCommand(input({ key: "k" }), "darwin")).toBeUndefined();
+  });
+});
+
 describe("previewWindowOpenAction", () => {
   const details = (overrides: {
     readonly url?: string;
@@ -360,8 +398,17 @@ const makeFaviconWebContents = (options?: {
   });
   const off = vi.fn();
   const debuggerOff = vi.fn();
+  const editingCommands = {
+    copy: vi.fn(),
+    cut: vi.fn(),
+    paste: vi.fn(),
+    selectAll: vi.fn(),
+    undo: vi.fn(),
+    redo: vi.fn(),
+  };
   const webContents = {
     id: options?.id ?? 42,
+    ...editingCommands,
     isDestroyed: () => destroyed,
     getType: () => "webview",
     getURL: () => currentUrl,
@@ -395,6 +442,7 @@ const makeFaviconWebContents = (options?: {
     },
   };
   return {
+    editingCommands,
     executeJavaScriptInIsolatedWorld,
     fetch,
     debuggerOff,
@@ -533,6 +581,108 @@ describe("PreviewManager", () => {
           webContents: { setIgnoreMenuShortcuts, setWindowOpenHandler: vi.fn() },
         } as never);
         expect(setIgnoreMenuShortcuts).toHaveBeenCalledWith(true);
+      }),
+    ),
+  );
+
+  effectIt.effect("runs the macOS clipboard chords the preview guest cannot reach", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents();
+        fromId.mockReturnValue(preview.webContents);
+        yield* manager.createTab("tab_clipboard");
+        yield* manager.registerWebview("tab_clipboard", 42);
+
+        const beforeInput = preview.listeners.get("before-input-event")!;
+        const press = (key: string, overrides: Partial<Electron.Input> = {}) => {
+          const preventDefault = vi.fn();
+          beforeInput(
+            { preventDefault } as never,
+            {
+              type: "keyDown",
+              key,
+              meta: true,
+              control: false,
+              shift: false,
+              alt: false,
+              ...overrides,
+            } as never,
+          );
+          return preventDefault;
+        };
+
+        const preventDefault = press("c");
+        yield* Effect.yieldNow;
+        expect(preview.editingCommands.copy).toHaveBeenCalledOnce();
+        // The page still receives the chord, so a site with its own copy
+        // handler keeps the last word on what lands on the clipboard.
+        expect(preventDefault).not.toHaveBeenCalled();
+
+        press("v");
+        press("a");
+        press("z");
+        press("z", { shift: true });
+        yield* Effect.yieldNow;
+        expect(preview.editingCommands.paste).toHaveBeenCalledOnce();
+        expect(preview.editingCommands.selectAll).toHaveBeenCalledOnce();
+        expect(preview.editingCommands.undo).toHaveBeenCalledOnce();
+        expect(preview.editingCommands.redo).toHaveBeenCalledOnce();
+
+        press("c", { meta: false, control: true });
+        press("k");
+        yield* Effect.yieldNow;
+        expect(preview.editingCommands.copy).toHaveBeenCalledOnce();
+      }),
+    ),
+  );
+
+  effectIt.effect("leaves an injected clipboard chord to the key event's own command", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents();
+        const humanChord = () =>
+          preview.listeners.get("before-input-event")!(
+            { preventDefault: vi.fn() } as never,
+            {
+              type: "keyDown",
+              key: "c",
+              meta: true,
+              control: false,
+              shift: false,
+              alt: false,
+            } as never,
+          );
+        const sendCommand = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+          if (method === "Input.dispatchKeyEvent" && params?.["type"] === "rawKeyDown")
+            humanChord();
+          return undefined;
+        });
+        Object.assign(preview.webContents, {
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand,
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        });
+        fromId.mockReturnValue(preview.webContents);
+        yield* manager.createTab("tab_injected");
+        yield* manager.registerWebview("tab_injected", 42);
+
+        yield* manager.automationPress("tab_injected", { key: "c", modifiers: ["Meta"] });
+        yield* Effect.yieldNow;
+        expect(
+          sendCommand.mock.calls.some(
+            ([method, params]) =>
+              method === "Input.dispatchKeyEvent" && params?.["type"] === "rawKeyDown",
+          ),
+        ).toBe(true);
+        expect(preview.editingCommands.copy).not.toHaveBeenCalled();
+
+        humanChord();
+        yield* Effect.yieldNow;
+        expect(preview.editingCommands.copy).toHaveBeenCalledOnce();
       }),
     ),
   );
