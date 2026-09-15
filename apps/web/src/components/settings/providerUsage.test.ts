@@ -1,7 +1,7 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveProviderUsage } from "./providerUsage";
+import { prioritizeActiveProvider, resolveProviderUsage } from "./providerUsage";
 
 const provider = {
   instanceId: ProviderInstanceId.make("claude"),
@@ -100,5 +100,29 @@ describe("resolveProviderUsage", () => {
         },
       }),
     ).toBe(legacyUsage);
+  });
+});
+
+describe("prioritizeActiveProvider", () => {
+  it("moves the active chat provider first and preserves the order of the rest", () => {
+    const claude = { instanceId: ProviderInstanceId.make("claude") };
+    const codex = { instanceId: ProviderInstanceId.make("codex") };
+    const grok = { instanceId: ProviderInstanceId.make("grok") };
+
+    expect(prioritizeActiveProvider([claude, codex, grok], codex.instanceId)).toEqual([
+      codex,
+      claude,
+      grok,
+    ]);
+  });
+
+  it("leaves the provider order alone outside a supported active chat", () => {
+    const providers = [
+      { instanceId: ProviderInstanceId.make("claude") },
+      { instanceId: ProviderInstanceId.make("codex") },
+    ];
+
+    expect(prioritizeActiveProvider(providers, null)).toBe(providers);
+    expect(prioritizeActiveProvider(providers, ProviderInstanceId.make("grok"))).toBe(providers);
   });
 });
