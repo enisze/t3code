@@ -17,6 +17,21 @@ const LEGACY_WINDOW_KINDS = new Set<string>([
   "unknown",
 ]);
 
+/** Put the provider backing the active chat first without disturbing its peers. */
+export function prioritizeActiveProvider<Provider extends Pick<ServerProvider, "instanceId">>(
+  providers: readonly Provider[],
+  activeInstanceId: ServerProvider["instanceId"] | null,
+): readonly Provider[] {
+  if (activeInstanceId === null) return providers;
+  const activeIndex = providers.findIndex((provider) => provider.instanceId === activeInstanceId);
+  if (activeIndex <= 0) return providers;
+  return [
+    providers[activeIndex]!,
+    ...providers.slice(0, activeIndex),
+    ...providers.slice(activeIndex + 1),
+  ];
+}
+
 /**
  * Adapt the current cross-provider limits onto the meter's legacy shape.
  * Runtime rate-limit events update only `usageLimits`, so it must win whenever

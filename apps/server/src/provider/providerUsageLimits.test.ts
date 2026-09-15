@@ -92,6 +92,30 @@ describe("resolveUsageLimitsAfterProbe", () => {
     expect(resolveUsageLimitsAfterProbe({ published, probed: probe })).toBe(probe);
   });
 
+  it("keeps higher usage when a cached payload is stamped as a newer probe", () => {
+    const current = {
+      ...published,
+      windows: [{ ...session, usedPercent: 95 }, weekly],
+    };
+    const retimestampedCache = {
+      checkedAt: "2026-09-03T12:05:00.000Z",
+      windows: [
+        { ...session, usedPercent: 87 },
+        { ...weekly, usedPercent: 25 },
+      ],
+    };
+
+    expect(
+      resolveUsageLimitsAfterProbe({ published: current, probed: retimestampedCache }),
+    ).toEqual({
+      ...retimestampedCache,
+      windows: [
+        { ...session, usedPercent: 95 },
+        { ...weekly, usedPercent: 25 },
+      ],
+    });
+  });
+
   it("keeps the last good windows through a failed probe but not an unsupported one", () => {
     const failed = { checkedAt, windows: [], unavailable: { reason: "probeFailed" as const } };
     const unsupported = { checkedAt, windows: [], unavailable: { reason: "unsupported" as const } };

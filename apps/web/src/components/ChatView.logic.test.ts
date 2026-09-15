@@ -15,6 +15,7 @@ import {
   branchMismatchKey,
   buildExpiredTerminalContextToastCopy,
   buildLoadingThreadFromShell,
+  buildTurnDiffSummaryByAssistantMessageId,
   buildThreadTurnInterruptInput,
   canCreateEmptyWorktreeThread,
   createLocalDispatchSnapshot,
@@ -77,6 +78,49 @@ describe("canCreateEmptyWorktreeThread", () => {
     { hasSendableContent: false, isLocalDraftThread: true, envMode: "local" as const },
   ])("rejects non-empty, server, and local-mode submissions", (input) => {
     expect(canCreateEmptyWorktreeThread(input)).toBe(false);
+  });
+});
+
+describe("buildTurnDiffSummaryByAssistantMessageId", () => {
+  it("recovers a raced checkpoint onto the final assistant message for its turn", () => {
+    const turnId = TurnId.make("turn-1");
+    const commentaryId = MessageId.make("assistant-commentary");
+    const finalId = MessageId.make("assistant-final");
+    const messages = [
+      {
+        id: commentaryId,
+        role: "assistant" as const,
+        text: "Working on it",
+        turnId,
+        streaming: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: finalId,
+        role: "assistant" as const,
+        text: "Done",
+        turnId,
+        streaming: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+    const summary = {
+      turnId,
+      checkpointTurnCount: 1,
+      checkpointRef: "checkpoint-1" as never,
+      status: "ready" as const,
+      files: [{ path: "src/index.ts", kind: "modified" as const, additions: 3, deletions: 1 }],
+      // This may be synthetic or point at earlier commentary when the
+      // checkpoint projection wins the race with the final message.
+      assistantMessageId: MessageId.make("assistant:turn-1"),
+      completedAt: now,
+    };
+
+    expect(buildTurnDiffSummaryByAssistantMessageId(messages, [summary])).toEqual(
+      new Map([[finalId, summary]]),
+    );
   });
 });
 

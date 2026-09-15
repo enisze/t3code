@@ -117,6 +117,9 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
  *
  * A probe is timestamped when it starts. If a runtime update landed after
  * that, keep the published snapshot until a subsequent probe catches up.
+ * Some providers cache the payload behind a new probe timestamp, though. A
+ * quota cannot become less used before its reset, so retain a higher reading
+ * when both snapshots identify the same reset window.
  */
 export function resolveUsageLimitsAfterProbe(input: {
   readonly published: ServerProviderUsageLimits | undefined;
@@ -134,6 +137,25 @@ export function resolveUsageLimitsAfterProbe(input: {
     Date.parse(published.checkedAt) > Date.parse(probed.checkedAt)
   ) {
     return published;
+  }
+  if (published && probed && !published.unavailable && !probed.unavailable) {
+    const publishedById = new Map(published.windows.map((window) => [window.id, window] as const));
+    let retainedPublishedWindow = false;
+    const windows = probed.windows.map((window) => {
+      const previous = publishedById.get(window.id);
+      if (
+        previous?.resetsAt !== undefined &&
+        previous.resetsAt === window.resetsAt &&
+        previous.usedPercent > window.usedPercent
+      ) {
+        retainedPublishedWindow = true;
+        return previous;
+      }
+      return window;
+    });
+    if (retainedPublishedWindow) {
+      return { ...probed, windows };
+    }
   }
   return probed;
 }

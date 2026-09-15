@@ -13,7 +13,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { resolveThreadRouteRef } from "../../threadRoutes";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { ProviderUsageMeters } from "./ProviderUsageSection";
-import { resolveProviderUsage } from "./providerUsage";
+import { prioritizeActiveProvider, resolveProviderUsage } from "./providerUsage";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 type ProviderWithUsage = ServerProvider & { readonly usage: ProviderUsage };
@@ -92,14 +92,6 @@ export function SettingsUsagePill() {
     })();
   }, [primaryEnvironment, refreshServerProviders]);
 
-  // Every connected instance that reports windows, so several Claude and Codex
-  // accounts each get their own meters rather than only the first.
-  const withUsage = providers.flatMap((provider): ProviderWithUsage[] => {
-    const usage = resolveProviderUsage(provider);
-    return usage === null ? [] : [{ ...provider, usage }];
-  });
-  if (withUsage.length === 0) return null;
-
   // Summary reflects only the active chat's provider instance (its own model
   // selection, else the project default), so the number matches the account
   // that chat actually spends against — not whichever account is most maxed.
@@ -107,6 +99,18 @@ export function SettingsUsagePill() {
     activeThreadShell?.modelSelection.instanceId ??
     activeProject?.defaultModelSelection?.instanceId ??
     null;
+
+  // Every connected instance that reports windows, with the active chat's
+  // provider first and the registry order preserved for all remaining rows.
+  const withUsage = prioritizeActiveProvider(
+    providers.flatMap((provider): ProviderWithUsage[] => {
+      const usage = resolveProviderUsage(provider);
+      return usage === null ? [] : [{ ...provider, usage }];
+    }),
+    activeInstanceId,
+  );
+  if (withUsage.length === 0) return null;
+
   const activeProvider =
     activeInstanceId !== null
       ? withUsage.find((provider) => provider.instanceId === activeInstanceId)
