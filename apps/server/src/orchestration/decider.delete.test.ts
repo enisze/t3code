@@ -136,6 +136,30 @@ function normalizeDeleteEvent(event: PlannedEvent | ReadonlyArray<PlannedEvent>)
   });
 }
 
+/** Applies `thread.archived` so retain-archived behaviour can be exercised. */
+const archiveThread = (
+  readModel: Parameters<typeof projectEvent>[0],
+  threadId: string,
+  sequence: number,
+) =>
+  projectEvent(readModel, {
+    sequence,
+    eventId: asEventId(`evt-thread-archive-${threadId}`),
+    aggregateKind: "thread",
+    aggregateId: asThreadId(threadId),
+    type: "thread.archived",
+    occurredAt: "2026-01-02T00:00:00.000Z",
+    commandId: asCommandId(`cmd-thread-archive-${threadId}`),
+    causationEventId: null,
+    correlationId: asCommandId(`cmd-thread-archive-${threadId}`),
+    metadata: {},
+    payload: {
+      threadId: asThreadId(threadId),
+      archivedAt: "2026-01-02T00:00:00.000Z",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    },
+  });
+
 it.layer(NodeServices.layer)("decider deletion flows", (it) => {
   it.effect("rejects deleting a non-empty project without force", () =>
     Effect.gen(function* () {
@@ -212,6 +236,89 @@ it.layer(NodeServices.layer)("decider deletion flows", (it) => {
       }
 
       expect(normalizeDeleteEvent(forcedResult)).toEqual(normalizeDeleteEvent(sequentialEvents));
+    }),
+  );
+
+  it.effect("retainArchivedThreads leaves archived threads out of the force cascade", () =>
+    Effect.gen(function* () {
+      const seeded = yield* seedReadModel;
+      const readModel = yield* archiveThread(seeded, "thread-delete-2", 100);
+
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "project.delete",
+          commandId: asCommandId("cmd-project-delete-retain"),
+          projectId: asProjectId("project-delete"),
+          force: true,
+          retainArchivedThreads: true,
+        },
+        readModel,
+      });
+      const events = Array.isArray(result) ? result : [result];
+
+      // Only the still-active thread is deleted; the archived one survives.
+      expect(events.map((event) => event.type)).toEqual(["thread.deleted", "project.deleted"]);
+      const deleted = events.find((event) => event.type === "thread.deleted");
+      expect(deleted?.aggregateId).toBe(asThreadId("thread-delete-1"));
+    }),
+  );
+
+  it.effect("a project holding only archived threads is removable without force", () =>
+    Effect.gen(function* () {
+      const seeded = yield* seedReadModel;
+      const archivedOne = yield* archiveThread(seeded, "thread-delete-1", 100);
+      const readModel = yield* archiveThread(archivedOne, "thread-delete-2", 101);
+
+      // Archived threads are not blockers once they are being retained, so this
+      // no longer trips the "project is not empty" guard.
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "project.delete",
+          commandId: asCommandId("cmd-project-delete-archived-only"),
+          projectId: asProjectId("project-delete"),
+          retainArchivedThreads: true,
+        },
+        readModel,
+      });
+      const events = Array.isArray(result) ? result : [result];
+
+      expect(events.map((event) => event.type)).toEqual(["project.deleted"]);
+    }),
+  );
+
+  it.effect("archived threads still block and cascade when they are not retained", () =>
+    Effect.gen(function* () {
+      const seeded = yield* seedReadModel;
+      const archivedOne = yield* archiveThread(seeded, "thread-delete-1", 100);
+      const readModel = yield* archiveThread(archivedOne, "thread-delete-2", 101);
+
+      const error = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: {
+            type: "project.delete",
+            commandId: asCommandId("cmd-project-delete-archived-no-force"),
+            projectId: asProjectId("project-delete"),
+          },
+          readModel,
+        }),
+      );
+      expect(error.message).toContain("cannot be deleted without force=true");
+
+      const forced = yield* decideOrchestrationCommand({
+        command: {
+          type: "project.delete",
+          commandId: asCommandId("cmd-project-delete-archived-force"),
+          projectId: asProjectId("project-delete"),
+          force: true,
+        },
+        readModel,
+      });
+      const forcedEvents = Array.isArray(forced) ? forced : [forced];
+      expect(forcedEvents.map((event) => event.type)).toEqual([
+        "thread.deleted",
+        "thread.deleted",
+        "project.deleted",
+      ]);
     }),
   );
 });

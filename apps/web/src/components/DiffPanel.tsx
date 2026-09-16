@@ -443,8 +443,12 @@ export default function DiffPanel({
     ? `${workspaceThreadRef.environmentId}:${workspaceThreadRef.threadId}:${reviewSectionId}`
     : null;
   const viewedScopeId =
-    selectedTurn !== undefined
-      ? reviewSectionId
+    // Key off the selection, not the resolved summary: while a selected turn is
+    // still loading (a sibling chat's turns, or a fresh navigation) selectedTurn
+    // is briefly undefined, and borrowing the working-tree scope here lets the
+    // reconcile effect run against it and wipe its marks.
+    selectedTurnId !== null
+      ? `turn:${selectedTurnId}`
       : selectedGitScope === "unstaged"
         ? "unstaged"
         : "branch-and-working-tree";
@@ -664,7 +668,9 @@ export default function DiffPanel({
     );
   }, [renderablePatch]);
   const sharedGitViewedSignatures = useMemo(() => {
-    if (selectedTurn !== undefined || selectedGitScope === "unstaged") return null;
+    // Match viewedScopeId: a selected turn (even one still resolving) never uses
+    // the shared working-tree/branch signatures.
+    if (selectedTurnId !== null || selectedGitScope === "unstaged") return null;
     const signaturesByKind = new Map<ReviewDiffPreviewSourceKind, Map<string, string>>();
     for (const kind of ["branch-range", "working-tree-all"] as const) {
       const source = branchDiffPreview.data?.sources.find((candidate) => candidate.kind === kind);
@@ -687,7 +693,7 @@ export default function DiffPanel({
         `${branchSignatures.get(path) ?? ""}:${workingTreeSignatures.get(path) ?? ""}`,
       ]),
     );
-  }, [branchDiffPreview.data?.sources, selectedGitScope, selectedTurn]);
+  }, [branchDiffPreview.data?.sources, selectedGitScope, selectedTurnId]);
   const codeViewFiles = useMemo(
     () =>
       renderableFiles.map((fileDiff) => {

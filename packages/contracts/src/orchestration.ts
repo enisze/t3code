@@ -657,6 +657,10 @@ export const OrchestrationProjectShell = Schema.Struct({
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  // Only ever set on the archived snapshot, which still lists a removed project
+  // so its retained archived threads keep somewhere to hang. Optional so older
+  // cached snapshots (and the many shells built without it) still decode.
+  deletedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
 });
 export type OrchestrationProjectShell = typeof OrchestrationProjectShell.Type;
 
@@ -897,6 +901,12 @@ const ProjectDeleteCommand = Schema.Struct({
   commandId: CommandId,
   projectId: ProjectId,
   force: Schema.optional(Schema.Boolean),
+  /**
+   * Leave archived threads behind instead of cascading the delete over them.
+   * They stay listed on the Archived page under the now-removed project, so
+   * removing a project is not a one-way door for work already put away.
+   */
+  retainArchivedThreads: Schema.optional(Schema.Boolean),
 });
 
 const ThreadCreateCommand = Schema.Struct({
