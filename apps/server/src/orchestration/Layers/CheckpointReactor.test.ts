@@ -1206,6 +1206,63 @@ describe("CheckpointReactor", () => {
     ).toBe(true);
   });
 
+  effectIt.effect("does not attribute changes made between turns to the next turn", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({ seedFilesystemCheckpoints: false }),
+      );
+      const threadId = ThreadId.make("thread-1");
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      const emit = (type: "turn.started" | "turn.completed", turn: number) =>
+        harness.provider.emit({
+          type,
+          eventId: EventId.make(`${type}-${turn}`),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt,
+          threadId,
+          turnId: asTurnId(`turn-${turn}`),
+          ...(type === "turn.completed" ? { payload: { state: "completed" } } : {}),
+        });
+
+      emit("turn.started", 1);
+      yield* Effect.promise(harness.drain);
+      NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "v2\n");
+      emit("turn.completed", 1);
+      yield* Effect.promise(harness.drain);
+
+      // Another thread or the user edits the workspace before the next turn.
+      NodeFS.writeFileSync(NodePath.join(harness.cwd, "external.txt"), "external\n");
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-2"),
+        threadId,
+        message: {
+          messageId: MessageId.make("message-turn-2"),
+          role: "user",
+          text: "continue",
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt,
+      });
+      yield* Effect.promise(harness.drain);
+      emit("turn.started", 2);
+      yield* Effect.promise(harness.drain);
+      NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "v3\n");
+      emit("turn.completed", 2);
+      yield* Effect.promise(harness.drain);
+
+      const thread = (yield* Effect.promise(harness.readModel)).threads[0];
+      expect(
+        thread?.checkpoints
+          .find((checkpoint) => checkpoint.checkpointTurnCount === 2)
+          ?.files.map((file) => file.path),
+      ).toEqual(["README.md"]);
+    }),
+  );
+
   effectIt.effect("captures a checkpoint without a summary when the baseline is missing", () =>
     Effect.gen(function* () {
       const harness = yield* Effect.promise(() =>

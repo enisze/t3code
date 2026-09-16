@@ -23,6 +23,7 @@ import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 
 import { parseTurnDiffFilesFromNumstat } from "../../checkpointing/Diffs.ts";
 import {
+  checkpointBaseRefForThreadTurn,
   checkpointRefForThreadTurn,
   resolveThreadWorkspaceCwd,
 } from "../../checkpointing/Utils.ts";
@@ -234,13 +235,24 @@ const make = Effect.gen(function* () {
     readonly createdAt: string;
   }) {
     const fromTurnCount = Math.max(0, input.turnCount - 1);
-    const fromCheckpointRef = checkpointRefForThreadTurn(input.threadId, fromTurnCount);
     const targetCheckpointRef = checkpointRefForThreadTurn(input.threadId, input.turnCount);
+    const baseCheckpointRef = checkpointBaseRefForThreadTurn(input.threadId, input.turnCount);
+    const baseCheckpointExists =
+      fromTurnCount > 0 &&
+      (yield* checkpointStore.hasCheckpointRef({
+        cwd: input.cwd,
+        checkpointRef: baseCheckpointRef,
+      }));
+    const fromCheckpointRef = baseCheckpointExists
+      ? baseCheckpointRef
+      : checkpointRefForThreadTurn(input.threadId, fromTurnCount);
 
-    const fromCheckpointExists = yield* checkpointStore.hasCheckpointRef({
-      cwd: input.cwd,
-      checkpointRef: fromCheckpointRef,
-    });
+    const fromCheckpointExists =
+      baseCheckpointExists ||
+      (yield* checkpointStore.hasCheckpointRef({
+        cwd: input.cwd,
+        checkpointRef: fromCheckpointRef,
+      }));
     if (!fromCheckpointExists) {
       yield* Effect.logWarning("checkpoint capture missing pre-turn baseline", {
         threadId: input.threadId,
@@ -425,6 +437,56 @@ const make = Effect.gen(function* () {
     },
   );
 
+  // Snapshot the workspace a starting turn is diffed against. The first turn
+  // diffs from `turn/0`. Later turns diff from a base ref taken at their start,
+  // because the previous turn's completion snapshot misses anything that
+  // changed in between (other threads, the user, merges).
+  const capturePreTurnBaseline = Effect.fn("capturePreTurnBaseline")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly thread: { readonly checkpoints: ReadonlyArray<{ checkpointTurnCount: number }> };
+    readonly cwd: string;
+    readonly base: "refresh" | "if-missing" | "skip";
+    readonly createdAt: string;
+  }) {
+    const currentTurnCount = input.thread.checkpoints.reduce(
+      (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
+      0,
+    );
+    const baselineCheckpointRef = checkpointRefForThreadTurn(input.threadId, currentTurnCount);
+    const baselineExists = yield* checkpointStore.hasCheckpointRef({
+      cwd: input.cwd,
+      checkpointRef: baselineCheckpointRef,
+    });
+    if (!baselineExists) {
+      yield* checkpointStore.captureCheckpoint({
+        cwd: input.cwd,
+        checkpointRef: baselineCheckpointRef,
+      });
+      yield* receiptBus.publish({
+        type: "checkpoint.baseline.captured",
+        threadId: input.threadId,
+        checkpointTurnCount: currentTurnCount,
+        checkpointRef: baselineCheckpointRef,
+        createdAt: input.createdAt,
+      });
+    }
+
+    if (currentTurnCount === 0 || input.base === "skip") {
+      return;
+    }
+    const baseCheckpointRef = checkpointBaseRefForThreadTurn(input.threadId, currentTurnCount + 1);
+    if (
+      input.base === "if-missing" &&
+      (yield* checkpointStore.hasCheckpointRef({
+        cwd: input.cwd,
+        checkpointRef: baseCheckpointRef,
+      }))
+    ) {
+      return;
+    }
+    yield* checkpointStore.captureCheckpoint({ cwd: input.cwd, checkpointRef: baseCheckpointRef });
+  });
+
   const ensurePreTurnBaselineFromTurnStart = Effect.fn("ensurePreTurnBaselineFromTurnStart")(
     function* (event: Extract<ProviderRuntimeEvent, { type: "turn.started" }>) {
       const turnId = toTurnId(event.turnId);
@@ -463,28 +525,11 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      const currentTurnCount = thread.checkpoints.reduce(
-        (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
-        0,
-      );
-      const baselineCheckpointRef = checkpointRefForThreadTurn(thread.id, currentTurnCount);
-      const baselineExists = yield* checkpointStore.hasCheckpointRef({
-        cwd: checkpointCwd,
-        checkpointRef: baselineCheckpointRef,
-      });
-      if (baselineExists) {
-        return;
-      }
-
-      yield* checkpointStore.captureCheckpoint({
-        cwd: checkpointCwd,
-        checkpointRef: baselineCheckpointRef,
-      });
-      yield* receiptBus.publish({
-        type: "checkpoint.baseline.captured",
+      yield* capturePreTurnBaseline({
         threadId: thread.id,
-        checkpointTurnCount: currentTurnCount,
-        checkpointRef: baselineCheckpointRef,
+        thread,
+        cwd: checkpointCwd,
+        base: "if-missing",
         createdAt: event.createdAt,
       });
     },
@@ -685,28 +730,17 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const currentTurnCount = thread.checkpoints.reduce(
-      (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
-      0,
-    );
-    const baselineCheckpointRef = checkpointRefForThreadTurn(threadId, currentTurnCount);
-    const baselineExists = yield* checkpointStore.hasCheckpointRef({
-      cwd: checkpointCwd,
-      checkpointRef: baselineCheckpointRef,
-    });
-    if (baselineExists) {
-      return;
-    }
-
-    yield* checkpointStore.captureCheckpoint({
-      cwd: checkpointCwd,
-      checkpointRef: baselineCheckpointRef,
-    });
-    yield* receiptBus.publish({
-      type: "checkpoint.baseline.captured",
+    yield* capturePreTurnBaseline({
       threadId,
-      checkpointTurnCount: currentTurnCount,
-      checkpointRef: baselineCheckpointRef,
+      thread,
+      cwd: checkpointCwd,
+      // A requested turn re-snapshots its base so work done since the last turn
+      // is not counted as this turn's. Messages sent while a turn is running
+      // must not move that turn's base.
+      base:
+        event.type === "thread.turn-start-requested" && !thread.session?.activeTurnId
+          ? "refresh"
+          : "skip",
       createdAt: event.occurredAt,
     });
   });
@@ -811,7 +845,10 @@ const make = Effect.gen(function* () {
     const staleCheckpointRefs: Array<CheckpointRef> = [];
     for (const checkpoint of thread.checkpoints) {
       if (checkpoint.checkpointTurnCount > event.payload.turnCount) {
-        staleCheckpointRefs.push(checkpoint.checkpointRef);
+        staleCheckpointRefs.push(
+          checkpoint.checkpointRef,
+          checkpointBaseRefForThreadTurn(event.payload.threadId, checkpoint.checkpointTurnCount),
+        );
       }
     }
 
