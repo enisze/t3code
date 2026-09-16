@@ -2393,6 +2393,9 @@ export function ArchivedThreadsPanel() {
                 environmentId,
                 name: project.title,
                 cwd: project.workspaceRoot,
+                // Set when the project was removed but its archived chats were
+                // kept, so the group can say where these threads came from.
+                removed: (project.deletedAt ?? null) !== null,
               },
             ] as const,
         ),
@@ -2510,6 +2513,13 @@ export function ArchivedThreadsPanel() {
           <SettingsSection
             key={project.id}
             title={project.name}
+            headerAction={
+              project.removed ? (
+                <span className="shrink-0 rounded-full border border-border/60 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Project removed
+                </span>
+              ) : undefined
+            }
             icon={
               <ProjectFavicon
                 environmentId={project.environmentId}

@@ -3252,17 +3252,25 @@ function ChatViewContent(props: ChatViewProps) {
     primaryServerSettings.reviewPrompt,
   ]);
   const startConflictResolutionInNewChat = useCallback(() => {
-    if (!activeProjectRef || !newChatWorktreePath || !activeThread) return;
+    if (!activeProjectRef || !activeProject) return;
+    // Conflicts are usually noticed right after picking a worktree, before it
+    // has any chat, so this must not require an existing thread: fall back to
+    // the project's default model, and target whichever checkout the Git
+    // actions are already reporting on — the worktree when one is in scope,
+    // otherwise the project's own checkout.
+    const conflictModelSelection =
+      activeThread?.modelSelection ?? activeProject.defaultModelSelection;
     void handleNewThread(activeProjectRef, {
       branch: newChatWorktreeBranch,
       worktreePath: newChatWorktreePath,
-      envMode: "worktree",
+      envMode: newChatWorktreePath ? "worktree" : "local",
       forceNew: true,
       initialPrompt: primaryServerSettings.resolvePrompt,
-      modelSelection: activeThread.modelSelection,
+      ...(conflictModelSelection ? { modelSelection: conflictModelSelection } : {}),
       autoSubmitInitialPrompt: true,
     });
   }, [
+    activeProject,
     activeProjectRef,
     activeThread,
     handleNewThread,

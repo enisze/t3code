@@ -396,6 +396,7 @@ function mapProjectShellRow(
     scripts: row.scripts,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    deletedAt: row.deletedAt,
   };
 }
 
@@ -2595,8 +2596,11 @@ pending_approval_requests AS (
 
             const snapshot = {
               snapshotSequence: computeSnapshotSequence(stateRows),
+              // A removed project is still listed here when it kept archived
+              // threads, so those threads stay grouped and reachable instead of
+              // becoming invisible orphans. `deletedAt` lets the UI mark it.
               projects: Arr.filterMap(projectRows, (row) =>
-                row.deletedAt === null && activeProjectIds.has(row.projectId)
+                activeProjectIds.has(row.projectId)
                   ? Result.succeed(
                       mapProjectShellRow(row, repositoryIdentities.get(row.projectId) ?? null),
                     )

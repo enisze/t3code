@@ -18,6 +18,7 @@ import { ProjectScriptsField } from "../ProjectScriptsField";
 import { ProjectWorktreeCopyFilesField } from "../ProjectWorktreeCopyFilesField";
 import { Input } from "../ui/input";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { RemoveProjectSection } from "./RemoveProjectSection";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -275,6 +276,7 @@ export function ProjectSettingsPanel(props: {
           </label>
         </div>
       </SettingsSection>
+      <RemoveProjectSection environmentId={environmentId} projectId={projectId} project={project} />
     </SettingsPageContainer>
   );
 }

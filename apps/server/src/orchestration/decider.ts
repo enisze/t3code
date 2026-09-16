@@ -307,20 +307,27 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         projectId: command.projectId,
       });
-      const activeThreads = listThreadsByProjectId(readModel, command.projectId).filter(
+      // `retainArchivedThreads` keeps threads the user already put away: they
+      // are neither counted as blockers nor cascaded over, so the project can
+      // be removed while its archived work survives on the Archived page.
+      const liveThreads = listThreadsByProjectId(readModel, command.projectId).filter(
         (thread) => thread.deletedAt === null,
       );
-      if (activeThreads.length > 0 && command.force !== true) {
+      const cascadeThreads =
+        command.retainArchivedThreads === true
+          ? liveThreads.filter((thread) => thread.archivedAt === null)
+          : liveThreads;
+      if (cascadeThreads.length > 0 && command.force !== true) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: `Project '${command.projectId}' is not empty and cannot be deleted without force=true.`,
         });
       }
-      if (activeThreads.length > 0) {
+      if (cascadeThreads.length > 0) {
         return yield* decideCommandSequence({
           readModel,
           commands: [
-            ...activeThreads.map(
+            ...cascadeThreads.map(
               (thread): Extract<OrchestrationCommand, { type: "thread.delete" }> => ({
                 type: "thread.delete",
                 commandId: command.commandId,
@@ -331,6 +338,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
               type: "project.delete",
               commandId: command.commandId,
               projectId: command.projectId,
+              ...(command.retainArchivedThreads === true ? { retainArchivedThreads: true } : {}),
             },
           ],
         });
