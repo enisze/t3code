@@ -23,6 +23,15 @@ describe("workspaceContentTabsStore", () => {
     expect(tabs().activeTabId).toBe("src/index.ts");
   });
 
+  it("opens PDFs and images from the diff in the file viewer", () => {
+    useWorkspaceContentTabsStore.getState().openFileDiff(KEY, "docs/spec.PDF");
+    expect(tabs().tabs).toEqual([{ id: "docs/spec.PDF", filePath: "docs/spec.PDF", view: "file" }]);
+    useWorkspaceContentTabsStore.getState().openFileDiff(KEY, "assets/logo.png");
+    expect(tabs().tabs).toEqual([
+      { id: "assets/logo.png", filePath: "assets/logo.png", view: "file" },
+    ]);
+  });
+
   it("opens a file viewer and activates it", () => {
     useWorkspaceContentTabsStore.getState().openFile(KEY, "src/index.ts");
     expect(tabs().tabs).toEqual([{ id: "src/index.ts", filePath: "src/index.ts", view: "file" }]);

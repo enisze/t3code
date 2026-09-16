@@ -11,6 +11,10 @@
  * visible while switching between chats in the same worktree.
  * `activeTabId === null` means the chat conversation is shown.
  */
+import {
+  isWorkspaceImagePreviewPath,
+  isWorkspacePdfPreviewPath,
+} from "@t3tools/shared/filePreview";
 import { create } from "zustand";
 
 /** Which view the content viewer renders. */
@@ -146,7 +150,17 @@ const openFileViewer = (
 export const useWorkspaceContentTabsStore = create<WorkspaceContentTabsStore>()((set) => ({
   byWorktree: {},
   closedByWorktree: {},
-  openFileDiff: (worktreeKey, filePath) => openFileViewer(set, worktreeKey, filePath, "diff"),
+  // PDFs and images have no textual diff; land on the file view so the inline
+  // viewer renders instead of a raw-bytes patch.
+  openFileDiff: (worktreeKey, filePath) =>
+    openFileViewer(
+      set,
+      worktreeKey,
+      filePath,
+      isWorkspacePdfPreviewPath(filePath) || isWorkspaceImagePreviewPath(filePath)
+        ? "file"
+        : "diff",
+    ),
   openFile: (worktreeKey, filePath) => openFileViewer(set, worktreeKey, filePath, "file"),
   openPreview: (worktreeKey, previewTabId) =>
     set((state) => ({
