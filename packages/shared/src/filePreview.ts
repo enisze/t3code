@@ -89,6 +89,10 @@ export function isWorkspaceBrowserPreviewPath(path: string): boolean {
   return hasPreviewExtension(path, WORKSPACE_BROWSER_PREVIEW_EXTENSIONS);
 }
 
+export function isWorkspacePdfPreviewPath(path: string): boolean {
+  return hasPreviewExtension(path, [".pdf"]);
+}
+
 export function isWorkspaceImagePreviewPath(path: string): boolean {
   return hasPreviewExtension(path, WORKSPACE_IMAGE_PREVIEW_EXTENSIONS);
 }
