@@ -87,7 +87,11 @@ import {
   isLatestTurnSettled,
 } from "../session-logic";
 import { type LegendListRef } from "@legendapp/list/react";
-import { timelineContentOverflowsViewport, type TimelineScrollMode } from "./chat/timelineScroll";
+import {
+  resolveTimelineLiveFollow,
+  timelineContentOverflowsViewport,
+  type TimelineScrollMode,
+} from "./chat/timelineScroll";
 import {
   buildPendingUserInputAnswers,
   derivePendingUserInputProgress,
@@ -3763,13 +3767,6 @@ function ChatViewContent(props: ChatViewProps) {
     timelineScrollModeRef.current = "free-scrolling";
     liveFollowUserScrollGenerationRef.current = null;
   }, []);
-  const cancelTimelineLiveFollowForUserNavigationRef = useRef(
-    cancelTimelineLiveFollowForUserNavigation,
-  );
-  useEffect(() => {
-    cancelTimelineLiveFollowForUserNavigationRef.current =
-      cancelTimelineLiveFollowForUserNavigation;
-  }, [cancelTimelineLiveFollowForUserNavigation]);
   const timelineRealContentOverflowsViewport = useCallback(
     (list?: LegendListRef | null) => {
       const state = (list ?? legendListRef.current)?.getState();
@@ -3793,54 +3790,26 @@ function ChatViewContent(props: ChatViewProps) {
     setShowScrollToBottom(false);
     void legendListRef.current?.scrollToEnd?.({ animated });
   }, []);
-  useEffect(() => {
-    let removeListeners: (() => void) | null = null;
-    const frame = requestAnimationFrame(() => {
-      const scrollNode = legendListRef.current?.getScrollableNode();
-      if (!scrollNode) {
-        return;
-      }
-      const handleManualNavigation = () => {
-        cancelTimelineLiveFollowForUserNavigationRef.current();
-      };
-      scrollNode.addEventListener("wheel", handleManualNavigation, {
-        passive: true,
-      });
-      scrollNode.addEventListener("touchmove", handleManualNavigation, {
-        passive: true,
-      });
-      scrollNode.addEventListener("pointerdown", handleManualNavigation, {
-        passive: true,
-      });
-      removeListeners = () => {
-        scrollNode.removeEventListener("wheel", handleManualNavigation);
-        scrollNode.removeEventListener("touchmove", handleManualNavigation);
-        scrollNode.removeEventListener("pointerdown", handleManualNavigation);
-      };
-    });
-
-    return () => {
-      cancelAnimationFrame(frame);
-      removeListeners?.();
-    };
-  }, [activeThread?.id]);
-
   const onIsAtEndChange = useCallback((isAtEnd: boolean) => {
-    if (!isAtEnd && liveFollowUserScrollGenerationRef.current === userScrollGenerationRef.current) {
-      showScrollDebouncer.current.cancel();
-      setShowScrollToBottom(false);
-      return;
-    }
-    if (isAtEndRef.current === isAtEnd) return;
+    const { mode, pill } = resolveTimelineLiveFollow({
+      armed: liveFollowUserScrollGenerationRef.current === userScrollGenerationRef.current,
+      isAtEnd,
+      wasAtEnd: isAtEndRef.current,
+    });
     isAtEndRef.current = isAtEnd;
-    if (isAtEnd) {
-      timelineScrollModeRef.current = "following-end";
+
+    if (mode === "following-end") {
+      timelineScrollModeRef.current = mode;
       liveFollowUserScrollGenerationRef.current = userScrollGenerationRef.current;
+    } else if (mode === "free-scrolling") {
+      timelineScrollModeRef.current = mode;
+      liveFollowUserScrollGenerationRef.current = null;
+    }
+
+    if (pill === "hide") {
       showScrollDebouncer.current.cancel();
       setShowScrollToBottom(false);
-    } else {
-      timelineScrollModeRef.current = "free-scrolling";
-      liveFollowUserScrollGenerationRef.current = null;
+    } else if (pill === "show") {
       showScrollDebouncer.current.maybeExecute();
     }
   }, []);

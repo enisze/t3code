@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import { getRowBottom, timelineContentOverflowsViewport } from "./timelineScroll";
+import {
+  getRowBottom,
+  resolveTimelineLiveFollow,
+  timelineContentOverflowsViewport,
+} from "./timelineScroll";
 
 function buildState({
   positions,
@@ -65,5 +69,35 @@ describe("timeline scroll", () => {
         composerOverlayHeight: 0,
       }),
     ).toBe(false);
+  });
+});
+
+describe("timeline live follow", () => {
+  it("releases the live edge once a user scroll leaves it", () => {
+    expect(resolveTimelineLiveFollow({ armed: false, isAtEnd: false, wasAtEnd: true })).toEqual({
+      mode: "free-scrolling",
+      pill: "show",
+    });
+  });
+
+  it("stays released while the user reads further up", () => {
+    expect(resolveTimelineLiveFollow({ armed: false, isAtEnd: false, wasAtEnd: false })).toEqual({
+      mode: null,
+      pill: "keep",
+    });
+  });
+
+  it("keeps armed follow through content growing past the viewport", () => {
+    expect(resolveTimelineLiveFollow({ armed: true, isAtEnd: false, wasAtEnd: true })).toEqual({
+      mode: null,
+      pill: "hide",
+    });
+  });
+
+  it("re-follows at the live edge even when the edge never left the viewport", () => {
+    expect(resolveTimelineLiveFollow({ armed: false, isAtEnd: true, wasAtEnd: true })).toEqual({
+      mode: "following-end",
+      pill: "hide",
+    });
   });
 });

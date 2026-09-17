@@ -53,3 +53,35 @@ export function timelineContentOverflowsViewport({
   );
   return contentBottom > visibleScrollLength;
 }
+
+// Live follow is "armed" whenever the timeline should chase the live edge. It
+// is armed on send, thread open and the scroll-to-end pill, and disarmed by the
+// first user scroll gesture — so an armed report that the edge left the
+// viewport is the content growing, not the user walking away from it.
+export interface TimelineLiveFollowInput {
+  readonly armed: boolean;
+  readonly isAtEnd: boolean;
+  readonly wasAtEnd: boolean;
+}
+
+export interface TimelineLiveFollowOutcome {
+  // null leaves the current mode alone.
+  readonly mode: TimelineScrollMode | null;
+  readonly pill: "hide" | "show" | "keep";
+}
+
+export function resolveTimelineLiveFollow({
+  armed,
+  isAtEnd,
+  wasAtEnd,
+}: TimelineLiveFollowInput): TimelineLiveFollowOutcome {
+  // Re-follow on every at-end report, not just the transition: a gesture that
+  // disarmed follow without ever leaving the edge has to be picked back up.
+  if (isAtEnd) {
+    return { mode: "following-end", pill: "hide" };
+  }
+  if (armed) {
+    return { mode: null, pill: "hide" };
+  }
+  return wasAtEnd ? { mode: "free-scrolling", pill: "show" } : { mode: null, pill: "keep" };
+}
