@@ -328,7 +328,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("1 changed file");
   });
 
-  it("uses LegendList isNearEnd when deciding whether the live edge is visible", async () => {
+  it("uses LegendList isAtEnd when deciding whether the live edge is visible", async () => {
     const {
       resolveTimelineIsAtEnd,
       resolveTimelineMinimapHasPersistentGutter,
@@ -339,9 +339,11 @@ describe("MessagesTimeline", () => {
       resolveTimelineMinimapTopPercent,
     } = await import("./MessagesTimeline.logic");
 
-    expect(resolveTimelineIsAtEnd({ isNearEnd: true, isAtEnd: false })).toBe(true);
-    expect(resolveTimelineIsAtEnd({ isNearEnd: false, isAtEnd: true })).toBe(false);
-    expect(resolveTimelineIsAtEnd({ isAtEnd: true })).toBe(true);
+    // isNearEnd spans the bottom half of the viewport, so a deliberate scroll-up
+    // must not read as sitting at the live edge.
+    expect(resolveTimelineIsAtEnd({ isNearEnd: true, isAtEnd: false })).toBe(false);
+    expect(resolveTimelineIsAtEnd({ isNearEnd: false, isAtEnd: true })).toBe(true);
+    expect(resolveTimelineIsAtEnd({ isNearEnd: true })).toBe(true);
     expect(resolveTimelineIsAtEnd(undefined)).toBeUndefined();
 
     expect(resolveTimelineMinimapHeightStyle(5)).toBe("min(32px, calc(100vh - 18rem))");

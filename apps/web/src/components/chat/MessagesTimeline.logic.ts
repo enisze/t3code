@@ -30,8 +30,13 @@ export interface TimelineEndState {
   readonly isNearEnd?: boolean;
 }
 
+// LegendList reports isNearEnd for the whole bottom half of the viewport, which
+// is far too generous for "the user is parked at the live edge": scrolling up a
+// few hundred pixels still reads as at-end and re-arms live follow. isAtEnd
+// already subtracts the composer inset, so it stays true across the overlay
+// strip without treating a deliberate scroll-up as sitting at the bottom.
 export function resolveTimelineIsAtEnd(state: TimelineEndState | undefined): boolean | undefined {
-  return state?.isNearEnd ?? state?.isAtEnd;
+  return state?.isAtEnd ?? state?.isNearEnd;
 }
 
 export function resolveTimelineMinimapHeightStyle(itemCount: number): string {

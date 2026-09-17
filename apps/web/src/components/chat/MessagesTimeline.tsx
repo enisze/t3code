@@ -484,7 +484,17 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   return (
     <TimelineRowCtx value={sharedState}>
       <TimelineRowActivityCtx value={activityState}>
-        <div ref={setTimelineViewportElement} className="relative h-full min-h-0">
+        {/* Any scroll gesture over the timeline opts out of live follow. These
+            live on the wrapper rather than the scroll node so they exist from
+            the first render of the list, including the one that mounts it after
+            the first message of an empty thread. */}
+        <div
+          ref={setTimelineViewportElement}
+          className="relative h-full min-h-0"
+          onWheel={onManualNavigation}
+          onTouchMove={onManualNavigation}
+          onPointerDown={onManualNavigation}
+        >
           <LegendList<MessagesTimelineRow>
             ref={listRef}
             data={rows}
