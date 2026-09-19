@@ -101,6 +101,32 @@ describe("resolveProviderUsage", () => {
       }),
     ).toBe(legacyUsage);
   });
+
+  it("keeps the retained limits visible after a provider status timeout", () => {
+    expect(
+      resolveProviderUsage({
+        ...provider,
+        status: "error",
+        timedOut: true,
+        usageLimits: {
+          checkedAt: "2026-09-08T10:05:00.000Z",
+          windows: [
+            {
+              id: "five_hour",
+              kind: "session",
+              label: "Session",
+              usedPercent: 34,
+              resetsAt: "2026-09-08T15:00:00.000Z",
+              windowDurationMins: 300,
+            },
+          ],
+        },
+      }),
+    ).toMatchObject({
+      fetchedAt: "2026-09-08T10:05:00.000Z",
+      windows: [{ label: "Session", usedPercent: 34 }],
+    });
+  });
 });
 
 describe("prioritizeActiveProvider", () => {

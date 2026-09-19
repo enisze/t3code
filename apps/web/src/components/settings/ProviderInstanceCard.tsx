@@ -44,6 +44,7 @@ import type { DriverOption } from "./providerDriverMeta";
 import { ProviderSettingsForm } from "./ProviderSettingsForm";
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderUsageMeters } from "./ProviderUsageSection";
+import { resolveProviderUsage } from "./providerUsage";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
@@ -422,6 +423,9 @@ export function ProviderInstanceCard({
   const summary = rawSummary;
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
   const versionAdvisory = getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
+  // A failed or timed-out status probe may omit the legacy account-usage
+  // payload while the server keeps the last known rate-limit snapshot.
+  const providerUsage = liveProvider ? resolveProviderUsage(liveProvider) : null;
   const updateCommand = versionAdvisory?.updateCommand ?? null;
   const FallbackIconComponent = driverOption?.icon;
   const displayName =
@@ -817,10 +821,10 @@ export function ProviderInstanceCard({
       <Collapsible open={isExpanded} onOpenChange={onExpandedChange}>
         <CollapsibleContent>
           <div className="space-y-5 px-3 pb-4 pt-2 sm:px-4">
-            {liveProvider?.usage ? (
+            {providerUsage ? (
               <div>
                 <span className="text-xs font-medium text-foreground">Usage limits</span>
-                <ProviderUsageMeters usage={liveProvider.usage} className="mt-2" />
+                <ProviderUsageMeters usage={providerUsage} className="mt-2" />
                 <span className="mt-1.5 block text-xs text-muted-foreground">
                   Refreshed when provider status is checked. Use “Refresh providers” to update.
                 </span>
