@@ -487,13 +487,13 @@ export function firstValidTimestamp(
 // Keep the chats users touched most recently at the top of each project. The
 // project grouping step preserves this incoming order within every section.
 //
-// `worktreeLastActivityAtByKey` folds a locally-recorded worktree interaction
-// (e.g. closing a chat) into each chat's effective sort time. A worktree row is
-// positioned by its newest surviving chat — collapsing keeps the group at that
-// chat's slot — so closing the newest chat would otherwise sink the row to an
-// older sibling's timestamp even though closing is a recent interaction. Taking
-// the max of the chat's own time and its worktree's recorded activity keeps the
-// row in place. Callers that omit the map keep the plain activity sort.
+// `worktreeLastActivityAtByKey` folds a locally-recorded worktree sort time
+// (the sort time of a chat closed from its tab bar) into each chat's effective
+// sort time. A worktree row is positioned by its newest surviving chat —
+// collapsing keeps the group at that chat's slot — so closing the newest chat
+// would otherwise sink the row to an older sibling's timestamp. Taking the max
+// of the chat's own time and its worktree's recorded time keeps the row in
+// place. Callers that omit the map keep the plain activity sort.
 export function sortThreadsForSidebarV2<
   T extends {
     readonly id: string;

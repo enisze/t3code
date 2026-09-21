@@ -22,6 +22,7 @@ import { useThreadShells } from "~/state/entities";
 import { buildThreadRouteParams } from "~/threadRoutes";
 import { buildDraftThreadRouteParams } from "~/threadRoutes";
 import { cn } from "~/lib/utils";
+import { getThreadSortTimestamp } from "~/lib/threadSort";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Spinner } from "~/components/ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -184,15 +185,17 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
         if (!confirmed) return;
       }
 
-      // Closing a chat is a fresh interaction with its worktree. Record it so
-      // the collapsed sidebar row keeps its position instead of sinking to a
-      // surviving sibling's older timestamp. See `sortThreadsForSidebarV2`.
-      if (shell.worktreePath !== null) {
+      // Carry the closed chat's sort time over to its worktree so the collapsed
+      // sidebar row stays exactly where it was: it neither sinks to a surviving
+      // sibling's older timestamp nor jumps to the top as if it had new
+      // activity. See `sortThreadsForSidebarV2`.
+      const closedSortMs = getThreadSortTimestamp(shell, "updated_at");
+      if (shell.worktreePath !== null && Number.isFinite(closedSortMs)) {
         useUiStateStore
           .getState()
           .markWorktreeActive(
             worktreeActivityKey(shell.environmentId, shell.worktreePath),
-            new Date().toISOString(),
+            new Date(closedSortMs).toISOString(),
           );
       }
 
