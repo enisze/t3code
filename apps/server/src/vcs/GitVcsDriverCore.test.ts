@@ -21,9 +21,11 @@ import { GitCommandError, type ReviewDiffFileContentsInput } from "@t3tools/cont
 import { ServerConfig } from "../config.ts";
 import { GitHubAccountResolver } from "../sourceControl/GitHubAccountResolver.ts";
 import {
+  COMMIT_BODY_WRAP_COLUMNS,
   describeGitRemoteRejection,
   makeGitVcsDriverCore,
   splitNullSeparatedGitStdoutPaths,
+  wrapCommitBody,
 } from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 
@@ -842,6 +844,54 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
     it.effect("leaves unrecognized git failures to git's own output", () =>
       Effect.sync(() => {
         assert.strictEqual(describeGitRemoteRejection("fatal: could not read from remote"), null);
+      }),
+    );
+
+    it.effect("wraps over-long commit body bullets so line-length hooks accept them", () =>
+      Effect.sync(() => {
+        const body = wrapCommitBody(
+          "- After a fresh /chat mount's first turn finishes, rewrite the URL to /chat/<id> with history.replaceState instead of router.replace, so the view stays mounted and the loading skeleton no longer flashes\n" +
+            "- Share buildConversationView between the /chat/[id] page and the client handoff",
+        );
+
+        for (const line of body.split("\n")) {
+          assert.isAtMost(line.length, COMMIT_BODY_WRAP_COLUMNS);
+        }
+        assert.strictEqual(
+          body.replace(/\s+/g, " "),
+          "- After a fresh /chat mount's first turn finishes, rewrite the URL to /chat/<id> with history.replaceState instead of router.replace, so the view stays mounted and the loading skeleton no longer flashes - Share buildConversationView between the /chat/[id] page and the client handoff",
+        );
+        assert.isTrue(
+          body.split("\n").every((line) => line.startsWith("- ") || line.startsWith("  ")),
+          `continuation lines should stay indented under their bullet:\n${body}`,
+        );
+      }),
+    );
+
+    it.effect("keeps trailers, fenced code, and unbreakable words on one line", () =>
+      Effect.sync(() => {
+        const fenced =
+          "```\nrun the very long reproduction command with every single flag spelled out here\n```";
+        const url =
+          "https://example.com/a/very/long/url/that/cannot/be/broken/across/lines/at/all/ever/okay";
+        const trailer =
+          "Co-Authored-By: Someone With A Rather Long Display Name <someone@example.com>";
+        const body = wrapCommitBody(`${fenced}\n\n${url}\n\n${trailer}`);
+
+        assert.strictEqual(body, `${fenced}\n\n${url}\n\n${trailer}`);
+      }),
+    );
+
+    it.effect("wraps a long line that merely looks like a trailer mid-body", () =>
+      Effect.sync(() => {
+        const body = wrapCommitBody(
+          "Note: this reads like a git trailer but sits above the body's final paragraph, so it still has to obey the line limit\n\nCo-Authored-By: Someone <someone@example.com>",
+        );
+        const lines = body.split("\n");
+
+        assert.isAbove(lines.length, 3);
+        assert.strictEqual(lines.at(-1), "Co-Authored-By: Someone <someone@example.com>");
+        assert.isAtMost(lines[0]?.length ?? 0, COMMIT_BODY_WRAP_COLUMNS);
       }),
     );
 
@@ -2138,6 +2188,43 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(error.operation, "GitVcsDriver.commit.commit");
         // The hook's reason, not just "exited with a non-zero status".
         assert.match(error.detail, /no commits on Fridays/);
+      }),
+    );
+
+    it.effect("satisfies a commit-msg hook that caps body line length", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+
+        // Stands in for commitlint's default `body-max-line-length` of 100.
+        const hookPath = pathService.join(cwd, ".git", "hooks", "commit-msg");
+        yield* fileSystem.writeFileString(
+          hookPath,
+          ["#!/bin/sh", "awk 'length > 100 { exit 1 }' \"$1\"", ""].join("\n"),
+        );
+        yield* fileSystem.chmod(hookPath, 0o755);
+
+        yield* writeTextFile(cwd, "feature.txt", "feature\n");
+        yield* driver.prepareCommitContext(cwd);
+
+        yield* driver.commit(
+          cwd,
+          "fix(chat): hand off first turn in place",
+          "- After a fresh /chat mount's first turn finishes, rewrite the URL to /chat/<id> with history.replaceState instead of router.replace, so the view stays mounted\n" +
+            "\n" +
+            "Co-Authored-By: Someone <someone@example.com>",
+        );
+
+        const message = yield* git(cwd, ["log", "-1", "--pretty=%B"]);
+        assert.include(message, "fix(chat): hand off first turn in place");
+        assert.include(message, "Co-Authored-By: Someone <someone@example.com>");
+        assert.include(
+          message.replace(/\s+/g, " "),
+          "rewrite the URL to /chat/<id> with history.replaceState",
+        );
       }),
     );
   });
