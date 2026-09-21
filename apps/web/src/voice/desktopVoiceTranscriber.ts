@@ -6,6 +6,8 @@ import {
   type VoiceTranscriber,
 } from "@t3tools/client-runtime/voice-input";
 
+import { readRecording } from "./recordingStore.ts";
+
 function toTranscriptionError(result: Extract<DesktopDictationResult, { ok: false }>) {
   return new VoiceTranscriptionError(result.code, result.message);
 }
@@ -36,8 +38,13 @@ export function getLocalVoiceTranscriber(): VoiceTranscriber | null {
         locale: probed.locale,
         transcribe: async (uri, options) => {
           throwIfVoiceTranscriptionAborted(options.signal);
-          const audio = new Uint8Array(await (await fetch(uri)).arrayBuffer());
-          throwIfVoiceTranscriptionAborted(options.signal);
+          const audio = readRecording(uri);
+          if (!audio) {
+            throw new VoiceTranscriptionError(
+              "transcription-failed",
+              "The recording was no longer available.",
+            );
+          }
           const result = await transcribeAudio({ audio, locale: probed.locale });
           throwIfVoiceTranscriptionAborted(options.signal);
           if (!result.ok) throw toTranscriptionError(result);

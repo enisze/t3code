@@ -1,4 +1,4 @@
-import { MicIcon, SquareIcon } from "lucide-react";
+import { MicIcon, MicOffIcon, SquareIcon } from "lucide-react";
 import type { VoiceInputState } from "@t3tools/client-runtime/voice-input";
 
 import { Button } from "../ui/button";
@@ -39,6 +39,7 @@ export function ComposerDictationButton({
 }: ComposerDictationButtonProps) {
   const isRecording = state.phase === "recording";
   const isPending = state.phase === "preparing" || state.phase === "transcribing";
+  const isError = state.phase === "error";
   const label = describe(state);
 
   return (
@@ -55,7 +56,7 @@ export function ComposerDictationButton({
             disabled={disabled || isPending}
             onClick={isRecording ? onStop : onStart}
             className={
-              isRecording
+              isRecording || isError
                 ? "shrink-0 text-destructive hover:text-destructive"
                 : "shrink-0 text-muted-foreground/80 hover:text-foreground"
             }
@@ -66,6 +67,8 @@ export function ComposerDictationButton({
           <Spinner className="size-4" />
         ) : isRecording ? (
           <SquareIcon className="size-4 fill-current" />
+        ) : isError ? (
+          <MicOffIcon className="size-4" />
         ) : (
           <MicIcon className="size-4" />
         )}

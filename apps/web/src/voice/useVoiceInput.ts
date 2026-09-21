@@ -9,6 +9,7 @@ import {
 
 import { BrowserVoiceRecorder } from "./BrowserVoiceRecorder.ts";
 import { getLocalVoiceTranscriber } from "./desktopVoiceTranscriber.ts";
+import { deleteRecording } from "./recordingStore.ts";
 
 const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
 
@@ -57,7 +58,7 @@ export function useVoiceInput(input: {
       requestPermission: () => recorder.requestPermission(),
       configureRecording: () => Promise.resolve(),
       releaseRecording: () => Promise.resolve(),
-      deleteRecording: (uri) => URL.revokeObjectURL(uri),
+      deleteRecording,
       readDraft: (): VoiceDraftSnapshot | null => {
         const current = latestInputRef.current;
         if (!current.ownerKey) return null;
@@ -89,9 +90,14 @@ export function useVoiceInput(input: {
   const stop = useCallback(() => void controller.stop(), [controller]);
   const cancel = useCallback(() => controller.cancel(), [controller]);
 
+  // The controller reports one generic message for everything the recorder
+  // throws, so the recorder's own reason wins when it has one.
+  const detailedError =
+    state.phase === "error" ? (recorderRef.current?.lastFailure ?? state.error) : null;
+
   return {
     isAvailable: getLocalVoiceTranscriber() !== null,
-    state,
+    state: detailedError === null ? state : { ...state, error: detailedError },
     isBusy: voiceInputBlocksSubmission(state),
     freezesEditor: voiceInputFreezesEditor(state),
     blocksSubmission: voiceInputBlocksSubmission(state),

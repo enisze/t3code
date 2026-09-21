@@ -3297,12 +3297,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 </Tooltip>
 
                 {dictation.isAvailable ? (
-                  <ComposerDictationButton
-                    state={dictation.state}
-                    disabled={isConnecting || isComposerApprovalState || projectSelectionRequired}
-                    onStart={dictation.start}
-                    onStop={dictation.stop}
-                  />
+                  <>
+                    <ComposerDictationButton
+                      state={dictation.state}
+                      disabled={isConnecting || isComposerApprovalState || projectSelectionRequired}
+                      onStart={dictation.start}
+                      onStop={dictation.stop}
+                    />
+                    {dictation.state.phase === "error" && dictation.state.error ? (
+                      <span
+                        data-composer-dictation-error="true"
+                        className="min-w-0 shrink truncate text-xs text-destructive"
+                        title={dictation.state.error}
+                      >
+                        {dictation.state.error}
+                      </span>
+                    ) : null}
+                  </>
                 ) : null}
 
                 {isComposerFooterCompact ? (

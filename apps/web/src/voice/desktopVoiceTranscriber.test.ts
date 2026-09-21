@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { VoiceTranscriptionError } from "@t3tools/client-runtime/voice-input";
 
 import { getLocalVoiceTranscriber } from "./desktopVoiceTranscriber.ts";
+import { putRecording } from "./recordingStore.ts";
 
 /** The unit project runs without a DOM, so the host window is stubbed outright. */
 function installBridge(bridge: Record<string, unknown> | undefined) {
@@ -57,15 +58,12 @@ describe("getLocalVoiceTranscriber", () => {
       transcribeAudio,
     });
     const audio = Uint8Array.from([1, 2, 3]);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response(audio)),
-    );
+    const uri = putRecording(audio);
 
     const prepared = await getLocalVoiceTranscriber()!.prepare({
       signal: new AbortController().signal,
     });
-    const transcript = await prepared.transcribe("blob:recording", {
+    const transcript = await prepared.transcribe(uri, {
       signal: new AbortController().signal,
     });
 
@@ -86,9 +84,9 @@ describe("getLocalVoiceTranscriber", () => {
       signal: new AbortController().signal,
     });
     const aborted = AbortSignal.abort();
-    await expect(prepared.transcribe("blob:recording", { signal: aborted })).rejects.toThrow(
-      VoiceTranscriptionError,
-    );
+    await expect(
+      prepared.transcribe(putRecording(new Uint8Array()), { signal: aborted }),
+    ).rejects.toThrow(VoiceTranscriptionError);
     expect(transcribeAudio).not.toHaveBeenCalled();
   });
 });
