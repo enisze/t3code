@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { encodeWav, mixDownToMono } from "./wavEncoding.ts";
+import { encodeWav } from "./wavEncoding.ts";
 
 const readAscii = (view: DataView, offset: number, length: number) =>
   Array.from({ length }, (_, index) => String.fromCharCode(view.getUint8(offset + index))).join("");
@@ -36,19 +36,5 @@ describe("encodeWav", () => {
 
     expect(view.getInt16(44, true)).toBe(32_767);
     expect(view.getInt16(46, true)).toBe(-32_768);
-  });
-});
-
-describe("mixDownToMono", () => {
-  it("returns the single channel untouched", () => {
-    const channel = new Float32Array([0.25, -0.5]);
-    expect(mixDownToMono([channel], 2)).toBe(channel);
-  });
-
-  it("averages a stereo pair so one loud side cannot clip the mix", () => {
-    const left = new Float32Array([1, 0]);
-    const right = new Float32Array([0, -1]);
-
-    expect(Array.from(mixDownToMono([left, right], 2))).toEqual([0.5, -0.5]);
   });
 });

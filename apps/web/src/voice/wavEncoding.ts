@@ -48,22 +48,3 @@ export function encodeWav(samples: Float32Array, sampleRate: number): Uint8Array
 
   return new Uint8Array(buffer);
 }
-
-/** Average the channels so a stereo input device still yields mono. */
-export function mixDownToMono(channels: ReadonlyArray<Float32Array>, length: number): Float32Array {
-  const first = channels[0];
-  if (channels.length === 1 && first) return first;
-
-  const mixed = new Float32Array(length);
-  for (const channel of channels) {
-    for (let index = 0; index < length; index += 1) {
-      mixed[index] = (mixed[index] ?? 0) + (channel[index] ?? 0);
-    }
-  }
-  if (channels.length > 1) {
-    for (let index = 0; index < length; index += 1) {
-      mixed[index] = (mixed[index] ?? 0) / channels.length;
-    }
-  }
-  return mixed;
-}
