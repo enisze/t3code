@@ -80,11 +80,18 @@ Stashes containing uploaded files must be restored in their original environment
 Those files are retained for 24 hours. After an upload expires, restore the prompt
 and use **Attach again** or remove the missing file before sending.
 
-## Voice input on iPhone
+## Voice input
 
-On supported iPhones with iOS 26 or later, use the composer's microphone to record,
-then confirm to transcribe. Text is inserted where your selection was when
-recording started, ready for you to review and edit before sending.
+Use the composer's microphone to record, then stop to transcribe. Text is inserted
+where your selection was when recording started, ready for you to review and edit
+before sending. Sending is held until the transcript lands, so it cannot arrive
+after the message it belongs to.
+
+Voice input needs Apple's on-device speech engine, so the microphone appears on
+supported iPhones with iOS 26 or later, and in the Mac desktop app on macOS 26 or
+later. It is not available in a browser, or on Windows and Linux. The language
+follows your device language; if that language has no speech model, the microphone
+reports that rather than transcribing in the wrong one.
 
 The first use may download Apple's speech model and needs a network connection.
 Later transcription works offline for that language. Recordings can be up to five
@@ -93,6 +100,9 @@ recording and preserves your existing draft.
 
 Transcription runs on your device. T3 Code deletes the temporary audio after
 transcription or cancellation; only the message text is sent when you submit.
+
+macOS asks for microphone permission the first time you record. If you declined
+earlier, re-enable T3 Code under System Settings › Privacy & Security › Microphone.
 
 ## Commands and skills
 
