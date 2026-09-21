@@ -51,10 +51,10 @@ export interface UiProjectState {
 
 export interface UiThreadState {
   threadLastVisitedAtById: Record<string, string>;
-  // Last time the user interacted with a worktree in a way the server-side
-  // thread timestamps don't capture — currently closing one of its chats.
-  // Keyed by `worktreeActivityKey`, it keeps the collapsed worktree row from
-  // sinking when its newest chat is closed. See `sortThreadsForSidebarV2`.
+  // Sort time a worktree keeps after losing chats the server no longer lists —
+  // currently the sort time of a chat closed from its tab bar. Keyed by
+  // `worktreeActivityKey`, it keeps the collapsed worktree row in place when
+  // its newest chat is closed. See `sortThreadsForSidebarV2`.
   worktreeLastActivityAtByKey: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
 }
