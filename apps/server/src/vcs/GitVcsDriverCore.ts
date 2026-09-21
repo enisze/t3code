@@ -475,6 +475,96 @@ export function describeGitRemoteRejection(output: string): string | null {
 }
 
 /**
+ * Git convention wraps commit bodies at 72 columns, which also clears
+ * commitlint's default `body-max-line-length` of 100.
+ */
+export const COMMIT_BODY_WRAP_COLUMNS = 72;
+
+/** `Co-Authored-By: ...`, `Fixes: ...` — a git trailer, which must stay on one line. */
+const COMMIT_TRAILER_PATTERN = /^[A-Za-z][A-Za-z0-9-]*:\s/;
+
+/** Leading whitespace plus an optional `-`/`*`/`1.` list marker. */
+const COMMIT_LIST_MARKER_PATTERN = /^(\s*)([-*+]\s+|\d+[.)]\s+)?/;
+
+/**
+ * Index of the first line of the body's trailing trailer paragraph, or
+ * `lines.length` when the body doesn't end in one. Git only reads trailers from
+ * the last paragraph, and only when every one of its lines is a trailer.
+ */
+function trailerBlockStart(lines: readonly string[]): number {
+  let start = lines.length;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index] ?? "";
+    if (line.trim().length === 0) {
+      break;
+    }
+    if (!COMMIT_TRAILER_PATTERN.test(line)) {
+      return lines.length;
+    }
+    start = index;
+  }
+  return start;
+}
+
+function wrapCommitBodyLine(line: string): string[] {
+  const [, indent = "", marker = ""] = COMMIT_LIST_MARKER_PATTERN.exec(line) ?? [];
+  const continuation = " ".repeat(indent.length + marker.length);
+  const words = line
+    .slice(indent.length + marker.length)
+    .split(/\s+/)
+    .filter((word) => word.length > 0);
+
+  const wrapped: string[] = [];
+  let current = "";
+  for (const word of words) {
+    if (current.length === 0) {
+      current = `${wrapped.length === 0 ? `${indent}${marker}` : continuation}${word}`;
+      continue;
+    }
+    if (current.length + 1 + word.length <= COMMIT_BODY_WRAP_COLUMNS) {
+      current = `${current} ${word}`;
+      continue;
+    }
+    wrapped.push(current);
+    current = `${continuation}${word}`;
+  }
+  if (current.length > 0) {
+    wrapped.push(current);
+  }
+  return wrapped.length > 0 ? wrapped : [line];
+}
+
+/**
+ * Hard-wrap over-long commit body lines at {@link COMMIT_BODY_WRAP_COLUMNS}.
+ *
+ * Repos routinely enforce a body line length in a `commit-msg` hook
+ * (commitlint's default is 100) and both generated and hand-written messages
+ * put each bullet on one long line, so the commit gets rejected for formatting
+ * alone. Lines already within the limit, fenced code, trailing trailers, and
+ * words too long to fit on a line of their own (URLs) are passed through
+ * untouched, so wrapping never changes what a message says or breaks something
+ * git parses.
+ */
+export function wrapCommitBody(body: string): string {
+  const lines = body.split("\n");
+  const trailerStart = trailerBlockStart(lines);
+  let insideFence = false;
+
+  return lines
+    .flatMap((line, index) => {
+      if (/^\s*(```|~~~)/.test(line)) {
+        insideFence = !insideFence;
+        return [line];
+      }
+      if (insideFence || index >= trailerStart || line.length <= COMMIT_BODY_WRAP_COLUMNS) {
+        return [line];
+      }
+      return wrapCommitBodyLine(line);
+    })
+    .join("\n");
+}
+
+/**
  * A push was rejected only because the remote moved ahead of us (the classic
  * "non-fast-forward" / "fetch first" rejection). This is the recoverable case
  * the push path auto-rebases and retries; auth/protection failures are not.
@@ -2155,7 +2245,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     options?: GitVcsDriver.GitCommitOptions,
   ) {
     const args = ["commit", "-m", subject];
-    const trimmedBody = body.trim();
+    // Wrap here rather than where the message is written, so hand-written and
+    // agent-written messages clear a `commit-msg` line-length hook too.
+    const trimmedBody = wrapCommitBody(body.replace(/\r\n/g, "\n").trim());
     if (trimmedBody.length > 0) {
       args.push("-m", trimmedBody);
     }
