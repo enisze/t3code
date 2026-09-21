@@ -187,6 +187,7 @@ private func runStream(requestedLocale: String) async throws {
     // the end of the recording.
     let input = FileHandle.standardInput
     var pending = Data()
+    var yieldedAudio = false
     while true {
         let chunk = input.availableData
         if chunk.isEmpty { break }
@@ -207,12 +208,21 @@ private func runStream(requestedLocale: String) async throws {
             }
         }
         pending.removeFirst(usable)
+        yieldedAudio = true
         continuation.yield(AnalyzerInput(buffer: buffer))
     }
 
     continuation.finish()
-    try await analyzer.finalizeAndFinishThroughEndOfInput()
-    try await reader.value
+    // A stream that never received a frame - a tap-and-stop with no speech -
+    // neither finalises nor ends its results sequence, so it is torn down
+    // rather than awaited.
+    if yieldedAudio {
+        try await analyzer.finalizeAndFinishThroughEndOfInput()
+        try await reader.value
+    } else {
+        await analyzer.cancelAndFinishNow()
+        reader.cancel()
+    }
     emit(["type": "done"])
 }
 
