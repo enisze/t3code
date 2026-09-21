@@ -82,10 +82,15 @@ and use **Attach again** or remove the missing file before sending.
 
 ## Voice input
 
-Use the composer's microphone to record, then stop to transcribe. Text is inserted
+Use the composer's microphone to record, then stop to finish. Text is inserted
 where your selection was when recording started, ready for you to review and edit
 before sending. Sending is held until the transcript lands, so it cannot arrive
 after the message it belongs to.
+
+In the Mac desktop app the text appears as you speak and is corrected as the
+engine hears more, so the composer is read-only while recording; stopping
+replaces it with the finished transcript. On iPhone the text arrives once, after
+you stop.
 
 Voice input needs Apple's on-device speech engine, so the microphone appears on
 supported iPhones with iOS 26 or later, and in the Mac desktop app on macOS 26 or

@@ -33,7 +33,7 @@ const unavailable = (message: string): DesktopDictationResult => ({
  * Only macOS ships the helper. Everywhere else dictation is absent rather than
  * broken, and the composer hides its mic button.
  */
-const resolveHelperPath = Effect.fn("desktop.ipc.dictation.resolveHelperPath")(function* () {
+export const resolveHelperPath = Effect.fn("desktop.ipc.dictation.resolveHelperPath")(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   if (environment.platform !== "darwin") return Option.none<string>();
 

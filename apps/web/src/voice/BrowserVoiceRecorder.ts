@@ -1,7 +1,7 @@
 import type { VoiceRecorder, VoiceRecorderStatus } from "@t3tools/client-runtime/voice-input";
 
 import { putRecording } from "./recordingStore.ts";
-import { DICTATION_SAMPLE_RATE, encodeWav } from "./wavEncoding.ts";
+import { DICTATION_SAMPLE_RATE, encodeWav, toInt16 } from "./wavEncoding.ts";
 
 /** Big enough that the callback is rare (~4/s at 16 kHz), small enough to stay responsive. */
 const CAPTURE_BUFFER_SIZE = 4096;
@@ -33,6 +33,7 @@ export class BrowserVoiceRecorder implements VoiceRecorder {
   private chunks: Float32Array[] = [];
   private capturing = false;
   private stopTimer: ReturnType<typeof setTimeout> | null = null;
+  private onChunk: ((chunk: Uint8Array) => void) | null = null;
   private readonly onStatus: (status: VoiceRecorderStatus) => void;
 
   constructor(onStatus: (status: VoiceRecorderStatus) => void) {
@@ -83,8 +84,15 @@ export class BrowserVoiceRecorder implements VoiceRecorder {
       const processor = context.createScriptProcessor(CAPTURE_BUFFER_SIZE, 1, 1);
       processor.onaudioprocess = (event) => {
         if (!this.capturing) return;
+        const samples = event.inputBuffer.getChannelData(0);
+        const forward = this.onChunk;
+        if (forward) {
+          // Live sessions want the engine's own encoding, not a WAV file.
+          forward(toInt16(samples));
+          return;
+        }
         // The event buffer is reused between callbacks, so copy it.
-        this.chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+        this.chunks.push(new Float32Array(samples));
       };
 
       // A ScriptProcessor only runs while it reaches the destination, so route
@@ -103,6 +111,24 @@ export class BrowserVoiceRecorder implements VoiceRecorder {
       this.lastFailure = `Could not open the audio pipeline: ${describeError(error)}`;
       throw error;
     }
+  }
+
+  /**
+   * Streaming counterpart to `record`. The controller drives this instead when
+   * the transcriber can report partial text, and each captured buffer goes
+   * straight to the live session rather than being accumulated for a WAV.
+   */
+  async recordStreaming(options: {
+    readonly forDuration: number;
+    readonly onChunk: (chunk: Uint8Array) => void;
+  }): Promise<void> {
+    this.onChunk = options.onChunk;
+    this.record({ forDuration: options.forDuration });
+  }
+
+  async stopStreaming(): Promise<void> {
+    await this.stop();
+    this.onChunk = null;
   }
 
   record({ forDuration }: { readonly forDuration: number }): void {
@@ -137,7 +163,9 @@ export class BrowserVoiceRecorder implements VoiceRecorder {
     this.chunks = [];
     const total = captured.reduce((sum, chunk) => sum + chunk.length, 0);
     if (total === 0) {
-      this.lastFailure = "The recording was empty.";
+      // Streaming sends every buffer onward instead of keeping it, so having
+      // nothing here is expected and the transcript comes from the session.
+      if (this.onChunk === null) this.lastFailure = "The recording was empty.";
       return;
     }
 

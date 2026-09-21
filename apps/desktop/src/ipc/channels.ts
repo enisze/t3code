@@ -92,3 +92,7 @@ export const PREVIEW_STATE_CHANGE_CHANNEL = "desktop:preview-state-change";
 export const PREVIEW_POINTER_EVENT_CHANNEL = "desktop:preview-pointer-event";
 export const PROBE_DICTATION_CHANNEL = "desktop:probe-dictation";
 export const TRANSCRIBE_AUDIO_CHANNEL = "desktop:transcribe-audio";
+export const START_DICTATION_STREAM_CHANNEL = "desktop:start-dictation-stream";
+export const PUSH_DICTATION_AUDIO_CHANNEL = "desktop:push-dictation-audio";
+export const FINISH_DICTATION_STREAM_CHANNEL = "desktop:finish-dictation-stream";
+export const CANCEL_DICTATION_STREAM_CHANNEL = "desktop:cancel-dictation-stream";

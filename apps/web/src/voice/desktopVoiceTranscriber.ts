@@ -3,6 +3,7 @@ import {
   VoiceTranscriptionError,
   throwIfVoiceTranscriptionAborted,
   type PreparedVoiceTranscription,
+  type VoiceLiveSession,
   type VoiceTranscriber,
 } from "@t3tools/client-runtime/voice-input";
 
@@ -34,8 +35,46 @@ export function getLocalVoiceTranscriber(): VoiceTranscriber | null {
       throwIfVoiceTranscriptionAborted(signal);
       if (!probed.ok) throw toTranscriptionError(probed);
 
+      const startLive =
+        bridge.startDictationStream && bridge.pushDictationAudio && bridge.finishDictationStream
+          ? async (
+              onPartial: (transcript: string) => void,
+              liveOptions: { signal: AbortSignal },
+            ): Promise<VoiceLiveSession> => {
+              throwIfVoiceTranscriptionAborted(liveOptions.signal);
+              const started = await bridge.startDictationStream!(probed.locale);
+              if (!started.ok) throw toTranscriptionError(started);
+              const streamId = started.streamId;
+
+              // Audio is pushed continuously and the transcript so far rides
+              // back on the same response, so partial text needs no separate
+              // channel from the main process.
+              let inFlight: Promise<unknown> = Promise.resolve();
+              return {
+                push: (chunk) => {
+                  inFlight = inFlight
+                    .then(() => bridge.pushDictationAudio!({ streamId, chunk }))
+                    .then((update) => {
+                      if (update.ok) onPartial(update.transcript);
+                    })
+                    .catch(() => undefined);
+                },
+                finish: async () => {
+                  await inFlight;
+                  const result = await bridge.finishDictationStream!(streamId);
+                  if (!result.ok) throw toTranscriptionError(result);
+                  return result.text;
+                },
+                cancel: () => {
+                  void bridge.cancelDictationStream?.(streamId);
+                },
+              };
+            }
+          : undefined;
+
       return {
         locale: probed.locale,
+        ...(startLive ? { startLive } : {}),
         transcribe: async (uri, options) => {
           throwIfVoiceTranscriptionAborted(options.signal);
           const audio = readRecording(uri);

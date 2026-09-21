@@ -54,6 +54,14 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.GET_LOCAL_ENVIRONMENT_BEARER_TOKEN_CHANNEL),
   probeDictation: (locale) => ipcRenderer.invoke(IpcChannels.PROBE_DICTATION_CHANNEL, locale),
   transcribeAudio: (request) => ipcRenderer.invoke(IpcChannels.TRANSCRIBE_AUDIO_CHANNEL, request),
+  startDictationStream: (locale) =>
+    ipcRenderer.invoke(IpcChannels.START_DICTATION_STREAM_CHANNEL, locale),
+  pushDictationAudio: (request) =>
+    ipcRenderer.invoke(IpcChannels.PUSH_DICTATION_AUDIO_CHANNEL, request),
+  finishDictationStream: (streamId) =>
+    ipcRenderer.invoke(IpcChannels.FINISH_DICTATION_STREAM_CHANNEL, streamId),
+  cancelDictationStream: (streamId) =>
+    ipcRenderer.invoke(IpcChannels.CANCEL_DICTATION_STREAM_CHANNEL, streamId),
   getClientSettings: () => ipcRenderer.invoke(IpcChannels.GET_CLIENT_SETTINGS_CHANNEL),
   setClientSettings: (settings) =>
     ipcRenderer.invoke(IpcChannels.SET_CLIENT_SETTINGS_CHANNEL, settings),

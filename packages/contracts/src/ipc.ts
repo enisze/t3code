@@ -1103,6 +1103,39 @@ export const DesktopDictationResultSchema = Schema.Union([
 ]);
 export type DesktopDictationResult = typeof DesktopDictationResultSchema.Type;
 
+export const DesktopDictationStreamStartSchema = Schema.Union([
+  Schema.Struct({
+    ok: Schema.Literal(true),
+    streamId: Schema.String,
+    locale: Schema.String,
+    /** Frames the renderer must send: mono PCM at this rate in this encoding. */
+    sampleRate: Schema.Number,
+    encoding: Schema.Literals(["int16", "float32"]),
+  }),
+  Schema.Struct({
+    ok: Schema.Literal(false),
+    code: DesktopDictationErrorCodeSchema,
+    message: Schema.String,
+  }),
+]);
+export type DesktopDictationStreamStart = typeof DesktopDictationStreamStartSchema.Type;
+
+export const DesktopDictationChunkSchema = Schema.Struct({
+  streamId: Schema.String,
+  chunk: Schema.Uint8Array,
+});
+
+/**
+ * Pushing audio returns the transcript so far, so partial results ride back on
+ * the same request the renderer is already making ten times a second. That
+ * avoids a main-to-renderer push channel purely for dictation.
+ */
+export const DesktopDictationStreamUpdateSchema = Schema.Struct({
+  ok: Schema.Boolean,
+  transcript: Schema.String,
+});
+export type DesktopDictationStreamUpdate = typeof DesktopDictationStreamUpdateSchema.Type;
+
 export const DesktopDictationRequestSchema = Schema.Struct({
   /** 16-bit PCM WAV bytes; the helper reads the container with AVAudioFile. */
   audio: Schema.Uint8Array,
@@ -1128,6 +1161,16 @@ export interface DesktopBridge {
   transcribeAudio?: (request: DesktopDictationRequest) => Promise<DesktopDictationResult>;
   /** Whether dictation can run here, checked before showing the mic button. */
   probeDictation?: (locale: string) => Promise<DesktopDictationProbeResult>;
+  /** Open a live dictation session; absent where streaming is unsupported. */
+  startDictationStream?: (locale: string) => Promise<DesktopDictationStreamStart>;
+  /** Feed audio and receive the transcript so far. */
+  pushDictationAudio?: (request: {
+    streamId: string;
+    chunk: Uint8Array;
+  }) => Promise<DesktopDictationStreamUpdate>;
+  /** Close the input and resolve with the finished transcript. */
+  finishDictationStream?: (streamId: string) => Promise<DesktopDictationResult>;
+  cancelDictationStream?: (streamId: string) => Promise<void>;
   // One bootstrap per pool instance currently registered with bootstrap
   // info (omits instances whose backend hasn't produced a config yet).
   // The primary backend is identified by id === PRIMARY_LOCAL_ENVIRONMENT_ID.
