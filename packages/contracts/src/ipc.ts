@@ -1072,18 +1072,34 @@ export const DesktopDictationErrorCodeSchema = Schema.Literals([
 ]);
 export type DesktopDictationErrorCode = typeof DesktopDictationErrorCodeSchema.Type;
 
+const DesktopDictationFailureSchema = Schema.Struct({
+  ok: Schema.Literal(false),
+  code: DesktopDictationErrorCodeSchema,
+  message: Schema.String,
+});
+
+/**
+ * Probing only resolves the locale and installs the model; it has no transcript
+ * to report. Keeping this separate from the transcribe result is what stops a
+ * decode of one being attempted against the shape of the other.
+ */
+export const DesktopDictationProbeResultSchema = Schema.Union([
+  Schema.Struct({
+    ok: Schema.Literal(true),
+    /** The locale the engine actually used, which may differ from the request. */
+    locale: Schema.String,
+  }),
+  DesktopDictationFailureSchema,
+]);
+export type DesktopDictationProbeResult = typeof DesktopDictationProbeResultSchema.Type;
+
 export const DesktopDictationResultSchema = Schema.Union([
   Schema.Struct({
     ok: Schema.Literal(true),
     text: Schema.String,
-    /** The locale the engine actually used, which may differ from the request. */
     locale: Schema.String,
   }),
-  Schema.Struct({
-    ok: Schema.Literal(false),
-    code: DesktopDictationErrorCodeSchema,
-    message: Schema.String,
-  }),
+  DesktopDictationFailureSchema,
 ]);
 export type DesktopDictationResult = typeof DesktopDictationResultSchema.Type;
 
@@ -1111,7 +1127,7 @@ export interface DesktopBridge {
    */
   transcribeAudio?: (request: DesktopDictationRequest) => Promise<DesktopDictationResult>;
   /** Whether dictation can run here, checked before showing the mic button. */
-  probeDictation?: (locale: string) => Promise<DesktopDictationResult>;
+  probeDictation?: (locale: string) => Promise<DesktopDictationProbeResult>;
   // One bootstrap per pool instance currently registered with bootstrap
   // info (omits instances whose backend hasn't produced a config yet).
   // The primary backend is identified by id === PRIMARY_LOCAL_ENVIRONMENT_ID.

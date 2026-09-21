@@ -54,7 +54,7 @@ describe("getLocalVoiceTranscriber", () => {
       // The OS reports a region the engine has no model for; the probe
       // resolves it to a supported one and that is what must be used.
       getSystemLocale: () => "en-AU",
-      probeDictation: vi.fn(async () => ({ ok: true as const, text: "", locale: "en-US" })),
+      probeDictation: vi.fn(async () => ({ ok: true as const, locale: "en-US" })),
       transcribeAudio,
     });
     const audio = Uint8Array.from([1, 2, 3]);
@@ -76,7 +76,7 @@ describe("getLocalVoiceTranscriber", () => {
     const transcribeAudio = vi.fn();
     installBridge({
       getSystemLocale: () => "en-US",
-      probeDictation: vi.fn(async () => ({ ok: true as const, text: "", locale: "en-US" })),
+      probeDictation: vi.fn(async () => ({ ok: true as const, locale: "en-US" })),
       transcribeAudio,
     });
 
