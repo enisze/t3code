@@ -96,6 +96,8 @@ import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { ComposerControl, ComposerControlIcon, ComposerSelectControl } from "./ComposerControl";
+import { ComposerDictationButton } from "./ComposerDictationButton";
+import { useVoiceInput } from "../../voice/useVoiceInput";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 import {
@@ -1610,6 +1612,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ],
   );
 
+  // Dictation writes the finished transcript straight into the draft; the
+  // controller has already merged it with the text and caret it captured when
+  // recording started, and refuses to commit if either moved since.
+  const dictation = useVoiceInput({
+    ownerKey: activeThreadId ?? "new-thread",
+    draftMessage: prompt,
+    selection: { start: composerCursor, end: composerCursor },
+    disabled: isConnecting || isComposerApprovalState || projectSelectionRequired,
+    onCommitTranscript: (text, selection) => {
+      promptRef.current = text;
+      setPrompt(text);
+      setComposerCursor(selection.start);
+      window.requestAnimationFrame(() => {
+        composerEditorRef.current?.focusAt(selection.start);
+      });
+    },
+  });
+
   // ------------------------------------------------------------------
   // Callbacks: prompt replacement / menu
   // ------------------------------------------------------------------
@@ -1851,9 +1871,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     showPlanFollowUpPrompt,
   ]);
 
+  const dictationBlocksSubmission = dictation.blocksSubmission;
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }) => {
-      if ((noProviderAvailable && !canCreateEmptyWorktreeThread) || isSendDisabled) {
+      // Sending mid-dictation would clear the draft the pending transcript is
+      // about to be merged into, so the transcript would land in the next
+      // message instead of this one.
+      if (
+        (noProviderAvailable && !canCreateEmptyWorktreeThread) ||
+        isSendDisabled ||
+        dictationBlocksSubmission
+      ) {
         event?.preventDefault();
         return;
       }
@@ -1865,6 +1893,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [
       blurMobileComposerAfterSend,
       canCreateEmptyWorktreeThread,
+      dictationBlocksSubmission,
       isSendDisabled,
       noProviderAvailable,
       onSend,
@@ -3266,6 +3295,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   </TooltipTrigger>
                   <TooltipPopup side="top">Attach files</TooltipPopup>
                 </Tooltip>
+
+                {dictation.isAvailable ? (
+                  <ComposerDictationButton
+                    state={dictation.state}
+                    disabled={isConnecting || isComposerApprovalState || projectSelectionRequired}
+                    onStart={dictation.start}
+                    onStop={dictation.stop}
+                  />
+                ) : null}
 
                 {isComposerFooterCompact ? (
                   <CompactComposerControlsMenu

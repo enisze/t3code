@@ -132,6 +132,19 @@ export function resourceMonitorExecutableName(platform: typeof BuildPlatform.Typ
   return platform === "win" ? "t3-resource-monitor.exe" : "t3-resource-monitor";
 }
 
+export const SPEECH_TRANSCRIBER_EXECUTABLE_NAME = "t3-speech-transcriber";
+
+/**
+ * SwiftPM builds a universal binary itself when handed both arches, so unlike
+ * the Rust helpers this never needs a `lipo` pass.
+ */
+export function resolveSpeechTranscriberArchFlags(
+  arch: typeof BuildArch.Type,
+): ReadonlyArray<string> {
+  if (arch === "universal") return ["--arch", "arm64", "--arch", "x86_64"];
+  return ["--arch", arch === "arm64" ? "arm64" : "x86_64"];
+}
+
 const PLATFORM_CONFIG: Record<typeof BuildPlatform.Type, PlatformConfig> = {
   mac: {
     cliFlag: "--mac",
@@ -424,6 +437,18 @@ export class WindowsDesktopBuildPrerequisitesMissingError extends Schema.TaggedE
       "",
       "Then rerun the desktop artifact command.",
     ].join("\n");
+  }
+}
+
+export class SpeechTranscriberBuildOutputMissingError extends Schema.TaggedErrorClass<SpeechTranscriberBuildOutputMissingError>()(
+  "SpeechTranscriberBuildOutputMissingError",
+  {
+    binaryPath: Schema.String,
+    arch: BuildArch,
+  },
+) {
+  override get message(): string {
+    return `Speech transcriber build for ${this.arch} did not produce ${this.binaryPath}.`;
   }
 }
 
@@ -962,6 +987,10 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/resources/browser-secret/**/*",
   "!apps/desktop/prod-resources/browser-secret",
   "!apps/desktop/prod-resources/browser-secret/**/*",
+  "!apps/desktop/resources/speech-transcriber",
+  "!apps/desktop/resources/speech-transcriber/**/*",
+  "!apps/desktop/prod-resources/speech-transcriber",
+  "!apps/desktop/prod-resources/speech-transcriber/**/*",
   // Windows stages the server sidecar below prod-resources so electron-builder
   // can copy it using project-relative extraResources matchers. Keep those
   // staging inputs out of app.asar; they are emitted once at resources/.
@@ -1094,6 +1123,9 @@ export const DESKTOP_EXTRA_RESOURCES = [
 ] as const;
 export const LINUX_BROWSER_SECRET_EXTRA_RESOURCES = [
   { from: "apps/desktop/prod-resources/browser-secret", to: "browser-secret" },
+] as const;
+export const MAC_SPEECH_TRANSCRIBER_EXTRA_RESOURCES = [
+  { from: "apps/desktop/prod-resources/speech-transcriber", to: "speech-transcriber" },
 ] as const;
 
 export interface MacPasskeySigningConfiguration {
@@ -1307,6 +1339,8 @@ ${associatedDomains}
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
     <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <key>com.apple.security.device.audio-input</key>
     <true/>
   </dict>
 </plist>
@@ -2138,6 +2172,63 @@ const verifyPackagedBundleIsSelfContained = Effect.fn("verifyPackagedBundleIsSel
   },
 );
 
+/**
+ * Build and stage the macOS dictation helper. It wraps Apple's on-device
+ * `SpeechTranscriber`, which only exists on macOS 26 — the helper itself
+ * targets an older deployment version and reports `unavailable` on anything
+ * earlier, so the app degrades to no mic button rather than failing to spawn.
+ *
+ * Non-mac platforms have no equivalent and stage nothing.
+ */
+export const stageSpeechTranscriber = Effect.fn("stageSpeechTranscriber")(function* (input: {
+  readonly repoRoot: string;
+  readonly stageResourcesDir: string;
+  readonly platform: typeof BuildPlatform.Type;
+  readonly arch: typeof BuildArch.Type;
+  readonly verbose: boolean;
+}) {
+  if (input.platform !== "mac") return;
+
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const packagePath = path.join(input.repoRoot, "native/speech-transcriber");
+  const archFlags = resolveSpeechTranscriberArchFlags(input.arch);
+  const buildArgs = ["build", "--package-path", packagePath, "-c", "release", ...archFlags];
+
+  const spawnCommand = yield* resolveSpawnCommand("swift", buildArgs);
+  yield* runCommand(
+    ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+      cwd: input.repoRoot,
+      shell: spawnCommand.shell,
+    }),
+    { label: `swift build speech transcriber (${input.arch})`, verbose: input.verbose },
+  );
+
+  // Ask SwiftPM where it put the binary instead of reconstructing its layout,
+  // which differs between single-arch and universal builds.
+  const binPathCommand = yield* resolveSpawnCommand("swift", [...buildArgs, "--show-bin-path"]);
+  const binPathResult = yield* spawnAndCollectOutput(
+    ChildProcess.make(binPathCommand.command, binPathCommand.args, {
+      cwd: input.repoRoot,
+      shell: binPathCommand.shell,
+    }),
+  );
+  const binaryPath = path.join(
+    binPathResult.stdout.trim().split("\n").at(-1)?.trim() ?? "",
+    SPEECH_TRANSCRIBER_EXECUTABLE_NAME,
+  );
+  if (!(yield* fs.exists(binaryPath))) {
+    return yield* new SpeechTranscriberBuildOutputMissingError({ binaryPath, arch: input.arch });
+  }
+
+  const destinationDirectory = path.join(input.stageResourcesDir, "speech-transcriber");
+  const destinationPath = path.join(destinationDirectory, SPEECH_TRANSCRIBER_EXECUTABLE_NAME);
+  yield* fs.remove(destinationDirectory, { recursive: true, force: true }).pipe(Effect.ignore);
+  yield* fs.makeDirectory(destinationDirectory, { recursive: true });
+  yield* fs.copyFile(binaryPath, destinationPath);
+  yield* fs.chmod(destinationPath, 0o755);
+});
+
 export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* (input: {
   readonly repoRoot: string;
   readonly stageResourcesDir: string;
@@ -2600,6 +2691,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
+      ...(platform === "mac" ? MAC_SPEECH_TRANSCRIBER_EXTRA_RESOURCES : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
       ...(platform === "win" && wslRuntimeBundled ? WSL_RUNTIME_EXTRA_RESOURCES : []),
     ],
@@ -2626,6 +2718,14 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
+      // macOS terminates a process that touches the microphone or the speech
+      // engine without a usage string, so dictation needs both declared here.
+      extendInfo: {
+        NSMicrophoneUsageDescription:
+          "T3 Code records audio only while you hold the dictation button in the composer.",
+        NSSpeechRecognitionUsageDescription:
+          "T3 Code turns your dictation into text on this device, using macOS speech recognition.",
+      },
       protocols: [
         {
           name: "T3 Code",
@@ -3574,6 +3674,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     verbose: options.verbose,
   });
   yield* stageBrowserSecret({
+    repoRoot,
+    stageResourcesDir,
+    platform: options.platform,
+    arch: options.arch,
+    verbose: options.verbose,
+  });
+  yield* stageSpeechTranscriber({
     repoRoot,
     stageResourcesDir,
     platform: options.platform,

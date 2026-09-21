@@ -1059,6 +1059,41 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
+/**
+ * Mirrors `VoiceTranscriptionErrorCode` in `@t3tools/client-runtime/voice-input`
+ * and the codes the bundled `t3-speech-transcriber` helper prints, so a
+ * dictation failure keeps its meaning from Swift all the way to the composer.
+ */
+export const DesktopDictationErrorCodeSchema = Schema.Literals([
+  "unavailable",
+  "unsupported-locale",
+  "preparation-failed",
+  "transcription-failed",
+]);
+export type DesktopDictationErrorCode = typeof DesktopDictationErrorCodeSchema.Type;
+
+export const DesktopDictationResultSchema = Schema.Union([
+  Schema.Struct({
+    ok: Schema.Literal(true),
+    text: Schema.String,
+    /** The locale the engine actually used, which may differ from the request. */
+    locale: Schema.String,
+  }),
+  Schema.Struct({
+    ok: Schema.Literal(false),
+    code: DesktopDictationErrorCodeSchema,
+    message: Schema.String,
+  }),
+]);
+export type DesktopDictationResult = typeof DesktopDictationResultSchema.Type;
+
+export const DesktopDictationRequestSchema = Schema.Struct({
+  /** 16-bit PCM WAV bytes; the helper reads the container with AVAudioFile. */
+  audio: Schema.Uint8Array,
+  locale: Schema.String,
+});
+export type DesktopDictationRequest = typeof DesktopDictationRequestSchema.Type;
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   /** The desktop client's OS platform, read from Electron's preload process. */
@@ -1070,6 +1105,13 @@ export interface DesktopBridge {
    * regardless of OS settings.
    */
   getSystemLocale?: () => string | null;
+  /**
+   * Transcribe a recording with the OS speech engine. Absent unless the
+   * platform ships the helper (macOS only), so callers must feature-detect.
+   */
+  transcribeAudio?: (request: DesktopDictationRequest) => Promise<DesktopDictationResult>;
+  /** Whether dictation can run here, checked before showing the mic button. */
+  probeDictation?: (locale: string) => Promise<DesktopDictationResult>;
   // One bootstrap per pool instance currently registered with bootstrap
   // info (omits instances whose backend hasn't produced a config yet).
   // The primary backend is identified by id === PRIMARY_LOCAL_ENVIRONMENT_ID.
