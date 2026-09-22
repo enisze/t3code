@@ -68,6 +68,7 @@ import {
 import { ThreadDeletionReactor } from "../src/orchestration/Services/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "../src/orchestration/ThreadSettlementReactor.ts";
 import * as ThreadPullRequestReactor from "../src/orchestration/ThreadPullRequestReactor.ts";
+import * as ArchivedWorktreePruner from "../src/orchestration/ArchivedWorktreePruner.ts";
 import { OrchestrationReactor } from "../src/orchestration/Services/OrchestrationReactor.ts";
 import { ProjectionSnapshotQuery } from "../src/orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
@@ -397,6 +398,12 @@ export const makeOrchestrationIntegrationHarness = (
       ),
       Layer.provideMerge(
         Layer.succeed(ThreadPullRequestReactor.ThreadPullRequestReactor, {
+          start: () => Effect.void,
+          drain: Effect.void,
+        }),
+      ),
+      Layer.provideMerge(
+        Layer.succeed(ArchivedWorktreePruner.ArchivedWorktreePruner, {
           start: () => Effect.void,
           drain: Effect.void,
         }),
