@@ -198,6 +198,9 @@ describe("VoiceInputController", () => {
 
       return {
         ...harness,
+        // createHarness returns its own recorder; the controller is driving
+        // this one, so assertions must see it and not the unused default.
+        recorder,
         emptyDraft,
         pushed,
         speak: (text: string) => emitPartial?.(text),
@@ -237,6 +240,9 @@ describe("VoiceInputController", () => {
       expect(harness.pushed).toEqual([Uint8Array.from([1, 2]), Uint8Array.from([3, 4])]);
       // Streaming must not also drive the file-based path.
       expect(harness.recorder.record).not.toHaveBeenCalled();
+      // ...but it still has to open the microphone, or nothing is captured at
+      // all and the transcript comes back empty.
+      expect(harness.recorder.prepareToRecordAsync).toHaveBeenCalled();
     });
 
     it("commits the final transcript, which can differ from the last partial", async () => {

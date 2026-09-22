@@ -263,9 +263,11 @@ export class VoiceInputController {
       const recordStreaming = this.dependencies.recorder.recordStreaming;
       const useLive = live !== undefined && recordStreaming !== undefined;
 
+      // Opens the capture pipeline, which both paths need; only the
+      // file-based one has a recording URI to track afterwards.
+      await this.dependencies.recorder.prepareToRecordAsync();
+      if (!this.isCurrent(operationToken)) return;
       if (!useLive) {
-        await this.dependencies.recorder.prepareToRecordAsync();
-        if (!this.isCurrent(operationToken)) return;
         this.recordingUri = this.dependencies.recorder.uri;
         this.rememberRecordingUri(this.recordingUri);
       }
