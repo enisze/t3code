@@ -152,6 +152,124 @@ describe("resolveTranscriptCommit", () => {
 describe("VoiceInputController", () => {
   beforeEach(() => resetVoiceInputGlobalsForTests());
 
+  describe("live transcription", () => {
+    /** A recorder and transcriber that between them support streaming. */
+    function createLiveHarness() {
+      const pushed: Uint8Array[] = [];
+      let emitPartial: ((transcript: string) => void) | null = null;
+      let finishTranscript = "hello world";
+      let cancelled = false;
+      const recorder = new TestRecorder() as TestRecorder & {
+        recordStreaming?: unknown;
+        stopStreaming?: unknown;
+      };
+      let forward: ((chunk: Uint8Array) => void) | null = null;
+      recorder.recordStreaming = async (options: {
+        forDuration: number;
+        onChunk: (chunk: Uint8Array) => void;
+      }) => {
+        forward = options.onChunk;
+      };
+      recorder.stopStreaming = async () => undefined;
+
+      const emptyDraft = draft({ text: "", selection: { start: 0, end: 0 } });
+      const harness = createHarness(
+        {
+          recorder: recorder as unknown as VoiceInputControllerDependencies["recorder"],
+          getTranscriber: () => ({
+            prepare: async () => ({
+              locale: "en-US",
+              transcribe: async () => "unused",
+              startLive: async (onPartial: (transcript: string) => void) => {
+                emitPartial = onPartial;
+                return {
+                  push: (chunk: Uint8Array) => pushed.push(chunk),
+                  finish: async () => finishTranscript,
+                  cancel: () => {
+                    cancelled = true;
+                  },
+                };
+              },
+            }),
+          }),
+        },
+        emptyDraft,
+      );
+
+      return {
+        ...harness,
+        // createHarness returns its own recorder; the controller is driving
+        // this one, so assertions must see it and not the unused default.
+        recorder,
+        emptyDraft,
+        pushed,
+        speak: (text: string) => emitPartial?.(text),
+        capture: (chunk: Uint8Array) => forward?.(chunk),
+        setFinal: (text: string) => {
+          finishTranscript = text;
+        },
+        wasCancelled: () => cancelled,
+      };
+    }
+
+    it("writes partial text into the draft and replaces it as it firms up", async () => {
+      const harness = createLiveHarness();
+      await harness.controller.start();
+      expect(harness.controller.currentState.phase).toBe("recording");
+
+      harness.speak("hello");
+      harness.speak("hello wor");
+      harness.speak("hello world");
+
+      // Each update replaces the previous one rather than appending, so the
+      // draft never accumulates "hellohello wor...".
+      expect(harness.commits.map((commit) => commit.text)).toEqual([
+        "hello",
+        "hello wor",
+        "hello world",
+      ]);
+    });
+
+    it("forwards captured audio to the live session", async () => {
+      const harness = createLiveHarness();
+      await harness.controller.start();
+
+      harness.capture(Uint8Array.from([1, 2]));
+      harness.capture(Uint8Array.from([3, 4]));
+
+      expect(harness.pushed).toEqual([Uint8Array.from([1, 2]), Uint8Array.from([3, 4])]);
+      // Streaming must not also drive the file-based path.
+      expect(harness.recorder.record).not.toHaveBeenCalled();
+      // ...but it still has to open the microphone, or nothing is captured at
+      // all and the transcript comes back empty.
+      expect(harness.recorder.prepareToRecordAsync).toHaveBeenCalled();
+    });
+
+    it("commits the final transcript, which can differ from the last partial", async () => {
+      const harness = createLiveHarness();
+      await harness.controller.start();
+      harness.speak("hello wold");
+      harness.setFinal("Hello, world.");
+
+      await harness.controller.stop();
+
+      expect(harness.commits.at(-1)?.text).toBe("Hello, world.");
+      expect(harness.controller.currentState.phase).toBe("idle");
+    });
+
+    it("restores the draft when a live recording is cancelled", async () => {
+      const harness = createLiveHarness();
+      await harness.controller.start();
+      harness.speak("half a sentence");
+
+      harness.controller.cancel();
+
+      expect(harness.wasCancelled()).toBe(true);
+      // The partial text must not be left behind in the draft.
+      expect(harness.commits.at(-1)?.text).toBe(harness.emptyDraft.text);
+    });
+  });
+
   it("checks support and permission before recording", async () => {
     const unsupported = createHarness({ getTranscriber: () => null });
     await unsupported.controller.start();

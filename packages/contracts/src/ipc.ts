@@ -1072,12 +1072,65 @@ export const DesktopDictationErrorCodeSchema = Schema.Literals([
 ]);
 export type DesktopDictationErrorCode = typeof DesktopDictationErrorCodeSchema.Type;
 
+const DesktopDictationFailureSchema = Schema.Struct({
+  ok: Schema.Literal(false),
+  code: DesktopDictationErrorCodeSchema,
+  message: Schema.String,
+});
+
+/**
+ * Probing only resolves the locale and installs the model; it has no transcript
+ * to report. Keeping this separate from the transcribe result is what stops a
+ * decode of one being attempted against the shape of the other.
+ */
+export const DesktopDictationProbeResultSchema = Schema.Union([
+  Schema.Struct({
+    ok: Schema.Literal(true),
+    /** The locale the engine actually used, which may differ from the request. */
+    locale: Schema.String,
+  }),
+  DesktopDictationFailureSchema,
+]);
+export type DesktopDictationProbeResult = typeof DesktopDictationProbeResultSchema.Type;
+
 export const DesktopDictationResultSchema = Schema.Union([
   Schema.Struct({
     ok: Schema.Literal(true),
     text: Schema.String,
-    /** The locale the engine actually used, which may differ from the request. */
     locale: Schema.String,
+  }),
+  DesktopDictationFailureSchema,
+]);
+export type DesktopDictationResult = typeof DesktopDictationResultSchema.Type;
+
+export const DesktopDictationLocaleSchema = Schema.Struct({
+  /** BCP-47 tag the engine accepts, e.g. `de-DE`. */
+  tag: Schema.String,
+  /** Endonym from the OS, e.g. "Deutsch (Deutschland)". */
+  label: Schema.String,
+  /** False means the first recording in this language downloads a model. */
+  installed: Schema.Boolean,
+});
+export type DesktopDictationLocale = typeof DesktopDictationLocaleSchema.Type;
+
+export const DesktopDictationLocalesSchema = Schema.Union([
+  Schema.Struct({ ok: Schema.Literal(true), locales: Schema.Array(DesktopDictationLocaleSchema) }),
+  Schema.Struct({
+    ok: Schema.Literal(false),
+    code: DesktopDictationErrorCodeSchema,
+    message: Schema.String,
+  }),
+]);
+export type DesktopDictationLocales = typeof DesktopDictationLocalesSchema.Type;
+
+export const DesktopDictationStreamStartSchema = Schema.Union([
+  Schema.Struct({
+    ok: Schema.Literal(true),
+    streamId: Schema.String,
+    locale: Schema.String,
+    /** Frames the renderer must send: mono PCM at this rate in this encoding. */
+    sampleRate: Schema.Number,
+    encoding: Schema.Literals(["int16", "float32"]),
   }),
   Schema.Struct({
     ok: Schema.Literal(false),
@@ -1085,7 +1138,23 @@ export const DesktopDictationResultSchema = Schema.Union([
     message: Schema.String,
   }),
 ]);
-export type DesktopDictationResult = typeof DesktopDictationResultSchema.Type;
+export type DesktopDictationStreamStart = typeof DesktopDictationStreamStartSchema.Type;
+
+export const DesktopDictationChunkSchema = Schema.Struct({
+  streamId: Schema.String,
+  chunk: Schema.Uint8Array,
+});
+
+/**
+ * Pushing audio returns the transcript so far, so partial results ride back on
+ * the same request the renderer is already making ten times a second. That
+ * avoids a main-to-renderer push channel purely for dictation.
+ */
+export const DesktopDictationStreamUpdateSchema = Schema.Struct({
+  ok: Schema.Boolean,
+  transcript: Schema.String,
+});
+export type DesktopDictationStreamUpdate = typeof DesktopDictationStreamUpdateSchema.Type;
 
 export const DesktopDictationRequestSchema = Schema.Struct({
   /** 16-bit PCM WAV bytes; the helper reads the container with AVAudioFile. */
@@ -1111,7 +1180,19 @@ export interface DesktopBridge {
    */
   transcribeAudio?: (request: DesktopDictationRequest) => Promise<DesktopDictationResult>;
   /** Whether dictation can run here, checked before showing the mic button. */
-  probeDictation?: (locale: string) => Promise<DesktopDictationResult>;
+  probeDictation?: (locale: string) => Promise<DesktopDictationProbeResult>;
+  /** Languages the speech engine can transcribe on this machine. */
+  listDictationLocales?: () => Promise<DesktopDictationLocales>;
+  /** Open a live dictation session; absent where streaming is unsupported. */
+  startDictationStream?: (locale: string) => Promise<DesktopDictationStreamStart>;
+  /** Feed audio and receive the transcript so far. */
+  pushDictationAudio?: (request: {
+    streamId: string;
+    chunk: Uint8Array;
+  }) => Promise<DesktopDictationStreamUpdate>;
+  /** Close the input and resolve with the finished transcript. */
+  finishDictationStream?: (streamId: string) => Promise<DesktopDictationResult>;
+  cancelDictationStream?: (streamId: string) => Promise<void>;
   // One bootstrap per pool instance currently registered with bootstrap
   // info (omits instances whose backend hasn't produced a config yet).
   // The primary backend is identified by id === PRIMARY_LOCAL_ENVIRONMENT_ID.

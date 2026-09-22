@@ -1,6 +1,10 @@
 import { replaceTextRange } from "@t3tools/shared/composerTrigger";
 
-import type { PreparedVoiceTranscription, VoiceTranscriber } from "./transcription.ts";
+import type {
+  PreparedVoiceTranscription,
+  VoiceLiveSession,
+  VoiceTranscriber,
+} from "./transcription.ts";
 
 export const VOICE_RECORDING_LIMIT_SECONDS = 5 * 60;
 
@@ -41,6 +45,16 @@ export interface VoiceRecorder {
   prepareToRecordAsync(): Promise<void>;
   record(options: { readonly forDuration: number }): void;
   stop(): Promise<void>;
+  /**
+   * Streaming capture, for platforms whose transcriber reports partial text.
+   * A recorder that implements this pair is driven instead of `record`/`stop`,
+   * and hands each captured chunk straight to the live session.
+   */
+  recordStreaming?(options: {
+    readonly forDuration: number;
+    readonly onChunk: (chunk: Uint8Array) => void;
+  }): Promise<void>;
+  stopStreaming?(): Promise<void>;
 }
 
 export type VoiceInputControllerDependencies = {
@@ -185,6 +199,7 @@ export class VoiceInputController {
   private readonly ownedRecordingUris = new Set<string>();
   private recordingConfigured = false;
   private finishing = false;
+  private liveSession: VoiceLiveSession | null = null;
 
   constructor(dependencies: VoiceInputControllerDependencies) {
     this.dependencies = dependencies;
@@ -243,10 +258,19 @@ export class VoiceInputController {
       await this.dependencies.configureRecording();
       this.recordingConfigured = true;
       if (!this.isCurrent(operationToken)) return;
+
+      const live = this.transcription.startLive;
+      const recordStreaming = this.dependencies.recorder.recordStreaming;
+      const useLive = live !== undefined && recordStreaming !== undefined;
+
+      // Opens the capture pipeline, which both paths need; only the
+      // file-based one has a recording URI to track afterwards.
       await this.dependencies.recorder.prepareToRecordAsync();
       if (!this.isCurrent(operationToken)) return;
-      this.recordingUri = this.dependencies.recorder.uri;
-      this.rememberRecordingUri(this.recordingUri);
+      if (!useLive) {
+        this.recordingUri = this.dependencies.recorder.uri;
+        this.rememberRecordingUri(this.recordingUri);
+      }
 
       const capturedDraft = this.dependencies.readDraft();
       if (!capturedDraft || capturedDraft.ownerKey !== initiatingDraft.ownerKey) {
@@ -254,7 +278,24 @@ export class VoiceInputController {
         return;
       }
       this.capturedDraft = capturedDraft;
-      this.dependencies.recorder.record({ forDuration: VOICE_RECORDING_LIMIT_SECONDS });
+
+      if (useLive) {
+        const session = await live(
+          (transcript) => this.applyLiveTranscript(operationToken, transcript),
+          { signal: abortController.signal },
+        );
+        if (!this.isCurrent(operationToken)) {
+          session.cancel();
+          return;
+        }
+        this.liveSession = session;
+        await recordStreaming.call(this.dependencies.recorder, {
+          forDuration: VOICE_RECORDING_LIMIT_SECONDS,
+          onChunk: (chunk) => session.push(chunk),
+        });
+      } else {
+        this.dependencies.recorder.record({ forDuration: VOICE_RECORDING_LIMIT_SECONDS });
+      }
       this.setState({ phase: "recording", error: null, errorAction: null });
     } catch {
       if (this.isCurrent(operationToken))
@@ -345,6 +386,25 @@ export class VoiceInputController {
     }
   }
 
+  /**
+   * Write the transcript so far into the draft. Always recomputed from the
+   * snapshot captured when recording started, so each update replaces the
+   * previous one rather than appending to it. The editor is frozen while
+   * recording (see `voiceInputFreezesEditor`), so there is no user edit to
+   * conflict with.
+   */
+  private applyLiveTranscript(operationToken: number, transcript: string): void {
+    if (!this.isCurrent(operationToken)) return;
+    if (this.state.phase !== "recording" && this.state.phase !== "transcribing") return;
+    const captured = this.capturedDraft;
+    const transcription = this.transcription;
+    if (!captured || !transcription) return;
+
+    const result = resolveTranscriptCommit(captured, captured, transcript, transcription.locale);
+    if (result.kind !== "commit") return;
+    this.dependencies.commitDraft(result.text, result.selection);
+  }
+
   private async finishRecording(
     alreadyStopped: boolean,
     completedUri: string | null,
@@ -355,6 +415,50 @@ export class VoiceInputController {
     this.setState({ phase: "transcribing", error: null, errorAction: null });
 
     try {
+      const session = this.liveSession;
+      if (session) {
+        const stopStreaming = this.dependencies.recorder.stopStreaming;
+        if (stopStreaming) await stopStreaming.call(this.dependencies.recorder);
+        await this.releaseAudioSession();
+        if (!this.isCurrent(operationToken)) return;
+
+        let transcript: string;
+        try {
+          transcript = await session.finish();
+        } catch (error) {
+          if (this.isCurrent(operationToken)) {
+            this.setError(transcriptionErrorMessage(error), "retry");
+          }
+          return;
+        }
+        this.liveSession = null;
+        if (!this.isCurrent(operationToken)) return;
+
+        const capturedDraft = this.capturedDraft;
+        const transcription = this.transcription;
+        if (!capturedDraft || !transcription) {
+          this.setError("Could not finish voice recording.", "retry");
+          return;
+        }
+        const result = resolveTranscriptCommit(
+          capturedDraft,
+          capturedDraft,
+          transcript,
+          transcription.locale,
+        );
+        if (result.kind === "empty") {
+          // Put the draft back the way it was before the partials landed.
+          this.dependencies.commitDraft(capturedDraft.text, capturedDraft.selection);
+          this.setError("No speech was detected.", "retry");
+          return;
+        }
+        if (result.kind === "commit") {
+          this.dependencies.commitDraft(result.text, result.selection);
+        }
+        this.setState(IDLE_STATE);
+        return;
+      }
+
       if (!alreadyStopped) await this.dependencies.recorder.stop();
       await this.releaseAudioSession();
       this.recordingUri = completedUri ?? this.dependencies.recorder.uri ?? this.recordingUri;
@@ -417,7 +521,18 @@ export class VoiceInputController {
     }
   }
 
+  private cancelLiveSession(): void {
+    const session = this.liveSession;
+    if (!session) return;
+    this.liveSession = null;
+    session.cancel();
+    // Partial text was already written into the draft; undo it.
+    const captured = this.capturedDraft;
+    if (captured) this.dependencies.commitDraft(captured.text, captured.selection);
+  }
+
   private async discardRecording(error: string | null): Promise<void> {
+    this.cancelLiveSession();
     this.invalidateOperation();
     this.setState(
       error

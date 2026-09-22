@@ -241,6 +241,11 @@ export const DEFAULT_RESOLVE_PROMPT =
   "Resolve the merge conflicts between this branch and its origin/upstream branch. Fetch the latest origin branch, merge or rebase it into the current branch, and resolve every conflict so the working tree is clean. Preserve the intent of both sides, keep the build passing, and explain each conflict you resolved.";
 
 export const ClientSettingsSchema = Schema.Struct({
+  /**
+   * BCP-47 tag dictation listens for. Empty follows the OS language, which is
+   * what most people want and what the engine defaulted to before this existed.
+   */
+  dictationLocale: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   loadBalancingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   loadBalancingWeights: LoadBalancingWeights.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
@@ -1285,6 +1290,7 @@ export const ServerSettingsPatch = Schema.Struct({
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
 export const ClientSettingsPatch = Schema.Struct({
+  dictationLocale: Schema.optionalKey(Schema.String),
   autoOpenPlanSidebar: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   loadBalancingEnabled: Schema.optionalKey(Schema.Boolean),

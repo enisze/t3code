@@ -14,6 +14,7 @@ export {
   VoiceTranscriptionError,
   throwIfVoiceTranscriptionAborted,
   type PreparedVoiceTranscription,
+  type VoiceLiveSession,
   type VoiceTranscriber,
   type VoiceTranscriptionErrorCode,
   type VoiceTranscriptionOptions,

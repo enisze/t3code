@@ -48,3 +48,13 @@ export function encodeWav(samples: Float32Array, sampleRate: number): Uint8Array
 
   return new Uint8Array(buffer);
 }
+
+/** Clamp and scale float samples to the 16-bit PCM the speech engine wants. */
+export function toInt16(samples: Float32Array): Uint8Array {
+  const out = new DataView(new ArrayBuffer(samples.length * BYTES_PER_SAMPLE));
+  for (let index = 0; index < samples.length; index += 1) {
+    const sample = Math.max(-1, Math.min(1, samples[index] ?? 0));
+    out.setInt16(index * BYTES_PER_SAMPLE, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+  }
+  return new Uint8Array(out.buffer);
+}

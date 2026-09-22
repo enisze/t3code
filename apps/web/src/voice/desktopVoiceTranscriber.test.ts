@@ -54,7 +54,7 @@ describe("getLocalVoiceTranscriber", () => {
       // The OS reports a region the engine has no model for; the probe
       // resolves it to a supported one and that is what must be used.
       getSystemLocale: () => "en-AU",
-      probeDictation: vi.fn(async () => ({ ok: true as const, text: "", locale: "en-US" })),
+      probeDictation: vi.fn(async () => ({ ok: true as const, locale: "en-US" })),
       transcribeAudio,
     });
     const audio = Uint8Array.from([1, 2, 3]);
@@ -72,11 +72,38 @@ describe("getLocalVoiceTranscriber", () => {
     expect(transcribeAudio).toHaveBeenCalledWith({ audio, locale: "en-US" });
   });
 
+  it("asks for the language chosen in settings instead of the OS language", async () => {
+    const probeDictation = vi.fn(async () => ({ ok: true as const, locale: "fr-FR" }));
+    installBridge({
+      getSystemLocale: () => "de-DE",
+      probeDictation,
+      transcribeAudio: vi.fn(),
+    });
+
+    await getLocalVoiceTranscriber("fr-FR")!.prepare({ signal: new AbortController().signal });
+
+    expect(probeDictation).toHaveBeenCalledWith("fr-FR");
+  });
+
+  it("falls back to the OS language when no language is chosen", async () => {
+    const probeDictation = vi.fn(async () => ({ ok: true as const, locale: "de-DE" }));
+    installBridge({
+      getSystemLocale: () => "de-DE",
+      probeDictation,
+      transcribeAudio: vi.fn(),
+    });
+
+    // An empty setting is the default and must not be sent as a locale.
+    await getLocalVoiceTranscriber("")!.prepare({ signal: new AbortController().signal });
+
+    expect(probeDictation).toHaveBeenCalledWith("de-DE");
+  });
+
   it("stops before transcribing when the recording was already cancelled", async () => {
     const transcribeAudio = vi.fn();
     installBridge({
       getSystemLocale: () => "en-US",
-      probeDictation: vi.fn(async () => ({ ok: true as const, text: "", locale: "en-US" })),
+      probeDictation: vi.fn(async () => ({ ok: true as const, locale: "en-US" })),
       transcribeAudio,
     });
 

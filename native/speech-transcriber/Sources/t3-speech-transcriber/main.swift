@@ -133,6 +133,119 @@ private func transcribe(inputPath: String, requestedLocale: String) async throws
     }
 }
 
+/// One NDJSON line per event on stdout, so the desktop app can forward results
+/// as they arrive rather than waiting for the recording to finish.
+@available(macOS 26, *)
+private func runStream(requestedLocale: String) async throws {
+    let locale = try await resolveLocale(requestedLocale)
+    // `.progressiveTranscription` is the preset that reports volatile results;
+    // `.transcription` only ever emits finals.
+    let transcriber = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
+    try await installAssetsIfNeeded(transcriber, locale: locale)
+
+    guard
+        let analyzerFormat = await SpeechAnalyzer.bestAvailableAudioFormat(
+            compatibleWith: [transcriber])
+    else {
+        throw Failure(code: .preparationFailed, message: "No compatible audio format.")
+    }
+    // The analyzer traps on a buffer in any other format, so rather than assume
+    // one, the caller is told the exact layout and the bytes are copied in
+    // verbatim. On macOS 26 this asks for 16-bit mono, not float.
+    guard analyzerFormat.channelCount == 1 else {
+        throw Failure(
+            code: .preparationFailed,
+            message: "Dictation expected a mono analyzer format."
+        )
+    }
+    let bytesPerFrame = Int(analyzerFormat.streamDescription.pointee.mBytesPerFrame)
+    guard bytesPerFrame > 0 else {
+        throw Failure(code: .preparationFailed, message: "Analyzer reported an empty frame size.")
+    }
+    let sampleEncoding = analyzerFormat.commonFormat == .pcmFormatInt16 ? "int16" : "float32"
+
+    let analyzer = SpeechAnalyzer(modules: [transcriber])
+    let reader = Task {
+        for try await result in transcriber.results {
+            emit([
+                "type": result.isFinal ? "final" : "volatile",
+                "text": String(result.text.characters),
+            ])
+        }
+    }
+
+    let (stream, continuation) = AsyncStream<AnalyzerInput>.makeStream()
+    try await analyzer.start(inputSequence: stream)
+    emit([
+        "type": "ready",
+        "locale": locale.identifier(.bcp47),
+        "sampleRate": analyzerFormat.sampleRate,
+        "encoding": sampleEncoding,
+    ])
+
+    // Read raw mono frames until the app closes stdin, which is how it signals
+    // the end of the recording.
+    let input = FileHandle.standardInput
+    var pending = Data()
+    var yieldedAudio = false
+    while true {
+        let chunk = input.availableData
+        if chunk.isEmpty { break }
+        pending.append(chunk)
+        let frames = pending.count / bytesPerFrame
+        if frames == 0 { continue }
+
+        let usable = frames * bytesPerFrame
+        guard
+            let buffer = AVAudioPCMBuffer(
+                pcmFormat: analyzerFormat, frameCapacity: AVAudioFrameCount(frames))
+        else { break }
+        buffer.frameLength = AVAudioFrameCount(frames)
+        if let destination = buffer.mutableAudioBufferList.pointee.mBuffers.mData {
+            pending.prefix(usable).withUnsafeBytes { raw in
+                guard let base = raw.baseAddress else { return }
+                memcpy(destination, base, usable)
+            }
+        }
+        pending.removeFirst(usable)
+        yieldedAudio = true
+        continuation.yield(AnalyzerInput(buffer: buffer))
+    }
+
+    continuation.finish()
+    // A stream that never received a frame - a tap-and-stop with no speech -
+    // neither finalises nor ends its results sequence, so it is torn down
+    // rather than awaited.
+    if yieldedAudio {
+        try await analyzer.finalizeAndFinishThroughEndOfInput()
+        try await reader.value
+    } else {
+        await analyzer.cancelAndFinishNow()
+        reader.cancel()
+    }
+    emit(["type": "done"])
+}
+
+/// Every language the engine can transcribe, flagged by whether its on-device
+/// model is already installed, so the settings list can say which need a
+/// download on first use.
+@available(macOS 26, *)
+private func listLocales() async {
+    let supported = await SpeechTranscriber.supportedLocales
+    let installed = Set(await SpeechTranscriber.installedLocales.map { $0.identifier(.bcp47) })
+    let locales = supported
+        .map { locale -> [String: Any] in
+            let tag = locale.identifier(.bcp47)
+            return [
+                "tag": tag,
+                "label": locale.localizedString(forIdentifier: locale.identifier) ?? tag,
+                "installed": installed.contains(tag),
+            ]
+        }
+        .sorted { ($0["label"] as? String ?? "") < ($1["label"] as? String ?? "") }
+    emit(["ok": true, "locales": locales])
+}
+
 private func value(of flag: String, in arguments: [String]) -> String? {
     guard let index = arguments.firstIndex(of: flag), index + 1 < arguments.count else {
         return nil
@@ -145,7 +258,7 @@ struct SpeechTranscriberTool {
     static func main() async {
         let arguments = Array(CommandLine.arguments.dropFirst())
         guard let command = arguments.first else {
-            emit(["ok": false, "code": "usage", "message": "Expected `probe` or `transcribe`."])
+            emit(["ok": false, "code": "usage", "message": "Expected `probe`, `locales`, `stream`, or `transcribe`."])
             exit(ExitCode.usage.rawValue)
         }
         let requestedLocale = value(of: "--locale", in: arguments) ?? "en-US"
@@ -163,6 +276,16 @@ struct SpeechTranscriberTool {
                 fail(failure.code, failure.message)
             } catch {
                 fail(.preparationFailed, error.localizedDescription)
+            }
+        case "locales":
+            await listLocales()
+        case "stream":
+            do {
+                try await runStream(requestedLocale: requestedLocale)
+            } catch let failure as Failure {
+                fail(failure.code, failure.message)
+            } catch {
+                fail(.transcriptionFailed, error.localizedDescription)
             }
         case "transcribe":
             guard let inputPath = value(of: "--input", in: arguments) else {

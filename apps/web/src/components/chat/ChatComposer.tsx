@@ -97,6 +97,7 @@ import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { ComposerControl, ComposerControlIcon, ComposerSelectControl } from "./ComposerControl";
 import { ComposerDictationButton } from "./ComposerDictationButton";
+import { useClientSettings } from "../../hooks/useSettings";
 import { useVoiceInput } from "../../voice/useVoiceInput";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
@@ -1615,8 +1616,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Dictation writes the finished transcript straight into the draft; the
   // controller has already merged it with the text and caret it captured when
   // recording started, and refuses to commit if either moved since.
+  const dictationLocale = useClientSettings((clientSettings) => clientSettings.dictationLocale);
   const dictation = useVoiceInput({
     ownerKey: activeThreadId ?? "new-thread",
+    preferredLocale: dictationLocale,
     draftMessage: prompt,
     selection: { start: composerCursor, end: composerCursor },
     disabled: isConnecting || isComposerApprovalState || projectSelectionRequired,
@@ -3175,7 +3178,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               ? "Ask for follow-up changes or attach images"
                               : "Ask anything, @tag files/folders, $use skills, or / for commands"
                 }
-                disabled={isConnecting || isComposerApprovalState || projectSelectionRequired}
+                disabled={
+                  isConnecting ||
+                  isComposerApprovalState ||
+                  projectSelectionRequired ||
+                  dictation.freezesEditor
+                }
               />
               {showMobilePendingAnswerActions ? (
                 <div
