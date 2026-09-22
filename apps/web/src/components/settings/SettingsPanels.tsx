@@ -67,7 +67,12 @@ import { isElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import { DIFF_THEME_OPTIONS } from "../../lib/diffRendering";
 import { useTheme } from "../../hooks/useTheme";
-import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
+import {
+  useClientSettings,
+  usePrimarySettings,
+  useUpdateClientSettings,
+  useUpdatePrimarySettings,
+} from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
@@ -108,6 +113,7 @@ import {
   NumberFieldInput,
 } from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { DictationLanguageSetting } from "./DictationLanguageSetting";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -1160,6 +1166,8 @@ export function AppearanceSettingsPanel() {
 export function GeneralSettingsPanel() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
+  const dictationLocale = useClientSettings((clientSettings) => clientSettings.dictationLocale);
+  const updateClientSettings = useUpdateClientSettings();
   const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
@@ -1249,6 +1257,16 @@ export function GeneralSettingsPanel() {
           }
         />
 
+        <SettingsRow
+          title="Dictation language"
+          description="Which language the composer's microphone listens for. Following the system language suits most people; set one here if you dictate in a different language than your Mac is set to."
+          control={
+            <DictationLanguageSetting
+              value={dictationLocale}
+              onChange={(tag) => updateClientSettings({ dictationLocale: tag })}
+            />
+          }
+        />
         <SettingsRow
           title="Time format"
           description="System default follows your browser or OS clock preference."

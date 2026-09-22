@@ -226,6 +226,26 @@ private func runStream(requestedLocale: String) async throws {
     emit(["type": "done"])
 }
 
+/// Every language the engine can transcribe, flagged by whether its on-device
+/// model is already installed, so the settings list can say which need a
+/// download on first use.
+@available(macOS 26, *)
+private func listLocales() async {
+    let supported = await SpeechTranscriber.supportedLocales
+    let installed = Set(await SpeechTranscriber.installedLocales.map { $0.identifier(.bcp47) })
+    let locales = supported
+        .map { locale -> [String: Any] in
+            let tag = locale.identifier(.bcp47)
+            return [
+                "tag": tag,
+                "label": locale.localizedString(forIdentifier: locale.identifier) ?? tag,
+                "installed": installed.contains(tag),
+            ]
+        }
+        .sorted { ($0["label"] as? String ?? "") < ($1["label"] as? String ?? "") }
+    emit(["ok": true, "locales": locales])
+}
+
 private func value(of flag: String, in arguments: [String]) -> String? {
     guard let index = arguments.firstIndex(of: flag), index + 1 < arguments.count else {
         return nil
@@ -238,7 +258,7 @@ struct SpeechTranscriberTool {
     static func main() async {
         let arguments = Array(CommandLine.arguments.dropFirst())
         guard let command = arguments.first else {
-            emit(["ok": false, "code": "usage", "message": "Expected `probe`, `stream`, or `transcribe`."])
+            emit(["ok": false, "code": "usage", "message": "Expected `probe`, `locales`, `stream`, or `transcribe`."])
             exit(ExitCode.usage.rawValue)
         }
         let requestedLocale = value(of: "--locale", in: arguments) ?? "en-US"
@@ -257,6 +277,8 @@ struct SpeechTranscriberTool {
             } catch {
                 fail(.preparationFailed, error.localizedDescription)
             }
+        case "locales":
+            await listLocales()
         case "stream":
             do {
                 try await runStream(requestedLocale: requestedLocale)

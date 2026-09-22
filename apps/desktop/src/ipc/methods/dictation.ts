@@ -1,4 +1,5 @@
 import {
+  DesktopDictationLocalesSchema,
   DesktopDictationProbeResultSchema,
   DesktopDictationRequestSchema,
   DesktopDictationResultSchema,
@@ -71,6 +72,9 @@ export const resolveHelperPath = Effect.fn("desktop.ipc.dictation.resolveHelperP
   return Option.none<string>();
 });
 
+const decodeLocalesResult = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(DesktopDictationLocalesSchema),
+);
 const decodeProbeResult = Schema.decodeUnknownEffect(
   Schema.fromJsonString(DesktopDictationProbeResultSchema),
 );
@@ -164,5 +168,18 @@ export const transcribeAudio = DesktopIpc.makeIpcMethod({
         );
       }),
     );
+  }),
+});
+
+export const listDictationLocales = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.LIST_DICTATION_LOCALES_CHANNEL,
+  payload: Schema.Void,
+  result: DesktopDictationLocalesSchema,
+  handler: Effect.fn("desktop.ipc.dictation.listLocales")(function* () {
+    const helperPath = yield* resolveHelperPath();
+    if (Option.isNone(helperPath)) {
+      return unavailable("Dictation is only available in the macOS desktop app.");
+    }
+    return yield* runHelper(helperPath.value, ["locales"], decodeLocalesResult);
   }),
 });

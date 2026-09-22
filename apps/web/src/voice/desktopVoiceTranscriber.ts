@@ -16,10 +16,13 @@ function toTranscriptionError(result: Extract<DesktopDictationResult, { ok: fals
 /**
  * Dictation through the desktop app's bundled macOS speech helper.
  *
+ * `preferredLocale` is the language chosen in Settings; empty or omitted
+ * follows the OS language.
+ *
  * Returns null in a plain browser and on desktop builds without the helper
  * (everything but macOS), which is what hides the composer's mic button.
  */
-export function getLocalVoiceTranscriber(): VoiceTranscriber | null {
+export function getLocalVoiceTranscriber(preferredLocale?: string): VoiceTranscriber | null {
   const bridge = globalThis.window?.desktopBridge;
   if (!bridge?.transcribeAudio || !bridge.probeDictation) return null;
   const transcribeAudio = bridge.transcribeAudio;
@@ -28,7 +31,9 @@ export function getLocalVoiceTranscriber(): VoiceTranscriber | null {
   return {
     prepare: async ({ signal }): Promise<PreparedVoiceTranscription> => {
       throwIfVoiceTranscriptionAborted(signal);
-      const requestedLocale = bridge.getSystemLocale?.() ?? navigator.language;
+      // An explicit choice in Settings wins; otherwise follow the OS.
+      const requestedLocale =
+        preferredLocale?.trim() || bridge.getSystemLocale?.() || navigator.language;
       // The probe resolves the locale the engine will really use and installs
       // the on-device model, so the first recording is not also the download.
       const probed = await probeDictation(requestedLocale);

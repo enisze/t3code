@@ -1103,6 +1103,26 @@ export const DesktopDictationResultSchema = Schema.Union([
 ]);
 export type DesktopDictationResult = typeof DesktopDictationResultSchema.Type;
 
+export const DesktopDictationLocaleSchema = Schema.Struct({
+  /** BCP-47 tag the engine accepts, e.g. `de-DE`. */
+  tag: Schema.String,
+  /** Endonym from the OS, e.g. "Deutsch (Deutschland)". */
+  label: Schema.String,
+  /** False means the first recording in this language downloads a model. */
+  installed: Schema.Boolean,
+});
+export type DesktopDictationLocale = typeof DesktopDictationLocaleSchema.Type;
+
+export const DesktopDictationLocalesSchema = Schema.Union([
+  Schema.Struct({ ok: Schema.Literal(true), locales: Schema.Array(DesktopDictationLocaleSchema) }),
+  Schema.Struct({
+    ok: Schema.Literal(false),
+    code: DesktopDictationErrorCodeSchema,
+    message: Schema.String,
+  }),
+]);
+export type DesktopDictationLocales = typeof DesktopDictationLocalesSchema.Type;
+
 export const DesktopDictationStreamStartSchema = Schema.Union([
   Schema.Struct({
     ok: Schema.Literal(true),
@@ -1161,6 +1181,8 @@ export interface DesktopBridge {
   transcribeAudio?: (request: DesktopDictationRequest) => Promise<DesktopDictationResult>;
   /** Whether dictation can run here, checked before showing the mic button. */
   probeDictation?: (locale: string) => Promise<DesktopDictationProbeResult>;
+  /** Languages the speech engine can transcribe on this machine. */
+  listDictationLocales?: () => Promise<DesktopDictationLocales>;
   /** Open a live dictation session; absent where streaming is unsupported. */
   startDictationStream?: (locale: string) => Promise<DesktopDictationStreamStart>;
   /** Feed audio and receive the transcript so far. */

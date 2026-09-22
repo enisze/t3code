@@ -96,3 +96,4 @@ export const START_DICTATION_STREAM_CHANNEL = "desktop:start-dictation-stream";
 export const PUSH_DICTATION_AUDIO_CHANNEL = "desktop:push-dictation-audio";
 export const FINISH_DICTATION_STREAM_CHANNEL = "desktop:finish-dictation-stream";
 export const CANCEL_DICTATION_STREAM_CHANNEL = "desktop:cancel-dictation-stream";
+export const LIST_DICTATION_LOCALES_CHANNEL = "desktop:list-dictation-locales";

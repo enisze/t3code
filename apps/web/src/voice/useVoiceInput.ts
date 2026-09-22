@@ -24,6 +24,8 @@ export function useVoiceInput(input: {
   readonly draftMessage: string;
   readonly selection: { readonly start: number; readonly end: number };
   readonly disabled?: boolean;
+  /** Language chosen in Settings; empty follows the OS language. */
+  readonly preferredLocale?: string;
   readonly onCommitTranscript: (
     text: string,
     selection: { readonly start: number; readonly end: number },
@@ -54,7 +56,7 @@ export function useVoiceInput(input: {
     recorderRef.current = recorder;
     controllerRef.current = new VoiceInputController({
       recorder,
-      getTranscriber: getLocalVoiceTranscriber,
+      getTranscriber: () => getLocalVoiceTranscriber(latestInputRef.current.preferredLocale),
       requestPermission: () => recorder.requestPermission(),
       configureRecording: () => Promise.resolve(),
       releaseRecording: () => Promise.resolve(),
@@ -96,7 +98,7 @@ export function useVoiceInput(input: {
     state.phase === "error" ? (recorderRef.current?.lastFailure ?? state.error) : null;
 
   return {
-    isAvailable: getLocalVoiceTranscriber() !== null,
+    isAvailable: getLocalVoiceTranscriber(input.preferredLocale) !== null,
     state: detailedError === null ? state : { ...state, error: detailedError },
     isBusy: voiceInputBlocksSubmission(state),
     freezesEditor: voiceInputFreezesEditor(state),

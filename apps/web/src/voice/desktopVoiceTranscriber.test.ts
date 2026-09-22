@@ -72,6 +72,33 @@ describe("getLocalVoiceTranscriber", () => {
     expect(transcribeAudio).toHaveBeenCalledWith({ audio, locale: "en-US" });
   });
 
+  it("asks for the language chosen in settings instead of the OS language", async () => {
+    const probeDictation = vi.fn(async () => ({ ok: true as const, locale: "fr-FR" }));
+    installBridge({
+      getSystemLocale: () => "de-DE",
+      probeDictation,
+      transcribeAudio: vi.fn(),
+    });
+
+    await getLocalVoiceTranscriber("fr-FR")!.prepare({ signal: new AbortController().signal });
+
+    expect(probeDictation).toHaveBeenCalledWith("fr-FR");
+  });
+
+  it("falls back to the OS language when no language is chosen", async () => {
+    const probeDictation = vi.fn(async () => ({ ok: true as const, locale: "de-DE" }));
+    installBridge({
+      getSystemLocale: () => "de-DE",
+      probeDictation,
+      transcribeAudio: vi.fn(),
+    });
+
+    // An empty setting is the default and must not be sent as a locale.
+    await getLocalVoiceTranscriber("")!.prepare({ signal: new AbortController().signal });
+
+    expect(probeDictation).toHaveBeenCalledWith("de-DE");
+  });
+
   it("stops before transcribing when the recording was already cancelled", async () => {
     const transcribeAudio = vi.fn();
     installBridge({

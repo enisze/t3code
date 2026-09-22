@@ -94,9 +94,12 @@ you stop.
 
 Voice input needs Apple's on-device speech engine, so the microphone appears on
 supported iPhones with iOS 26 or later, and in the Mac desktop app on macOS 26 or
-later. It is not available in a browser, or on Windows and Linux. The language
-follows your device language; if that language has no speech model, the microphone
-reports that rather than transcribing in the wrong one.
+later. It is not available in a browser, or on Windows and Linux.
+
+Dictation follows your device language. To dictate in a different language than
+your Mac is set to, choose one under Settings › General › Dictation language. The
+list shows what the engine can transcribe on your machine and marks languages
+whose model downloads on first use.
 
 The first use may download Apple's speech model and needs a network connection.
 Later transcription works offline for that language. Recordings can be up to five

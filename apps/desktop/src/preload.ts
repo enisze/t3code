@@ -53,6 +53,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   getLocalEnvironmentBearerToken: () =>
     ipcRenderer.invoke(IpcChannels.GET_LOCAL_ENVIRONMENT_BEARER_TOKEN_CHANNEL),
   probeDictation: (locale) => ipcRenderer.invoke(IpcChannels.PROBE_DICTATION_CHANNEL, locale),
+  listDictationLocales: () => ipcRenderer.invoke(IpcChannels.LIST_DICTATION_LOCALES_CHANNEL),
   transcribeAudio: (request) => ipcRenderer.invoke(IpcChannels.TRANSCRIBE_AUDIO_CHANNEL, request),
   startDictationStream: (locale) =>
     ipcRenderer.invoke(IpcChannels.START_DICTATION_STREAM_CHANNEL, locale),

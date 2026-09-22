@@ -48,7 +48,7 @@ import {
 } from "./methods/window.ts";
 import * as PreviewIpc from "./methods/preview.ts";
 import * as AppActivationIpc from "./methods/appActivation.ts";
-import { probeDictation, transcribeAudio } from "./methods/dictation.ts";
+import { listDictationLocales, probeDictation, transcribeAudio } from "./methods/dictation.ts";
 import {
   cancelDictationStream,
   finishDictationStream,
@@ -71,6 +71,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(getLocalEnvironmentBearerToken);
 
   yield* ipc.handle(probeDictation);
+  yield* ipc.handle(listDictationLocales);
   yield* ipc.handle(transcribeAudio);
   yield* ipc.handle(startDictationStream);
   yield* ipc.handle(pushDictationAudio);
