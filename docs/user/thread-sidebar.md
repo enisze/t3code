@@ -28,6 +28,19 @@ The order syncs across devices.
 
 Pinning does not prevent automatic settlement. Settling a thread removes its pin.
 
+## Mark a thread ready
+
+Use the check button beside **Review**, above the right panel's tabs, to flag the
+open thread as done for whoever looks next — a green check appears on its sidebar
+row on every device. The mark stays until you clear it with the same button;
+nothing removes it for you. On mobile, **Mark ready** is in the thread's own menu.
+
+When several chats share one worktree, the sidebar collapses them into a single
+row, and that row shows the check when any of its chats is marked.
+
+The mark is a label only: it does not move the thread out of the active list or
+change when it settles.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list

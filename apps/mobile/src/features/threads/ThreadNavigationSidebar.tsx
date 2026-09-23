@@ -160,6 +160,7 @@ function ThreadNavigationSidebarPane(
     unpinThread,
     movePinnedThread,
     regenerateThreadTitle,
+    toggleThreadReady,
   } = useThreadListActions();
   const threadListV2Enabled = useThreadListV2Enabled();
   const pendingTasks = usePendingNewTasks();
@@ -423,6 +424,15 @@ function ThreadNavigationSidebarPane(
     const supported = new Set<EnvironmentId>();
     for (const [environmentId, config] of serverConfigs) {
       if (config.environment.capabilities.threadPinning === true) {
+        supported.add(environmentId);
+      }
+    }
+    return supported;
+  }, [serverConfigs]);
+  const readyMarkEnvironmentIds = useMemo(() => {
+    const supported = new Set<EnvironmentId>();
+    for (const [environmentId, config] of serverConfigs) {
+      if (config.environment.capabilities.threadReadyMark === true) {
         supported.add(environmentId);
       }
     }
@@ -891,6 +901,7 @@ function ThreadNavigationSidebarPane(
               onSettleThread={settleThread}
               snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
               pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
+              readyMarkSupported={readyMarkEnvironmentIds.has(thread.environmentId)}
               pinReorderSupported={pinReorderEnvironmentIds.has(thread.environmentId)}
               canMovePinnedUp={
                 arrangedPinnedKeys.indexOf(`${thread.environmentId}:${thread.id}`) > 0
@@ -905,6 +916,7 @@ function ThreadNavigationSidebarPane(
               onPinThread={pinThread}
               onUnpinThread={unpinThread}
               onMovePinnedThread={movePinnedThread}
+              onToggleThreadReady={toggleThreadReady}
               onSwipeableClose={handleSwipeableClose}
               onSwipeableWillOpen={handleSwipeableWillOpen}
               simultaneousSwipeGesture={sidebarScrollGesture}
@@ -1005,7 +1017,9 @@ function ThreadNavigationSidebarPane(
               onArchiveThread={archiveThread}
               onDeleteThread={confirmDeleteThread}
               onRegenerateThreadTitle={regenerateThreadTitle}
+              onToggleThreadReady={toggleThreadReady}
               titleRegenerationSupported={titleRegenerationEnvironmentIds.has(thread.environmentId)}
+              readyMarkSupported={readyMarkEnvironmentIds.has(thread.environmentId)}
               onSelectThread={handleSelectThread}
               onSwipeableClose={handleSwipeableClose}
               onSwipeableWillOpen={handleSwipeableWillOpen}

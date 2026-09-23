@@ -221,6 +221,26 @@ export function applyThreadDetailEvent(
         },
       };
 
+    case "thread.ready-marked":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          readyAt: event.payload.readyAt,
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+
+    case "thread.ready-cleared":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          readyAt: null,
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+
     // ── Thread metadata ─────────────────────────────────────────────
     case "thread.meta-updated":
       return {

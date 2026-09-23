@@ -19,6 +19,7 @@ import {
   PrStatusTooltipContent,
   resolveThreadPr,
   terminalStatusFromRunningIds,
+  ThreadReadyCheck,
   ThreadStatusLabel,
   ThreadWorktreeIndicator,
 } from "./ThreadStatusIndicators";
@@ -720,6 +721,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
             </Tooltip>
           )}
           {threadStatus && <ThreadStatusLabel status={threadStatus} />}
+          <ThreadReadyCheck readyAt={thread.readyAt} />
           {renamingThreadKey === threadKey ? (
             <input
               ref={handleRenameInputRef}

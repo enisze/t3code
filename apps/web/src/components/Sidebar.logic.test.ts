@@ -1368,6 +1368,55 @@ describe("resolveWorktreeWorkspaceRepresentative", () => {
     expect(resolveThreadStatusPill({ thread: representativeStatus })?.label).toBe("Working");
   });
 
+  it("surfaces a collapsed sibling's ready mark on the representative row", () => {
+    // Marking any chat in a worktree has to show on the row that stands in for
+    // the group, or marking a collapsed sibling looks like nothing happened.
+    const representative = mergeThread({
+      id: ThreadId.make("older"),
+      worktreePath: "/wt/a",
+      createdAt: "2026-03-09T10:00:00.000Z",
+    });
+    const markedSibling = mergeThread({
+      id: ThreadId.make("newer"),
+      worktreePath: "/wt/a",
+      createdAt: "2026-03-09T12:00:00.000Z",
+      readyAt: "2026-03-09T13:00:00.000Z",
+    });
+
+    const { threads: collapsed } = collapseWorktreeSiblings(
+      [representative, markedSibling],
+      (thread) => `${thread.environmentId}:${thread.id}`,
+      mergeWorktreeSiblingRunningStatus,
+    );
+
+    expect(collapsed).toHaveLength(1);
+    expect(collapsed[0]?.id).toBe("older");
+    expect(collapsed[0]?.readyAt).toBe("2026-03-09T13:00:00.000Z");
+  });
+
+  it("leaves an unmarked worktree group unmarked", () => {
+    const representative = mergeThread({
+      id: ThreadId.make("older"),
+      worktreePath: "/wt/a",
+      createdAt: "2026-03-09T10:00:00.000Z",
+    });
+    const sibling = mergeThread({
+      id: ThreadId.make("newer"),
+      worktreePath: "/wt/a",
+      createdAt: "2026-03-09T12:00:00.000Z",
+    });
+
+    const { threads: collapsed } = collapseWorktreeSiblings(
+      [representative, sibling],
+      (thread) => `${thread.environmentId}:${thread.id}`,
+      mergeWorktreeSiblingRunningStatus,
+    );
+
+    expect(collapsed[0]?.readyAt ?? null).toBeNull();
+    // Nothing changed, so the representative object itself is reused.
+    expect(collapsed[0]).toBe(representative);
+  });
+
   it("surfaces a sibling awaiting input as Input over the running Working state", () => {
     // Representative is idle; one sibling is running, another is waiting on the
     // user. The row must read "Input" — needing the user beats "Working".

@@ -48,6 +48,13 @@ function environmentSupportsPinReorder(environmentId: EnvironmentThreadShell["en
   );
 }
 
+function environmentSupportsReadyMark(environmentId: EnvironmentThreadShell["environmentId"]) {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadReadyMark === true
+  );
+}
+
 function environmentSupportsTitleRegeneration(
   environmentId: EnvironmentThreadShell["environmentId"],
 ) {
@@ -227,11 +234,17 @@ export function useThreadListActions(): {
     direction: "up" | "down",
   ) => Promise<boolean>;
   readonly regenerateThreadTitle: (thread: EnvironmentThreadShell) => Promise<boolean>;
+  readonly toggleThreadReady: (
+    thread: EnvironmentThreadShell,
+    isReady: boolean,
+  ) => Promise<boolean>;
 } {
   const executeAction = useThreadActionExecutor();
   const snoozeMutation = useAtomCommand(threadEnvironment.snooze, { reportFailure: false });
   const unsnoozeMutation = useAtomCommand(threadEnvironment.unsnooze, { reportFailure: false });
   const pinMutation = useAtomCommand(threadEnvironment.pin, { reportFailure: false });
+  const markReadyMutation = useAtomCommand(threadEnvironment.markReady, { reportFailure: false });
+  const clearReadyMutation = useAtomCommand(threadEnvironment.clearReady, { reportFailure: false });
   const unpinMutation = useAtomCommand(threadEnvironment.unpin, { reportFailure: false });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
@@ -409,6 +422,36 @@ export function useThreadListActions(): {
     },
     [unpinMutation],
   );
+  const toggleThreadReady = useCallback(
+    async (thread: EnvironmentThreadShell, isReady: boolean) => {
+      const failureTitle = isReady ? "Could not clear ready mark" : "Could not mark thread ready";
+      if (!environmentSupportsReadyMark(thread.environmentId)) {
+        Alert.alert(
+          failureTitle,
+          "This environment's server does not support marking threads ready yet. Update the server to use Mark ready.",
+        );
+        return false;
+      }
+      selectionHaptic();
+      const mutate = isReady ? clearReadyMutation : markReadyMutation;
+      const result = await mutate({
+        environmentId: thread.environmentId,
+        input: { threadId: thread.id },
+      });
+      if (result._tag === "Failure") {
+        const error = Cause.squash(result.cause);
+        Alert.alert(
+          failureTitle,
+          error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : "The thread could not be updated.",
+        );
+        return false;
+      }
+      return true;
+    },
+    [clearReadyMutation, markReadyMutation],
+  );
   const regenerateThreadTitle = useCallback(
     async (thread: EnvironmentThreadShell) => {
       const key = scopedThreadKey(thread.environmentId, thread.id);
@@ -543,6 +586,7 @@ export function useThreadListActions(): {
     unpinThread,
     movePinnedThread,
     regenerateThreadTitle,
+    toggleThreadReady,
   };
 }
 

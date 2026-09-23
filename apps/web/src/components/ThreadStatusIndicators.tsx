@@ -6,7 +6,7 @@ import {
   type ThreadLinkedPullRequest,
   type VcsStatusResult,
 } from "@t3tools/contracts";
-import { FolderGit2Icon, TerminalIcon } from "lucide-react";
+import { CircleCheckIcon, FolderGit2Icon, TerminalIcon } from "lucide-react";
 import { useMemo } from "react";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
@@ -266,6 +266,50 @@ export function ThreadStatusLabel({
         <span className="hidden md:inline">{status.label}</span>
       </TooltipTrigger>
       <TooltipPopup side="top">{status.label}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+/**
+ * The mark's glyph. Shared by the sidebar badge and the chat toolbar toggle so
+ * the two cannot drift apart. The color rides the icon rather than a parent:
+ * inside a Button, base styles force `--control-icon-color` onto any child svg
+ * that carries no `text-` class of its own.
+ */
+export function ThreadReadyCheckIcon({ marked = true }: { marked?: boolean }) {
+  return <CircleCheckIcon className={`size-3.5 ${marked ? "text-success" : ""}`} aria-hidden />;
+}
+
+/**
+ * The green check a user hangs on a thread they've marked ready. Purely a
+ * badge — it says nothing about what the agent is doing, so it renders
+ * alongside the status pill rather than replacing it.
+ */
+export function ThreadReadyCheck({
+  readyAt,
+  className,
+}: {
+  readyAt: string | null | undefined;
+  className?: string;
+}) {
+  if (readyAt == null) {
+    return null;
+  }
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            role="img"
+            aria-label="Marked ready"
+            data-testid="thread-ready-check"
+            className={`inline-flex shrink-0 items-center justify-center ${className ?? ""}`}
+          />
+        }
+      >
+        <ThreadReadyCheckIcon />
+      </TooltipTrigger>
+      <TooltipPopup side="top">Marked ready</TooltipPopup>
     </Tooltip>
   );
 }
