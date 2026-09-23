@@ -280,6 +280,55 @@ describe("applyThreadDetailEvent", () => {
     });
   });
 
+  describe("thread.ready-marked / thread.ready-cleared", () => {
+    it("sets readyAt", () => {
+      const readyAt = "2026-04-01T05:00:00.000Z";
+      const result = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 5,
+        occurredAt: readyAt,
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.ready-marked",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          readyAt,
+          updatedAt: readyAt,
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.readyAt).toBe(readyAt);
+      }
+    });
+
+    it("clears readyAt", () => {
+      const readyThread: OrchestrationThread = {
+        ...baseThread,
+        readyAt: "2026-04-01T05:00:00.000Z",
+      };
+      const updatedAt = "2026-04-01T06:00:00.000Z";
+      const result = applyThreadDetailEvent(readyThread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: updatedAt,
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.ready-cleared",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          updatedAt,
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.readyAt).toBeNull();
+      }
+    });
+  });
+
   describe("thread.meta-updated", () => {
     it("patches title and branch", () => {
       const result = applyThreadDetailEvent(baseThread, {

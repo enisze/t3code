@@ -814,6 +814,56 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.mark-ready": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      // Idempotent by re-emission (see thread.settle): marking an already
+      // marked thread keeps the original stamp so the projection is a no-op
+      // and the badge does not flicker under raced clients.
+      const existingReadyAt = thread.readyAt ?? null;
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.ready-marked",
+        payload: {
+          threadId: command.threadId,
+          readyAt: existingReadyAt ?? occurredAt,
+          updatedAt: existingReadyAt !== null ? thread.updatedAt : occurredAt,
+        },
+      };
+    }
+
+    case "thread.clear-ready": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const alreadyCleared = thread.readyAt == null;
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.ready-cleared",
+        payload: {
+          threadId: command.threadId,
+          updatedAt: alreadyCleared ? thread.updatedAt : occurredAt,
+        },
+      };
+    }
+
     case "thread.meta.update": {
       const thread = yield* requireThread({
         readModel,

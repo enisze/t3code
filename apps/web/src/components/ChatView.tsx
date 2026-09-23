@@ -257,7 +257,7 @@ import {
   shouldShowProviderStatusBanner,
 } from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
-import { resolveThreadPr } from "./ThreadStatusIndicators";
+import { resolveThreadPr, ThreadReadyCheckIcon } from "./ThreadStatusIndicators";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { ThreadSyncStatusPill } from "./chat/ThreadSyncStatusPill";
 import {
@@ -4001,6 +4001,8 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const supportsSettlement = serverConfig?.environment.capabilities.threadSettlement === true;
   const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;
+  const supportsReadyMark = serverConfig?.environment.capabilities.threadReadyMark === true;
+  const activeThreadReady = activeThreadShell?.readyAt != null;
   const nowMinute = useNowMinute();
   const activeThreadSnoozed =
     activeThreadShell !== null &&
@@ -4091,6 +4093,42 @@ function ChatViewContent(props: ChatViewProps) {
       setUnsnoozingThreadKey((current) => (current === threadKey ? null : current));
     }
   }, [activeThreadRef, unsnoozeThreadMutation]);
+  const markThreadReadyMutation = useAtomCommand(threadEnvironment.markReady, {
+    reportFailure: false,
+  });
+  const clearThreadReadyMutation = useAtomCommand(threadEnvironment.clearReady, {
+    reportFailure: false,
+  });
+  // Keyed by thread for the same reason as un-settle: the pending state must
+  // follow the thread it belongs to across navigation.
+  const [readyTogglingThreadKey, setReadyTogglingThreadKey] = useState<string | null>(null);
+  const isTogglingReady =
+    readyTogglingThreadKey !== null && readyTogglingThreadKey === activeThreadKey;
+  const handleToggleActiveThreadReady = useCallback(async () => {
+    if (!activeThreadRef) return;
+    const threadKey = scopedThreadKey(activeThreadRef);
+    const wasReady = activeThreadReady;
+    setReadyTogglingThreadKey(threadKey);
+    try {
+      const mutate = wasReady ? clearThreadReadyMutation : markThreadReadyMutation;
+      const result = await mutate({
+        environmentId: activeThreadRef.environmentId,
+        input: { threadId: activeThreadRef.threadId },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: wasReady ? "Failed to clear ready mark" : "Failed to mark thread ready",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    } finally {
+      setReadyTogglingThreadKey((current) => (current === threadKey ? null : current));
+    }
+  }, [activeThreadReady, activeThreadRef, clearThreadReadyMutation, markThreadReadyMutation]);
   const [isRestoringThreadBranch, setIsRestoringThreadBranch] = useState(false);
   const [branchRestoreConfirmOpen, setBranchRestoreConfirmOpen] = useState(false);
   // Once revealed for a given mismatch, the banner stays mounted until the
@@ -5911,7 +5949,32 @@ function ChatViewContent(props: ChatViewProps) {
     </div>
   );
   const rightPanelTabActions = activeProject ? (
-    <div className="flex shrink-0 items-center [-webkit-app-region:no-drag]">
+    <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
+      {supportsReadyMark && activeThreadShell !== null ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                size="xs"
+                variant="ghost"
+                disabled={isTogglingReady}
+                className="px-1.5"
+                onClick={() => void handleToggleActiveThreadReady()}
+                aria-pressed={activeThreadReady}
+                aria-label={activeThreadReady ? "Clear ready mark" : "Mark thread ready"}
+              />
+            }
+          >
+            <ThreadReadyCheckIcon marked={activeThreadReady} />
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">
+            {activeThreadReady
+              ? "Clear the ready mark on this thread"
+              : "Mark this thread ready — a green check shows on its sidebar row"}
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
       <Tooltip>
         <TooltipTrigger
           render={

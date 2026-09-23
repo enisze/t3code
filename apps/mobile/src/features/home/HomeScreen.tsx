@@ -114,6 +114,10 @@ interface HomeScreenProps {
   readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;
   readonly onPinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onUnpinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
+  readonly onToggleThreadReady: (
+    thread: EnvironmentThreadShell,
+    isReady: boolean,
+  ) => Promise<boolean>;
   readonly onMovePinnedThread: (
     thread: EnvironmentThreadShell,
     direction: "up" | "down",
@@ -524,6 +528,12 @@ export function HomeScreen(props: HomeScreenProps) {
     },
     [props.onUnpinThread],
   );
+  const handleToggleThreadReady = useCallback(
+    (thread: EnvironmentThreadShell, isReady: boolean) => {
+      void props.onToggleThreadReady(thread, isReady);
+    },
+    [props.onToggleThreadReady],
+  );
   const handleRegenerateThreadTitle = useCallback(
     (thread: EnvironmentThreadShell) => {
       void props.onRegenerateThreadTitle(thread);
@@ -594,6 +604,15 @@ export function HomeScreen(props: HomeScreenProps) {
     const supported = new Set<EnvironmentId>();
     for (const [environmentId, config] of serverConfigs) {
       if (config.environment.capabilities.threadPinning === true) {
+        supported.add(environmentId);
+      }
+    }
+    return supported;
+  }, [serverConfigs]);
+  const readyMarkEnvironmentIds = useMemo(() => {
+    const supported = new Set<EnvironmentId>();
+    for (const [environmentId, config] of serverConfigs) {
+      if (config.environment.capabilities.threadReadyMark === true) {
         supported.add(environmentId);
       }
     }
@@ -830,6 +849,7 @@ export function HomeScreen(props: HomeScreenProps) {
           onSettleThread={handleSettleThread}
           snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
           pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
+          readyMarkSupported={readyMarkEnvironmentIds.has(thread.environmentId)}
           pinReorderSupported={pinReorderEnvironmentIds.has(thread.environmentId)}
           canMovePinnedUp={arrangedPinnedKeys.indexOf(`${thread.environmentId}:${thread.id}`) > 0}
           canMovePinnedDown={(() => {
@@ -842,6 +862,7 @@ export function HomeScreen(props: HomeScreenProps) {
           onPinThread={handlePinThread}
           onUnpinThread={handleUnpinThread}
           onMovePinnedThread={handleMovePinnedThread}
+          onToggleThreadReady={handleToggleThreadReady}
           onSwipeableClose={handleSwipeableClose}
           onSwipeableWillOpen={handleSwipeableWillOpen}
         />
@@ -853,6 +874,7 @@ export function HomeScreen(props: HomeScreenProps) {
       handleMovePinnedThread,
       handlePinThread,
       handleRegenerateThreadTitle,
+      handleToggleThreadReady,
       handleSettleThread,
       handleSnoozeThread,
       handleUnpinThread,
@@ -861,6 +883,7 @@ export function HomeScreen(props: HomeScreenProps) {
       handleSwipeableWillOpen,
       handleUnsettleThread,
       pinningEnvironmentIds,
+      readyMarkEnvironmentIds,
       machineByEnvironmentId,
       pinReorderEnvironmentIds,
       projectByKey,
@@ -978,7 +1001,9 @@ export function HomeScreen(props: HomeScreenProps) {
               onArchiveThread={props.onArchiveThread}
               onDeleteThread={props.onDeleteThread}
               onRegenerateThreadTitle={handleRegenerateThreadTitle}
+              onToggleThreadReady={handleToggleThreadReady}
               titleRegenerationSupported={titleRegenerationEnvironmentIds.has(thread.environmentId)}
+              readyMarkSupported={readyMarkEnvironmentIds.has(thread.environmentId)}
               onSelectThread={props.onSelectThread}
               onSwipeableClose={handleSwipeableClose}
               onSwipeableWillOpen={handleSwipeableWillOpen}

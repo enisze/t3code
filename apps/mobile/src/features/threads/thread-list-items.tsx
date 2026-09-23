@@ -427,7 +427,11 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly onRegenerateThreadTitle: (thread: EnvironmentThreadShell) => void;
+  /** Flips the manual ready mark; `isReady` is the mark's current state. */
+  readonly onToggleThreadReady: (thread: EnvironmentThreadShell, isReady: boolean) => void;
   readonly titleRegenerationSupported: boolean;
+  /** False on servers that predate thread.mark-ready/thread.clear-ready. */
+  readonly readyMarkSupported: boolean;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
   readonly simultaneousSwipeGesture?: ComponentProps<
@@ -449,8 +453,14 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const selectedBackgroundColor = theme["--color-user-bubble"];
   const selectedForegroundColor = theme["--color-user-bubble-foreground"];
 
-  const { thread, onSelectThread, onArchiveThread, onDeleteThread, onRegenerateThreadTitle } =
-    props;
+  const {
+    thread,
+    onSelectThread,
+    onArchiveThread,
+    onDeleteThread,
+    onRegenerateThreadTitle,
+    onToggleThreadReady,
+  } = props;
   const status = resolveThreadStatus(thread);
   const pr = useThreadPr(thread);
   const timestamp = relativeTime(
@@ -480,16 +490,36 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     () => onRegenerateThreadTitle(thread),
     [onRegenerateThreadTitle, thread],
   );
+  const handleToggleReady = useCallback(
+    () => onToggleThreadReady(thread, thread.readyAt != null),
+    [onToggleThreadReady, thread],
+  );
   const menuActions = useMemo<MenuAction[]>(
     () => [
       THREAD_ROW_MENU_ACTIONS[0]!,
+      ...(props.readyMarkSupported
+        ? [
+            thread.readyAt != null
+              ? ({
+                  id: "clear-ready",
+                  title: "Clear ready mark",
+                  image: "checkmark.circle",
+                } as const)
+              : ({ id: "mark-ready", title: "Mark ready", image: "checkmark.circle" } as const),
+          ]
+        : []),
       ...buildThreadTitleRegenerationMenuItems({
         supported: props.titleRegenerationSupported,
         isRegenerating: thread.titleRegeneration != null,
       }),
       THREAD_ROW_MENU_ACTIONS[1]!,
     ],
-    [props.titleRegenerationSupported, thread.titleRegeneration],
+    [
+      props.readyMarkSupported,
+      props.titleRegenerationSupported,
+      thread.readyAt,
+      thread.titleRegeneration,
+    ],
   );
   const primaryAction = useMemo(
     () => ({
@@ -503,11 +533,25 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
       if (nativeEvent.event === "archive") handleArchive();
+      if (nativeEvent.event === "mark-ready" || nativeEvent.event === "clear-ready") {
+        handleToggleReady();
+      }
       if (nativeEvent.event === "regenerate-title") handleRegenerateTitle();
       if (nativeEvent.event === "delete") handleDelete();
     },
-    [handleArchive, handleDelete, handleRegenerateTitle],
+    [handleArchive, handleDelete, handleRegenerateTitle, handleToggleReady],
   );
+
+  const readyCheck =
+    thread.readyAt != null ? (
+      <SymbolView
+        accessibilityLabel="Marked ready"
+        name="checkmark.circle"
+        size={13}
+        tintColorClassName={"accent-adaptive-emerald-600-400"}
+        type="monochrome"
+      />
+    ) : null;
 
   const statusPill = effectiveStatus ? (
     <View className={`${effectiveStatus.pillClassName} rounded-full px-1.5 py-0.5`}>
@@ -587,6 +631,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
                 {thread.title}
               </Text>
               <View className="flex-row items-center gap-2">
+                {readyCheck}
                 {statusPill}
                 <Text className="text-base tabular-nums text-foreground-tertiary">{timestamp}</Text>
                 <SymbolView
@@ -646,6 +691,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
               {thread.title}
             </Text>
             <View className="flex-row items-center gap-2">
+              {readyCheck}
               {statusPill}
               <Text
                 className={cn(

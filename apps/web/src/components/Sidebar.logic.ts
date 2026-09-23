@@ -912,7 +912,10 @@ export function resolveWorktreeWorkspaceRepresentative<
  * flags here is enough for the row to read "Approval"/"Input" over "Working".
  */
 export function mergeWorktreeSiblingRunningStatus<
-  T extends Pick<SidebarThreadSummary, "session" | "hasPendingApprovals" | "hasPendingUserInput">,
+  T extends Pick<
+    SidebarThreadSummary,
+    "session" | "hasPendingApprovals" | "hasPendingUserInput" | "readyAt"
+  >,
 >(representative: T, members: readonly T[]): T {
   const runningSibling = members.find(
     (thread) => thread.session?.status === "running" || thread.session?.status === "starting",
@@ -923,14 +926,26 @@ export function mergeWorktreeSiblingRunningStatus<
       : representative.session;
   const hasPendingApprovals = members.some((thread) => thread.hasPendingApprovals);
   const hasPendingUserInput = members.some((thread) => thread.hasPendingUserInput);
+  // The row stands in for every chat in the worktree, so a mark on any member
+  // has to surface here — otherwise marking a collapsed sibling looks like
+  // nothing happened. Earliest mark wins so the badge stops flickering between
+  // members as they are marked and cleared.
+  const readyAt = members.reduce<string | null | undefined>(
+    (earliest, thread) =>
+      thread.readyAt != null && (earliest == null || thread.readyAt < earliest)
+        ? thread.readyAt
+        : earliest,
+    representative.readyAt,
+  );
   if (
     session === representative.session &&
     hasPendingApprovals === representative.hasPendingApprovals &&
-    hasPendingUserInput === representative.hasPendingUserInput
+    hasPendingUserInput === representative.hasPendingUserInput &&
+    readyAt === representative.readyAt
   ) {
     return representative;
   }
-  return { ...representative, session, hasPendingApprovals, hasPendingUserInput };
+  return { ...representative, session, hasPendingApprovals, hasPendingUserInput, readyAt };
 }
 
 /**

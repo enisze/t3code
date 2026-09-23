@@ -358,6 +358,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
   readonly onPinThread: (thread: EnvironmentThreadShell) => void;
   readonly onUnpinThread: (thread: EnvironmentThreadShell) => void;
+  /** Flips the manual ready mark; `isReady` is the mark's current state. */
+  readonly onToggleThreadReady: (thread: EnvironmentThreadShell, isReady: boolean) => void;
   /** False on environments whose server predates thread.settle/unsettle:
       swipe + menu fall back to Archive instead of failing on use. */
   readonly settlementSupported: boolean;
@@ -365,6 +367,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly snoozeSupported: boolean;
   /** False on servers that predate thread.pin/unpin. */
   readonly pinningSupported: boolean;
+  /** False on servers that predate thread.mark-ready/thread.clear-ready. */
+  readonly readyMarkSupported: boolean;
   /** False on servers that predate thread title regeneration. */
   readonly titleRegenerationSupported: boolean;
   /** False on servers that predate thread.pin.reorder. Gates the pinned
@@ -397,6 +401,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     onArchiveThread,
     onPinThread,
     onUnpinThread,
+    onToggleThreadReady,
     onMovePinnedThread,
   } = props;
   const snoozedRow = props.snoozed === true;
@@ -436,6 +441,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleUnsettle = useCallback(() => onUnsettleThread(thread), [onUnsettleThread, thread]);
   const handlePin = useCallback(() => onPinThread(thread), [onPinThread, thread]);
   const handleUnpin = useCallback(() => onUnpinThread(thread), [onUnpinThread, thread]);
+  const handleToggleReady = useCallback(
+    () => onToggleThreadReady(thread, thread.readyAt != null),
+    [onToggleThreadReady, thread],
+  );
   const handleMovePinnedUp = useCallback(
     () => onMovePinnedThread?.(thread, "up"),
     [onMovePinnedThread, thread],
@@ -516,6 +525,17 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       thread.pinnedAt,
     ],
   );
+  const readyMenuItem = useMemo<MenuAction[]>(
+    () =>
+      props.readyMarkSupported
+        ? [
+            thread.readyAt != null
+              ? { id: "clear-ready", title: "Clear ready mark", image: "checkmark.circle" }
+              : { id: "mark-ready", title: "Mark ready", image: "checkmark.circle" },
+          ]
+        : [],
+    [props.readyMarkSupported, thread.readyAt],
+  );
   const titleRegenerationMenuItems = useMemo<MenuAction[]>(
     () =>
       buildThreadTitleRegenerationMenuItems({
@@ -534,32 +554,40 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         subactions: snoozePresetActions,
       },
       ...pinMenuItem,
+      ...readyMenuItem,
       ...titleRegenerationMenuItems,
       { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
     ],
-    [pinMenuItem, snoozePresetActions, titleRegenerationMenuItems],
+    [pinMenuItem, readyMenuItem, snoozePresetActions, titleRegenerationMenuItems],
   );
   const cardMenuActions = useMemo<MenuAction[]>(
     () => [
       CARD_MENU_ACTIONS[0]!,
       ...pinMenuItem,
+      ...readyMenuItem,
       ...titleRegenerationMenuItems,
       ...CARD_MENU_ACTIONS.slice(1),
     ],
-    [pinMenuItem, titleRegenerationMenuItems],
+    [pinMenuItem, readyMenuItem, titleRegenerationMenuItems],
   );
   const slimMenuActions = useMemo<MenuAction[]>(
     () => [
       SLIM_MENU_ACTIONS[0]!,
       ...(thread.pinnedAt != null ? pinMenuItem : []),
+      ...readyMenuItem,
       ...titleRegenerationMenuItems,
       SLIM_MENU_ACTIONS[1]!,
     ],
-    [pinMenuItem, thread.pinnedAt, titleRegenerationMenuItems],
+    [pinMenuItem, readyMenuItem, thread.pinnedAt, titleRegenerationMenuItems],
   );
   const snoozedMenuActions = useMemo<MenuAction[]>(
-    () => [SNOOZED_MENU_ACTIONS[0]!, ...titleRegenerationMenuItems, SNOOZED_MENU_ACTIONS[1]!],
-    [titleRegenerationMenuItems],
+    () => [
+      SNOOZED_MENU_ACTIONS[0]!,
+      ...readyMenuItem,
+      ...titleRegenerationMenuItems,
+      SNOOZED_MENU_ACTIONS[1]!,
+    ],
+    [readyMenuItem, titleRegenerationMenuItems],
   );
   const legacyMenuActions = useMemo<MenuAction[]>(
     () => [LEGACY_MENU_ACTIONS[0]!, ...titleRegenerationMenuItems, LEGACY_MENU_ACTIONS[1]!],
@@ -574,6 +602,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "unpin") handleUnpin();
       if (nativeEvent.event === "move-pin-up") handleMovePinnedUp();
       if (nativeEvent.event === "move-pin-down") handleMovePinnedDown();
+      if (nativeEvent.event === "mark-ready" || nativeEvent.event === "clear-ready") {
+        handleToggleReady();
+      }
       if (nativeEvent.event === "archive") handleArchive();
       if (nativeEvent.event === "regenerate-title") handleRegenerateTitle();
       if (nativeEvent.event === "delete") handleDelete();
@@ -597,6 +628,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       handlePin,
       handleSettle,
       handleSnooze,
+      handleToggleReady,
       handleUnpin,
       handleUnsettle,
       handleUnsnooze,
@@ -694,6 +726,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             name="pin"
             size={11}
             tintColorClassName={"accent-foreground-muted"}
+            type="monochrome"
+          />
+        ) : null}
+        {thread.readyAt != null ? (
+          <SymbolView
+            accessibilityLabel="Marked ready"
+            name="checkmark.circle"
+            size={13}
+            tintColorClassName={"accent-adaptive-emerald-600-400"}
             type="monochrome"
           />
         ) : null}
@@ -907,6 +948,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               />
             ) : null}
           </View>
+          {thread.readyAt != null ? (
+            <SymbolView
+              accessibilityLabel="Marked ready"
+              name="checkmark.circle"
+              size={13}
+              tintColorClassName={"accent-adaptive-emerald-600-400"}
+              type="monochrome"
+            />
+          ) : null}
           <Text
             className={cn(
               "text-sm tabular-nums",

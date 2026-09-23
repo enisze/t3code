@@ -146,7 +146,7 @@ import {
   sortThreadsForSidebarV2,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
-import { prStatusIndicator, resolveThreadPr } from "./ThreadStatusIndicators";
+import { prStatusIndicator, resolveThreadPr, ThreadReadyCheck } from "./ThreadStatusIndicators";
 import {
   resolveSnoozePresets,
   snoozeWakeDescription,
@@ -706,6 +706,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 fallbackIcon={MessageSquareIcon}
               />
             </span>
+            <ThreadReadyCheck readyAt={thread.readyAt} />
             {title}
             {previewRunning ? (
               <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
@@ -867,7 +868,10 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 </span>
               </span>
             </div>
-            <div className="mt-1 flex min-w-0">{title}</div>
+            <div className="mt-1 flex min-w-0 items-center gap-1.5">
+              <ThreadReadyCheck readyAt={thread.readyAt} />
+              {title}
+            </div>
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground/75">
               {displayedBranch ? (
                 <span className="min-w-0 flex-1 truncate whitespace-nowrap">{displayedBranch}</span>
