@@ -4797,7 +4797,6 @@ function ChatViewContent(props: ChatViewProps) {
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
-      activateChatContent();
       setMaximizedRightPanelThreadKey(null);
       await onSubmitPlanFollowUp({
         text: followUp.text,
@@ -4864,7 +4863,8 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     sendInFlightRef.current = true;
-    activateChatContent();
+    // Sending leaves an open file/diff/preview tab in place: the composer stays
+    // docked below it, so the user can keep reviewing while the turn runs.
     setMaximizedRightPanelThreadKey(null);
     if (isDraftHeroState && activeThreadKey) {
       let resolveDockStarted: (() => void) | undefined;
@@ -5234,10 +5234,6 @@ function ChatViewContent(props: ChatViewProps) {
     async (requestId: ApprovalRequestId, answers: Record<string, unknown>) => {
       if (!activeThreadId) return;
 
-      // Answering the agent hands the turn back to the conversation, so reveal
-      // it exactly like sending a message does. Without this, a file/diff tab
-      // opened while reviewing keeps covering the chat the answer just resumed.
-      activateChatContent();
       setMaximizedRightPanelThreadKey(null);
       setRespondingUserInputRequestIds((existing) =>
         existing.includes(requestId) ? existing : [...existing, requestId],
@@ -5260,7 +5256,7 @@ function ChatViewContent(props: ChatViewProps) {
       setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
       return result;
     },
-    [activateChatContent, activeThreadId, environmentId, respondToThreadUserInput, setThreadError],
+    [activeThreadId, environmentId, respondToThreadUserInput, setThreadError],
   );
 
   const setActivePendingUserInputQuestionIndex = useCallback(
