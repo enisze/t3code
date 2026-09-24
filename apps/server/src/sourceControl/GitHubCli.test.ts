@@ -856,7 +856,7 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("names merge conflicts when GitHub refuses a conflicting PR", () =>
+  it.effect("refuses to merge a PR GitHub reports as conflicting", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(
         Effect.succeed(
@@ -878,33 +878,21 @@ describe("GitHubCli.layer", () => {
           ),
         ),
       );
-      // Every merge attempt is refused because the PR conflicts.
-      mockRun.mockReturnValue(
-        Effect.fail(
-          new VcsProcessExitError({
-            operation: "GitHubCli.execute",
-            command: "gh",
-            cwd: "/repo",
-            exitCode: 1,
-            detail: "blocked",
-            failureKind: "merge-blocked",
-          }),
-        ),
-      );
 
       const gh = yield* GitHubCli.GitHubCli;
-      const merge = yield* gh
+      const error = yield* gh
         .mergePullRequest({ cwd: "/repo", reference: "#42" })
-        .pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
-      // Let the retry backoffs elapse so every attempt runs and the final
-      // failure is returned.
-      yield* TestClock.adjust("5 seconds");
-      const error = yield* Fiber.join(merge);
+        .pipe(Effect.flip);
 
       assert.strictEqual(error._tag, "GitHubMergeBlockedError");
       if (error._tag !== "GitHubMergeBlockedError") throw error;
       assert.strictEqual(error.mergeability, "conflicting");
       assert.equal(error.detail.includes("merge conflicts"), true);
+      // `gh pr merge` is never attempted.
+      assert.strictEqual(
+        mockRun.mock.calls.some(([input]) => input.args.includes("merge")),
+        false,
+      );
     }).pipe(Effect.provide(layer)),
   );
 });

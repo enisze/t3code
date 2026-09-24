@@ -914,6 +914,16 @@ export const make = Effect.gen(function* () {
         // "not mergeable" rejection. The settled verdict also lets us name the
         // concrete blocker (conflicts vs. checks) if the merge is refused.
         const mergeability = yield* awaitMergeabilityComputed(input.cwd, input.reference);
+        // The status the client acted on can be stale, so never hand a PR that
+        // GitHub now reports as conflicting to `gh pr merge`.
+        if (mergeability === "conflicting") {
+          return yield* new GitHubMergeBlockedError({
+            command: "gh",
+            cwd: input.cwd,
+            cause: new Error(`Pull request ${input.reference} has merge conflicts.`),
+            mergeability,
+          });
+        }
         yield* attemptMerge(
           input.cwd,
           ["pr", "merge", input.reference, ...(flag ? [flag] : ["--merge"])],
