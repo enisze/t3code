@@ -2280,7 +2280,22 @@ export const make = Effect.gen(function* () {
       const provider = yield* sourceControlProvider(input.cwd);
       const resolved = yield* provider
         .getChangeRequest({ cwd: input.cwd, reference: normalizedReference })
-        .pipe(Effect.map((changeRequest) => toResolvedPullRequest(changeRequest)));
+        .pipe(
+          Effect.tap((changeRequest) =>
+            changeRequest.mergeability === "conflicting"
+              ? Effect.fail(
+                  new GitManagerError({
+                    operation: "mergePullRequest",
+                    cwd: input.cwd,
+                    detail: `#${changeRequest.number} has merge conflicts with ${changeRequest.baseRefName}. Resolve the conflicts, then try merging again.`,
+                  }),
+                )
+              : Effect.void,
+          ),
+          Effect.map((changeRequest) => toResolvedPullRequest(changeRequest)),
+          // A refused merge means the status the client acted on was stale.
+          Effect.tapError(() => invalidateStatus(input.cwd)),
+        );
 
       return yield* provider
         .mergeChangeRequest({ cwd: input.cwd, reference: normalizedReference })

@@ -62,6 +62,7 @@ interface FakeGhScenario {
     headRefName: string;
     state?: "open" | "closed" | "merged";
     isDraft?: boolean;
+    mergeability?: "clean" | "conflicting" | "blocked" | "unknown";
     isCrossRepository?: boolean;
     headRepositoryNameWithOwner?: string | null;
     headRepositoryOwnerLogin?: string | null;
@@ -4144,6 +4145,34 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         ghCalls.some((call) => call.includes("pr create --base main --head feature-create-pr")),
       ).toBe(true);
       expect(ghCalls.some((call) => call.startsWith("pr view "))).toBe(false);
+    }),
+  );
+
+  it.effect("refuses to merge a pull request that has merge conflicts", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 42,
+            title: "Conflicting PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/42",
+            baseRefName: "main",
+            headRefName: "feature/conflicting",
+            state: "open",
+            mergeability: "conflicting",
+          },
+        },
+      });
+
+      const error = yield* manager
+        .mergePullRequest({ cwd: repoDir, reference: "#42" })
+        .pipe(Effect.flip);
+
+      expect(error.message).toContain("merge conflicts");
+      expect(ghCalls.some((call) => call.startsWith("pr merge "))).toBe(false);
     }),
   );
 
