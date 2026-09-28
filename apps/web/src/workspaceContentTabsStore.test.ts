@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+
 import {
   activateWorkspaceChat,
+  closedTabsStackKey,
   selectWorktreeContentTabs,
   useWorkspaceContentTabsStore,
   worktreeContentTabsKey,
@@ -189,7 +192,7 @@ describe("workspaceContentTabsStore closed-tab history", () => {
     const popped: string[] = [];
     for (let index = 0; index < 12; index += 1) {
       const closed = useWorkspaceContentTabsStore.getState().popClosedTab(KEY);
-      if (closed) popped.push(closed.filePath);
+      if (closed && closed.view !== "chat") popped.push(closed.filePath);
     }
     // Only the last 10 closes survive; the two oldest (0, 1) were evicted.
     expect(popped).toEqual([
@@ -216,6 +219,33 @@ describe("workspaceContentTabsStore closed-tab history", () => {
       view: "file",
       filePath: "a.ts",
     });
+  });
+
+  it("reopens closed chats and content tabs in one close order", () => {
+    const store = useWorkspaceContentTabsStore.getState();
+    const chat = {
+      view: "chat" as const,
+      environmentId: EnvironmentId.make("env-1"),
+      threadId: ThreadId.make("thread-1"),
+    };
+    store.openFile(KEY, "a.ts");
+    store.closeTab(KEY, "a.ts", { view: "file", filePath: "a.ts" });
+    store.pushClosedTab(KEY, chat);
+    expect(useWorkspaceContentTabsStore.getState().popClosedTab(KEY)).toEqual(chat);
+    expect(useWorkspaceContentTabsStore.getState().popClosedTab(KEY)).toEqual({
+      view: "file",
+      filePath: "a.ts",
+    });
+  });
+});
+
+describe("closedTabsStackKey", () => {
+  it("shares the content tabs' key for a worktree strip", () => {
+    expect(closedTabsStackKey("env-1", "project-1", "/worktree")).toBe(KEY);
+  });
+
+  it("keys a local strip by project", () => {
+    expect(closedTabsStackKey("env-1", "project-1", null)).toBe("env-1:project:project-1");
   });
 });
 

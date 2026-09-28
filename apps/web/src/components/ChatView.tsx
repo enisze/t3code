@@ -115,6 +115,7 @@ import {
   type Thread,
 } from "../types";
 import { useTheme } from "../hooks/useTheme";
+import { useThreadActions } from "../hooks/useThreadActions";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
@@ -129,6 +130,7 @@ import {
 } from "../rightPanelStore";
 import {
   type ClosedWorkspaceContentTab,
+  closedTabsStackKey,
   selectWorktreeContentTabs,
   useWorkspaceContentTabsStore,
   type WorkspaceContentTab,
@@ -237,6 +239,7 @@ import {
   useThreadRefs,
   useThreadShell,
   useThreadShellsForProjectRefs,
+  readThreadShell,
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
@@ -3361,13 +3364,49 @@ function ChatViewContent(props: ChatViewProps) {
       activePreviewState.sessions,
     ],
   );
-  // Reopen the most recently closed content tab in this worktree, browser-style
-  // (Cmd/Ctrl+Shift+T). File/diff tabs reopen by path; a preview reopens by
-  // re-navigating a fresh session to the URL it was last showing.
-  const reopenClosedContentTab = useCallback(() => {
-    if (!contentTabsWorktreeKey) return;
-    const closed = useWorkspaceContentTabsStore.getState().popClosedTab(contentTabsWorktreeKey);
+  // Reopen the most recently closed tab in this tab strip, browser-style
+  // (Cmd/Ctrl+Shift+T). A chat reopens by unarchiving it; file/diff tabs reopen
+  // by path; a preview reopens by re-navigating a fresh session to the URL it
+  // was last showing.
+  const closedTabsKey =
+    contentTabsWorktreeKey ??
+    (activeThread
+      ? closedTabsStackKey(activeThread.environmentId, activeThread.projectId, null)
+      : null);
+  const { unarchiveThread } = useThreadActions();
+  const reopenClosedTab = useCallback(async () => {
+    if (!closedTabsKey) return;
+    const closed = useWorkspaceContentTabsStore.getState().popClosedTab(closedTabsKey);
     if (!closed) return;
+    if (closed.view === "chat") {
+      const threadRef = scopeThreadRef(closed.environmentId, closed.threadId);
+      // It may have been unarchived elsewhere since; then just switch to it.
+      if (readThreadShell(threadRef)?.archivedAt !== null) {
+        const result = await unarchiveThread(threadRef);
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to reopen chat",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
+          return;
+        }
+      }
+      if (contentTabsWorktreeKey) {
+        useWorkspaceContentTabsStore.getState().activateChat(contentTabsWorktreeKey);
+      }
+      await navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(threadRef),
+      });
+      return;
+    }
+    if (!contentTabsWorktreeKey) return;
     if (closed.view === "preview") {
       if (!workspaceThreadRef || !closed.previewUrl || !isPreviewSupportedInRuntime()) return;
       void openUrlInPreview({
@@ -3383,7 +3422,14 @@ function ChatViewContent(props: ChatViewProps) {
     } else {
       store.openFile(contentTabsWorktreeKey, closed.filePath);
     }
-  }, [contentTabsWorktreeKey, workspaceThreadRef, openPreview]);
+  }, [
+    closedTabsKey,
+    contentTabsWorktreeKey,
+    workspaceThreadRef,
+    openPreview,
+    unarchiveThread,
+    navigate,
+  ]);
   const activateChatContent = useCallback(() => {
     if (!contentTabsWorktreeKey) return;
     useWorkspaceContentTabsStore.getState().activateChat(contentTabsWorktreeKey);
@@ -4555,7 +4601,7 @@ function ChatViewContent(props: ChatViewProps) {
       if (command === "tab.reopenClosed") {
         event.preventDefault();
         event.stopPropagation();
-        reopenClosedContentTab();
+        void reopenClosedTab();
         return;
       }
 
@@ -4592,7 +4638,7 @@ function ChatViewContent(props: ChatViewProps) {
     splitPanelTerminal,
     keybindings,
     onToggleDiff,
-    reopenClosedContentTab,
+    reopenClosedTab,
     toggleRightPanel,
     toggleTerminalVisibility,
     composerRef,
