@@ -32,7 +32,7 @@ import { readLocalApi } from "~/localApi";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { useUiStateStore, worktreeActivityKey } from "~/uiStateStore";
-import { closedTabsStackKey, useWorkspaceContentTabsStore } from "~/workspaceContentTabsStore";
+import { useWorkspaceContentTabsStore } from "~/workspaceContentTabsStore";
 
 export interface WorktreeContentTabDescriptor {
   id: string;
@@ -223,10 +223,7 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
           // Remember the chat so Cmd/Ctrl+Shift+T can reopen it.
           useWorkspaceContentTabsStore
             .getState()
-            .pushClosedTab(
-              closedTabsStackKey(shell.environmentId, shell.projectId, shell.worktreePath),
-              { view: "chat", environmentId: shell.environmentId, threadId: shell.id },
-            );
+            .pushClosedChat({ view: "chat", environmentId: shell.environmentId, threadId: shell.id });
         }
       } finally {
         setClosingThreadId(null);
