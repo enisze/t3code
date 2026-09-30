@@ -128,6 +128,14 @@ describe("workspaceContentTabsStore", () => {
     ]);
   });
 
+  it("setTabView flips the active file tab when several are open", () => {
+    const store = useWorkspaceContentTabsStore.getState();
+    store.reopenFileTab(KEY, "a.ts", "diff");
+    store.reopenFileTab(KEY, "b.ts", "diff");
+    store.setTabView(KEY, "file");
+    expect(tabs().tabs.map((tab) => `${tab.id}:${tab.view}`)).toEqual(["a.ts:diff", "b.ts:file"]);
+  });
+
   it("setTabView cannot corrupt a preview tab", () => {
     useWorkspaceContentTabsStore.getState().openPreview(KEY, "tab_1");
     useWorkspaceContentTabsStore.getState().setTabView(KEY, "file");
@@ -157,23 +165,50 @@ describe("workspaceContentTabsStore closed-tab history", () => {
     expect(useWorkspaceContentTabsStore.getState().popClosedTab(KEY)).toBeNull();
   });
 
-  it("remembers files replaced in the single viewer, so every one reopens", () => {
+  it("reopens each replaced file as its own tab", () => {
     const store = useWorkspaceContentTabsStore.getState();
     store.openFileDiff(KEY, "a.ts");
     store.openFile(KEY, "b.ts");
     store.openFile(KEY, "c.ts");
     store.closeTab(KEY, "c.ts", { view: "file", filePath: "c.ts" });
 
-    const reopened: string[] = [];
     for (;;) {
       const closed = useWorkspaceContentTabsStore.getState().popClosedTab(KEY);
-      if (!closed || closed.view === "chat") break;
-      reopened.push(closed.filePath);
-      // Reopening replaces the viewer without refilling the stack.
-      useWorkspaceContentTabsStore.getState().openFile(KEY, closed.filePath, false);
+      if (!closed || closed.view === "chat" || closed.view === "preview") break;
+      useWorkspaceContentTabsStore.getState().reopenFileTab(KEY, closed.filePath, closed.view);
     }
-    expect(reopened).toEqual(["c.ts", "b.ts", "a.ts"]);
+    expect(tabs().tabs).toEqual([
+      { id: "c.ts", filePath: "c.ts", view: "file", kept: true },
+      { id: "b.ts", filePath: "b.ts", view: "file", kept: true },
+      { id: "a.ts", filePath: "a.ts", view: "diff", kept: true },
+    ]);
     expect(tabs().activeTabId).toBe("a.ts");
+  });
+
+  it("browsing replaces only the browsing tab, never a reopened one", () => {
+    const store = useWorkspaceContentTabsStore.getState();
+    store.reopenFileTab(KEY, "kept.ts", "file");
+    store.openPreview(KEY, "tab_1");
+    store.openFile(KEY, "a.ts");
+    store.openFileDiff(KEY, "b.ts");
+    expect(tabs().tabs.map((tab) => tab.id)).toEqual(["kept.ts", "b.ts", "tab_1"]);
+    // Opening a file that already has a tab focuses it instead.
+    store.openFile(KEY, "kept.ts");
+    expect(tabs().activeTabId).toBe("kept.ts");
+    expect(tabs().tabs.map((tab) => tab.id)).toEqual(["kept.ts", "b.ts", "tab_1"]);
+  });
+
+  it("keeping the browsing tab makes browsing open a new tab", () => {
+    const store = useWorkspaceContentTabsStore.getState();
+    store.openFile(KEY, "a.ts");
+    store.keepTab(KEY, "a.ts");
+    store.openFile(KEY, "b.ts");
+    expect(tabs().tabs.map((tab) => `${tab.id}:${tab.kept ?? false}`)).toEqual([
+      "a.ts:true",
+      "b.ts:false",
+    ]);
+    // Nothing was replaced, so nothing counts as closed.
+    expect(useWorkspaceContentTabsStore.getState().popClosedTab(KEY)).toBeNull();
   });
 
   it("does not remember re-opening the file already shown", () => {
@@ -181,6 +216,18 @@ describe("workspaceContentTabsStore closed-tab history", () => {
     store.openFileDiff(KEY, "a.ts");
     store.openFile(KEY, "a.ts");
     expect(useWorkspaceContentTabsStore.getState().popClosedTab(KEY)).toBeNull();
+  });
+
+  it("persists the closed-tab history but not the open tabs", async () => {
+    const store = useWorkspaceContentTabsStore.getState();
+    store.openFile(KEY, "a.ts");
+    store.closeTab(KEY, "a.ts", { view: "file", filePath: "a.ts" });
+    store.openFile(KEY, "b.ts");
+    const { name, storage } = useWorkspaceContentTabsStore.persist.getOptions();
+    const saved = await storage?.getItem(name ?? "");
+    expect(saved?.state).toEqual({
+      closedTabs: [{ worktreeKey: KEY, tab: { view: "file", filePath: "a.ts" } }],
+    });
   });
 
   it("does not remember a tab when no closed record is supplied", () => {
@@ -225,9 +272,7 @@ describe("workspaceContentTabsStore closed-tab history", () => {
       if (closed && closed.view !== "chat") popped.push(closed.filePath);
     }
     // Only the last 20 closes survive; the two oldest (0, 1) were evicted.
-    expect(popped).toEqual(
-      Array.from({ length: 20 }, (_, index) => `file-${21 - index}.ts`),
-    );
+    expect(popped).toEqual(Array.from({ length: 20 }, (_, index) => `file-${21 - index}.ts`));
   });
 
   it("keeps closed-tab stacks separate per worktree", () => {

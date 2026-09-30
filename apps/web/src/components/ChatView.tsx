@@ -3384,18 +3384,22 @@ function ChatViewContent(props: ChatViewProps) {
       });
       return;
     }
-    const store = useWorkspaceContentTabsStore.getState();
-    if (closed.view === "diff") {
-      store.openFileDiff(contentTabsWorktreeKey, closed.filePath, false);
-    } else {
-      store.openFile(contentTabsWorktreeKey, closed.filePath, false);
-    }
+    useWorkspaceContentTabsStore
+      .getState()
+      .reopenFileTab(contentTabsWorktreeKey, closed.filePath, closed.view);
   }, [contentTabsWorktreeKey, workspaceThreadRef, openPreview, reopenClosedChat]);
+  const keepContentTab = useCallback(
+    (tabId: string) => {
+      if (!contentTabsWorktreeKey) return;
+      useWorkspaceContentTabsStore.getState().keepTab(contentTabsWorktreeKey, tabId);
+    },
+    [contentTabsWorktreeKey],
+  );
   const activateChatContent = useCallback(() => {
     if (!contentTabsWorktreeKey) return;
     useWorkspaceContentTabsStore.getState().activateChat(contentTabsWorktreeKey);
   }, [contentTabsWorktreeKey]);
-  // Flip the single file viewer between the diff and the editable file contents.
+  // Flip the active file tab between the diff and the editable file contents.
   const setContentTabView = useCallback(
     (view: WorkspaceContentTabView) => {
       if (!contentTabsWorktreeKey) return;
@@ -6202,6 +6206,7 @@ function ChatViewContent(props: ChatViewProps) {
                 id: tab.id,
                 title: tab.filePath.slice(tab.filePath.lastIndexOf("/") + 1),
                 view: tab.view,
+                browsing: !tab.kept,
               };
             }
             const session = tab.previewTabId
@@ -6213,6 +6218,7 @@ function ChatViewContent(props: ChatViewProps) {
           activeContentTabId={contentTabsState.activeTabId}
           onSelectContentTab={selectContentTab}
           onCloseContentTab={closeContentTab}
+          onKeepContentTab={keepContentTab}
           onActivateChat={activateChatContent}
         />
 
