@@ -39,6 +39,8 @@ export interface WorktreeContentTabDescriptor {
   title: string;
   /** Which view the tab renders — picks the tab icon. */
   view: "diff" | "file" | "preview";
+  /** The file tab that browsing replaces; shown in italics, like VS Code. */
+  browsing?: boolean;
 }
 
 const EMPTY_CONTENT_TABS: ReadonlyArray<WorktreeContentTabDescriptor> = [];
@@ -59,6 +61,8 @@ interface WorktreeThreadTabsProps {
   activeContentTabId?: string | null;
   onSelectContentTab?: (tabId: string) => void;
   onCloseContentTab?: (tabId: string) => void;
+  // Keep the browsing tab open as its own tab (double-click, like VS Code).
+  onKeepContentTab?: (tabId: string) => void;
   // Return to the chat conversation (deactivate any content tab).
   onActivateChat?: () => void;
 }
@@ -118,6 +122,7 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
   activeContentTabId = null,
   onSelectContentTab,
   onCloseContentTab,
+  onKeepContentTab,
   onActivateChat,
 }: WorktreeThreadTabsProps) {
   const router = useRouter();
@@ -221,9 +226,11 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
           );
         } else if (result._tag === "Success") {
           // Remember the chat so Cmd/Ctrl+Shift+T can reopen it.
-          useWorkspaceContentTabsStore
-            .getState()
-            .pushClosedChat({ view: "chat", environmentId: shell.environmentId, threadId: shell.id });
+          useWorkspaceContentTabsStore.getState().pushClosedChat({
+            view: "chat",
+            environmentId: shell.environmentId,
+            threadId: shell.id,
+          });
         }
       } finally {
         setClosingThreadId(null);
@@ -464,9 +471,12 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
                         aria-current={active ? "page" : undefined}
                         className="flex min-w-0 flex-1 items-center gap-1.5 truncate py-1 pl-2.5 text-left"
                         onClick={() => onSelectContentTab?.(tab.id)}
+                        onDoubleClick={tab.browsing ? () => onKeepContentTab?.(tab.id) : undefined}
                       >
                         <TabIcon aria-hidden="true" className="size-3.5 shrink-0" />
-                        <span className="truncate">{tab.title}</span>
+                        <span className={cn("truncate", tab.browsing && "italic")}>
+                          {tab.title}
+                        </span>
                       </button>
                     }
                   />
