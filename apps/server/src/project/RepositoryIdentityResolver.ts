@@ -48,9 +48,30 @@ function parseRemoteFetchUrls(stdout: string): Map<string, string> {
   return remotes;
 }
 
+/**
+ * Remotes `gh repo set-default` marked as the base repository, read from
+ * `git config --get-regexp` output (`remote.<name>.gh-resolved base`).
+ */
+function parseGhBaseRemotes(stdout: string): ReadonlySet<string> {
+  const names = new Set<string>();
+  for (const line of stdout.split("\n")) {
+    const match = /^remote\.(.+)\.gh-resolved\s+base$/.exec(line.trim());
+    if (match?.[1]) names.add(match[1]);
+  }
+  return names;
+}
+
+// A fork that opens pull requests against itself marks its own remote as gh's
+// base repository. That remote owns the fork's pull requests, so it outranks
+// the conventional upstream-then-origin order.
 function pickPrimaryRemote(
   remotes: ReadonlyMap<string, string>,
+  ghBaseRemotes: ReadonlySet<string> = new Set(),
 ): { readonly remoteName: string; readonly remoteUrl: string } | null {
+  for (const remoteName of ghBaseRemotes) {
+    const remoteUrl = remotes.get(remoteName);
+    if (remoteUrl) return { remoteName, remoteUrl };
+  }
   for (const preferredRemoteName of ["upstream", "origin"] as const) {
     const remoteUrl = remotes.get(preferredRemoteName);
     if (remoteUrl) {
@@ -129,7 +150,23 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
     return null;
   }
 
-  const remote = pickPrimaryRemote(parseRemoteFetchUrls(remoteResult.value.stdout));
+  const remotes = parseRemoteFetchUrls(remoteResult.value.stdout);
+  // The choice only matters with several remotes; skip the extra spawn otherwise.
+  let ghBaseRemotes: ReadonlySet<string> = new Set();
+  if (remotes.size > 1) {
+    const ghResult = yield* processRunner
+      .run({
+        command: "git",
+        args: ["-C", cacheKey, "config", "--get-regexp", "^remote\\..*\\.gh-resolved$"],
+        timeoutBehavior: "timedOutResult",
+      })
+      .pipe(Effect.option);
+    // Exit code 1 just means no remote is marked.
+    if (ghResult._tag === "Some" && ghResult.value.code === 0) {
+      ghBaseRemotes = parseGhBaseRemotes(ghResult.value.stdout);
+    }
+  }
+  const remote = pickPrimaryRemote(remotes, ghBaseRemotes);
   return remote ? buildRepositoryIdentity({ ...remote, rootPath: cacheKey }) : null;
 });
 
