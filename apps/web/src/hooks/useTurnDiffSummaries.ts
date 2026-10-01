@@ -15,5 +15,21 @@ export function useTurnDiffSummaries(activeThread: Thread | null | undefined) {
     [turnDiffSummaries],
   );
 
-  return { turnDiffSummaries, inferredCheckpointTurnCountByTurnId };
+  /** Newest turn first, so `[0]` is the thread's latest checkpoint. */
+  const orderedTurnDiffSummaries = useMemo(
+    () =>
+      [...turnDiffSummaries].toSorted((left, right) => {
+        const leftTurnCount =
+          left.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[left.turnId] ?? 0;
+        const rightTurnCount =
+          right.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[right.turnId] ?? 0;
+        if (leftTurnCount !== rightTurnCount) {
+          return rightTurnCount - leftTurnCount;
+        }
+        return right.completedAt.localeCompare(left.completedAt);
+      }),
+    [inferredCheckpointTurnCountByTurnId, turnDiffSummaries],
+  );
+
+  return { turnDiffSummaries, orderedTurnDiffSummaries, inferredCheckpointTurnCountByTurnId };
 }

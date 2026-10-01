@@ -9,6 +9,18 @@ export function checkpointRefForThreadTurn(threadId: ThreadId, turnCount: number
   );
 }
 
+// Snapshot of the workspace taken when turn `turnCount` starts. It is the `from`
+// side of that turn's diff, so edits made between turns (other threads, the
+// user, merges) are not attributed to the turn. Turn 1 uses `turn/0` instead.
+export function checkpointBaseRefForThreadTurn(
+  threadId: ThreadId,
+  turnCount: number,
+): CheckpointRef {
+  return CheckpointRef.make(
+    `${CHECKPOINT_REFS_PREFIX}/${Encoding.encodeBase64Url(threadId)}/base/${turnCount}`,
+  );
+}
+
 export function resolveThreadWorkspaceCwd(input: {
   readonly thread: {
     readonly projectId: ProjectId;

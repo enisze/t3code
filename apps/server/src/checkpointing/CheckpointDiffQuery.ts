@@ -30,7 +30,7 @@ import {
   CheckpointWorkspacePathMissingError,
 } from "./Errors.ts";
 import type { CheckpointServiceError } from "./Errors.ts";
-import { checkpointRefForThreadTurn } from "./Utils.ts";
+import { checkpointBaseRefForThreadTurn, checkpointRefForThreadTurn } from "./Utils.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
 
 /** Service tag for checkpoint diff queries. */
@@ -164,15 +164,24 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      const diff = yield* checkpointStore
-        .diffCheckpoints({
+      const diffFrom = (from: CheckpointRef) =>
+        checkpointStore.diffCheckpoints({
           cwd: workspaceCwd,
-          fromCheckpointRef,
+          fromCheckpointRef: from,
           toCheckpointRef,
           fallbackFromToHead: false,
           ignoreWhitespace,
-        })
-        .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"));
+        });
+      // A single turn diffs from the snapshot taken when it started, so changes
+      // made between turns are not attributed to it. Turns captured before
+      // base refs existed have none and fall back to the previous turn.
+      const diff = yield* (
+        input.fromTurnCount > 0 && input.toTurnCount === input.fromTurnCount + 1
+          ? diffFrom(checkpointBaseRefForThreadTurn(input.threadId, input.toTurnCount)).pipe(
+              Effect.catch(() => diffFrom(fromCheckpointRef)),
+            )
+          : diffFrom(fromCheckpointRef)
+      ).pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"));
 
       const turnDiff = buildTurnDiffResult(input, diff);
       if (!isTurnDiffResult(turnDiff)) {

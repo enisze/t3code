@@ -19,6 +19,7 @@ import {
   PrStatusTooltipContent,
   resolveThreadPr,
   terminalStatusFromRunningIds,
+  ThreadReadyCheck,
   ThreadStatusLabel,
   ThreadWorktreeIndicator,
 } from "./ThreadStatusIndicators";
@@ -706,7 +707,11 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                     className={`inline-flex items-center justify-center ${prStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
                     onClick={handlePrClick}
                   >
-                    <ChangeRequestStatusIcon className="size-3" />
+                    <ChangeRequestStatusIcon
+                      state={pr!.state}
+                      isDraft={pr!.isDraft}
+                      className="size-3"
+                    />
                   </button>
                 }
               />
@@ -716,6 +721,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
             </Tooltip>
           )}
           {threadStatus && <ThreadStatusLabel status={threadStatus} />}
+          <ThreadReadyCheck readyAt={thread.readyAt} />
           {renamingThreadKey === threadKey ? (
             <input
               ref={handleRenameInputRef}
@@ -1945,7 +1951,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const target = project.memberProjects[0] ?? null;
       if (!target) return;
       void navigate({
-        to: "/settings/projects/$environmentId/$projectId",
+        to: "/settings/project/$environmentId/$projectId",
         params: { environmentId: target.environmentId, projectId: target.id },
       });
     },
@@ -3782,7 +3788,7 @@ export default function Sidebar() {
 
     if (desktopUpdateButtonAction === "install") {
       const confirmed = window.confirm(
-        getDesktopUpdateInstallConfirmationMessage(desktopUpdateState, navigator.platform),
+        getDesktopUpdateInstallConfirmationMessage(desktopUpdateState),
       );
       if (!confirmed) return;
       void bridge

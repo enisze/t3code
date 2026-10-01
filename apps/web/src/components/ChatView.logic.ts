@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   isProviderDriverKind,
+  type MessageId,
   ProjectId,
   type ModelSelection,
   type ProviderDriverKind,
@@ -10,7 +11,13 @@ import {
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
-import { type ChatMessage, type SessionPhase, type Thread, type ThreadShell } from "../types";
+import {
+  type ChatMessage,
+  type SessionPhase,
+  type Thread,
+  type ThreadShell,
+  type TurnDiffSummary,
+} from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -22,6 +29,7 @@ import {
 } from "../lib/terminalContext";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 
+import { isImageAttachment } from "../types";
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
@@ -49,9 +57,41 @@ export function canCreateEmptyWorktreeThread(input: {
   return !input.hasSendableContent && input.isLocalDraftThread && input.envMode === "worktree";
 }
 
+/**
+ * Attach each turn diff to the final assistant message for that turn. The
+ * checkpoint reactor can finish before the final message projection and store
+ * a synthetic or earlier message id; turn ids remain stable across that race.
+ */
+export function buildTurnDiffSummaryByAssistantMessageId(
+  messages: ReadonlyArray<ChatMessage>,
+  summaries: ReadonlyArray<TurnDiffSummary>,
+): Map<MessageId, TurnDiffSummary> {
+  const messageIds = new Set(messages.map((message) => message.id));
+  const finalAssistantMessageIdByTurn = new Map<TurnId, MessageId>();
+  for (const message of messages) {
+    if (message.role === "assistant" && message.turnId !== null) {
+      finalAssistantMessageIdByTurn.set(message.turnId, message.id);
+    }
+  }
+
+  const byMessageId = new Map<MessageId, TurnDiffSummary>();
+  for (const summary of summaries) {
+    const messageId =
+      finalAssistantMessageIdByTurn.get(summary.turnId) ??
+      (summary.assistantMessageId !== null && messageIds.has(summary.assistantMessageId)
+        ? summary.assistantMessageId
+        : null);
+    if (messageId !== null) {
+      byMessageId.set(messageId, summary);
+    }
+  }
+  return byMessageId;
+}
+
 export function startNewThreadForProject(
   projectRef: ScopedProjectRef | null,
-  handleNewThread: (projectRef: ScopedProjectRef) => Promise<void>,
+  // The result is ignored here; only desktop activation needs the thread back.
+  handleNewThread: (projectRef: ScopedProjectRef) => Promise<unknown>,
 ): boolean {
   if (projectRef === null) return false;
   void handleNewThread(projectRef);
@@ -216,7 +256,7 @@ export function revokeUserMessagePreviewUrls(message: ChatMessage): void {
     return;
   }
   for (const attachment of message.attachments) {
-    if (attachment.type !== "image") {
+    if (!isImageAttachment(attachment)) {
       continue;
     }
     revokeBlobPreviewUrl(attachment.previewUrl);
@@ -229,7 +269,7 @@ export function collectUserMessageBlobPreviewUrls(message: ChatMessage): string[
   }
   const previewUrls: string[] = [];
   for (const attachment of message.attachments) {
-    if (attachment.type !== "image") continue;
+    if (!isImageAttachment(attachment)) continue;
     if (!attachment.previewUrl || !attachment.previewUrl.startsWith("blob:")) continue;
     previewUrls.push(attachment.previewUrl);
   }

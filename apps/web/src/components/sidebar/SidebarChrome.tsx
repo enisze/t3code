@@ -22,7 +22,7 @@ import {
 } from "../ui/sidebar";
 import { SettingsUsagePill } from "../settings/SettingsUsagePill";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
-import { SidebarUpdatePill } from "./SidebarUpdatePill";
+import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
@@ -123,14 +123,17 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
     <SidebarFooter className="p-2">
       <SettingsUsagePill />
       <SidebarProviderUpdatePill />
-      <SidebarUpdatePill />
-      <SidebarMenu>
-        <SidebarMenuItem>
+      <SidebarUpdateArchitectureWarning />
+      {/* The update pill is a menu item, so it belongs in the menu's row: on its
+          own it rendered a stray list marker and claimed a whole empty row. */}
+      <SidebarMenu className="flex-row items-center">
+        <SidebarMenuItem className="min-w-0 flex-1">
           <SidebarMenuButton onClick={handleSettingsClick}>
             <SettingsIcon />
             <span>Settings</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
+        <SidebarUpdatePill />
       </SidebarMenu>
     </SidebarFooter>
   );

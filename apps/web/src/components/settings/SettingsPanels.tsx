@@ -67,7 +67,12 @@ import { isElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import { DIFF_THEME_OPTIONS } from "../../lib/diffRendering";
 import { useTheme } from "../../hooks/useTheme";
-import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
+import {
+  useClientSettings,
+  usePrimarySettings,
+  useUpdateClientSettings,
+  useUpdatePrimarySettings,
+} from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
@@ -108,6 +113,7 @@ import {
   NumberFieldInput,
 } from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { DictationLanguageSetting } from "./DictationLanguageSetting";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -409,7 +415,6 @@ function AboutVersionSection() {
       const confirmed = window.confirm(
         getDesktopUpdateInstallConfirmationMessage(
           updateState ?? { availableVersion: null, downloadedVersion: null },
-          navigator.platform,
         ),
       );
       if (!confirmed) return;
@@ -595,7 +600,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar
         ? ["Auto-open task panel"]
         : []),
-      ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
+      ...(settings.enableLegacyTokenStreaming !==
+      DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming
         ? ["Assistant output"]
         : []),
       ...(settings.enableProviderUpdateChecks !==
@@ -634,7 +640,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffTheme,
       settings.environmentIdentificationMode,
       settings.glassOpacity,
-      settings.enableAssistantStreaming,
+      settings.enableLegacyTokenStreaming,
       settings.enableProviderUpdateChecks,
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
@@ -665,7 +671,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
-      enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
+      enableLegacyTokenStreaming: DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
@@ -1160,6 +1166,8 @@ export function AppearanceSettingsPanel() {
 export function GeneralSettingsPanel() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
+  const dictationLocale = useClientSettings((clientSettings) => clientSettings.dictationLocale);
+  const updateClientSettings = useUpdateClientSettings();
   const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
@@ -1250,6 +1258,16 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
+          title="Dictation language"
+          description="Which language the composer's microphone listens for. Following the system language suits most people; set one here if you dictate in a different language than your Mac is set to."
+          control={
+            <DictationLanguageSetting
+              value={dictationLocale}
+              onChange={(tag) => updateClientSettings({ dictationLocale: tag })}
+            />
+          }
+        />
+        <SettingsRow
           title="Time format"
           description="System default follows your browser or OS clock preference."
           resetAction={
@@ -1321,13 +1339,13 @@ export function GeneralSettingsPanel() {
           title="Assistant output"
           description="Show token-by-token output while a response is in progress."
           resetAction={
-            settings.enableAssistantStreaming !==
-            DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming ? (
+            settings.enableLegacyTokenStreaming !==
+            DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming ? (
               <SettingResetButton
                 label="assistant output"
                 onClick={() =>
                   updateSettings({
-                    enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
+                    enableLegacyTokenStreaming: DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming,
                   })
                 }
               />
@@ -1335,9 +1353,9 @@ export function GeneralSettingsPanel() {
           }
           control={
             <Switch
-              checked={settings.enableAssistantStreaming}
+              checked={settings.enableLegacyTokenStreaming}
               onCheckedChange={(checked) =>
-                updateSettings({ enableAssistantStreaming: Boolean(checked) })
+                updateSettings({ enableLegacyTokenStreaming: Boolean(checked) })
               }
               aria-label="Stream assistant messages"
             />
@@ -1714,6 +1732,7 @@ export function GeneralSettingsPanel() {
                 model={textGenModel}
                 prompt=""
                 onPromptChange={() => {}}
+                planModeEnabled={false}
                 modelOptions={textGenModelOptions}
                 allowPromptInjectedEffort={false}
                 triggerVariant="outline"
@@ -2354,8 +2373,13 @@ export function ProviderSettingsPanel() {
         })}
       </SettingsSection>
 
-      {isAddInstanceDialogOpen ? (
-        <AddProviderInstanceDialog open onOpenChange={setIsAddInstanceDialogOpen} />
+      {isAddInstanceDialogOpen && primaryEnvironment ? (
+        <AddProviderInstanceDialog
+          open
+          environmentId={primaryEnvironment.environmentId}
+          environmentLabel={primaryEnvironment.label}
+          onOpenChange={setIsAddInstanceDialogOpen}
+        />
       ) : null}
     </SettingsPageContainer>
   );
@@ -2387,6 +2411,9 @@ export function ArchivedThreadsPanel() {
                 environmentId,
                 name: project.title,
                 cwd: project.workspaceRoot,
+                // Set when the project was removed but its archived chats were
+                // kept, so the group can say where these threads came from.
+                removed: (project.deletedAt ?? null) !== null,
               },
             ] as const,
         ),
@@ -2504,7 +2531,20 @@ export function ArchivedThreadsPanel() {
           <SettingsSection
             key={project.id}
             title={project.name}
-            icon={<ProjectFavicon environmentId={project.environmentId} cwd={project.cwd} />}
+            headerAction={
+              project.removed ? (
+                <span className="shrink-0 rounded-full border border-border/60 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Project removed
+                </span>
+              ) : undefined
+            }
+            icon={
+              <ProjectFavicon
+                environmentId={project.environmentId}
+                cwd={project.cwd}
+                projectName={project.name}
+              />
+            }
           >
             {projectThreads.map((thread) => (
               <SettingsRow

@@ -638,7 +638,7 @@ describe("resolveSidebarV2Status", () => {
     updatedAt: "2026-03-09T10:00:00.000Z",
   };
 
-  const idle = { hasPendingApprovals: false, hasPendingUserInput: false };
+  const idle = { hasPendingApprovals: false, hasPendingUserInput: false, latestTurn: null };
 
   it("prioritizes approval over a running session", () => {
     expect(resolveSidebarV2Status({ ...idle, hasPendingApprovals: true, session })).toBe(
@@ -675,6 +675,22 @@ describe("resolveSidebarV2Status", () => {
         session: { ...session, status: "error" as const, lastError: "boom" },
       }),
     ).toBe("failed");
+    // The session record keeps `error` after a provider process dies, so a
+    // thread that went on to finish a turn must stop reading as failed.
+    expect(
+      resolveSidebarV2Status({
+        ...idle,
+        session: { ...session, status: "error" as const, lastError: "boom" },
+        latestTurn: {
+          turnId: "turn-1" as never,
+          state: "completed" as const,
+          requestedAt: "2026-03-09T10:00:00.000Z",
+          startedAt: "2026-03-09T10:00:01.000Z",
+          completedAt: "2026-03-09T10:00:09.000Z",
+          assistantMessageId: null,
+        },
+      }),
+    ).toBe("ready");
     expect(
       resolveSidebarV2Status({
         ...idle,
@@ -1350,6 +1366,55 @@ describe("resolveWorktreeWorkspaceRepresentative", () => {
     const representativeStatus = { ...collapsed[0]!, hasActionableProposedPlan: false };
     expect(resolveSidebarV2Status(representativeStatus)).toBe("working");
     expect(resolveThreadStatusPill({ thread: representativeStatus })?.label).toBe("Working");
+  });
+
+  it("surfaces a collapsed sibling's ready mark on the representative row", () => {
+    // Marking any chat in a worktree has to show on the row that stands in for
+    // the group, or marking a collapsed sibling looks like nothing happened.
+    const representative = mergeThread({
+      id: ThreadId.make("older"),
+      worktreePath: "/wt/a",
+      createdAt: "2026-03-09T10:00:00.000Z",
+    });
+    const markedSibling = mergeThread({
+      id: ThreadId.make("newer"),
+      worktreePath: "/wt/a",
+      createdAt: "2026-03-09T12:00:00.000Z",
+      readyAt: "2026-03-09T13:00:00.000Z",
+    });
+
+    const { threads: collapsed } = collapseWorktreeSiblings(
+      [representative, markedSibling],
+      (thread) => `${thread.environmentId}:${thread.id}`,
+      mergeWorktreeSiblingRunningStatus,
+    );
+
+    expect(collapsed).toHaveLength(1);
+    expect(collapsed[0]?.id).toBe("older");
+    expect(collapsed[0]?.readyAt).toBe("2026-03-09T13:00:00.000Z");
+  });
+
+  it("leaves an unmarked worktree group unmarked", () => {
+    const representative = mergeThread({
+      id: ThreadId.make("older"),
+      worktreePath: "/wt/a",
+      createdAt: "2026-03-09T10:00:00.000Z",
+    });
+    const sibling = mergeThread({
+      id: ThreadId.make("newer"),
+      worktreePath: "/wt/a",
+      createdAt: "2026-03-09T12:00:00.000Z",
+    });
+
+    const { threads: collapsed } = collapseWorktreeSiblings(
+      [representative, sibling],
+      (thread) => `${thread.environmentId}:${thread.id}`,
+      mergeWorktreeSiblingRunningStatus,
+    );
+
+    expect(collapsed[0]?.readyAt ?? null).toBeNull();
+    // Nothing changed, so the representative object itself is reused.
+    expect(collapsed[0]).toBe(representative);
   });
 
   it("surfaces a sibling awaiting input as Input over the running Working state", () => {

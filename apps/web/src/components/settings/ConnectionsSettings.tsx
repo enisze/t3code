@@ -45,7 +45,15 @@ import {
   resolveHostedPairingUrl,
   resolveLocalNetworkPairingHost,
 } from "./pairingUrls";
-import { applyWslEnableSelection } from "./ConnectionsSettings.logic";
+import {
+  applyWslEnableSelection,
+  buildEndpointCopyOptions,
+  endpointDefaultPreferenceKey,
+  isHostedAppPairingUrl,
+  isTailscaleHttpsEndpoint,
+  resolveAdvertisedEndpointPairingUrl,
+  selectPairingEndpoint,
+} from "./ConnectionsSettings.logic";
 import {
   SettingsPageContainer,
   SettingsRow,
@@ -431,80 +439,9 @@ function toDesktopClientSessionRecord(clientSession: AuthClientSession): ServerC
   };
 }
 
-function selectPairingEndpoint(
-  endpoints: ReadonlyArray<AdvertisedEndpoint>,
-  defaultEndpointKey?: string | null,
-): AdvertisedEndpoint | null {
-  const availableEndpoints = endpoints.filter((endpoint) => endpoint.status !== "unavailable");
-  if (defaultEndpointKey) {
-    const selectedEndpoint = availableEndpoints.find(
-      (endpoint) => endpointDefaultPreferenceKey(endpoint) === defaultEndpointKey,
-    );
-    if (selectedEndpoint) {
-      return selectedEndpoint;
-    }
-  }
-  return (
-    availableEndpoints.find((endpoint) => endpoint.isDefault) ??
-    availableEndpoints.find((endpoint) => endpoint.reachability !== "loopback") ??
-    availableEndpoints.find((endpoint) => endpoint.compatibility.hostedHttpsApp === "compatible") ??
-    null
-  );
-}
-
-function isTailscaleHttpsEndpoint(endpoint: AdvertisedEndpoint): boolean {
-  return endpoint.id.startsWith("tailscale-magicdns:");
-}
-
-function endpointDefaultPreferenceKey(endpoint: AdvertisedEndpoint): string {
-  if (endpoint.id.startsWith("desktop-loopback:")) {
-    return "desktop-core:loopback:http";
-  }
-  if (endpoint.id.startsWith("desktop-lan:")) {
-    return "desktop-core:lan:http";
-  }
-  if (endpoint.id.startsWith("tailscale-ip:")) {
-    return "tailscale:ip:http";
-  }
-  if (isTailscaleHttpsEndpoint(endpoint)) {
-    return "tailscale:magicdns:https";
-  }
-
-  let scheme = "unknown";
-  try {
-    scheme = new URL(endpoint.httpBaseUrl).protocol.replace(/:$/u, "");
-  } catch {
-    // Keep the stored preference stable even if a custom endpoint is malformed.
-  }
-
-  return `${endpoint.provider.id}:${endpoint.reachability}:${scheme}:${endpoint.label}`;
-}
-
-function resolveAdvertisedEndpointPairingUrl(
-  endpoint: AdvertisedEndpoint,
-  credential: string,
-): string {
-  if (endpoint.compatibility.hostedHttpsApp === "compatible") {
-    return (
-      resolveHostedPairingUrl(endpoint.httpBaseUrl, credential) ??
-      resolveDesktopPairingUrl(endpoint.httpBaseUrl, credential)
-    );
-  }
-  return resolveDesktopPairingUrl(endpoint.httpBaseUrl, credential);
-}
-
 function resolveCurrentOriginPairingUrl(credential: string): string {
   const url = new URL("/pair", window.location.href);
   return setPairingTokenOnUrl(url, credential).toString();
-}
-
-function isHostedAppPairingUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.pathname === "/pair" && url.searchParams.has("host");
-  } catch {
-    return false;
-  }
 }
 
 type PairingLinkListRowProps = {
@@ -513,6 +450,12 @@ type PairingLinkListRowProps = {
   endpoints: ReadonlyArray<AdvertisedEndpoint>;
   defaultEndpointKey: string | null;
   presentation?: AccessSectionPresentation;
+  /**
+   * The link's token, when this client still has it. The server returns it
+   * from creation only and never lists it, so it is known for links created
+   * in this session and unknown for everything else.
+   */
+  credential: string | undefined;
   revokingPairingLinkId: string | null;
   onRevoke: (id: string) => void;
 };
@@ -523,6 +466,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   endpoints,
   defaultEndpointKey,
   presentation = "current",
+  credential,
   revokingPairingLinkId,
   onRevoke,
 }: PairingLinkListRowProps) {
@@ -534,49 +478,40 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   const [isRevealDialogOpen, setIsRevealDialogOpen] = useState(false);
 
   const currentOriginPairingUrl = useMemo(
-    () => resolveCurrentOriginPairingUrl(pairingLink.credential),
-    [pairingLink.credential],
+    () => (credential === undefined ? null : resolveCurrentOriginPairingUrl(credential)),
+    [credential],
   );
   const hostedPairingUrl = useMemo(
     () =>
-      endpointUrl != null && endpointUrl !== ""
-        ? resolveHostedPairingUrl(endpointUrl, pairingLink.credential)
+      endpointUrl != null && endpointUrl !== "" && credential !== undefined
+        ? resolveHostedPairingUrl(endpointUrl, credential)
         : null,
-    [endpointUrl, pairingLink.credential],
+    [endpointUrl, credential],
   );
-  const endpointPairingUrl = useMemo(() => {
-    const endpoint = selectPairingEndpoint(endpoints, defaultEndpointKey);
-    return endpoint ? resolveAdvertisedEndpointPairingUrl(endpoint, pairingLink.credential) : null;
-  }, [defaultEndpointKey, endpoints, pairingLink.credential]);
-  const endpointCopyOptions = useMemo(() => {
-    const options: Array<{
-      readonly key: string;
-      readonly label: string;
-      readonly url: string;
-      readonly detail: string;
-    }> = [];
-    for (const endpoint of endpoints) {
-      if (endpoint.status === "unavailable") {
-        continue;
-      }
-      const url = resolveAdvertisedEndpointPairingUrl(endpoint, pairingLink.credential);
-      options.push({
-        key: endpointDefaultPreferenceKey(endpoint),
-        label: endpoint.label,
-        url,
-        detail: isHostedAppPairingUrl(url) ? "Hosted app link" : "Backend pairing URL",
-      });
-    }
-    return options;
-  }, [endpoints, pairingLink.credential]);
+  const selectedEndpoint = useMemo(
+    () => selectPairingEndpoint(endpoints, defaultEndpointKey),
+    [defaultEndpointKey, endpoints],
+  );
+  const endpointPairingUrl = useMemo(
+    () =>
+      selectedEndpoint && credential !== undefined
+        ? resolveAdvertisedEndpointPairingUrl(selectedEndpoint, credential)
+        : null,
+    [selectedEndpoint, credential],
+  );
+  const endpointCopyOptions = useMemo(
+    () => buildEndpointCopyOptions(endpoints, credential),
+    [endpoints, credential],
+  );
   const shareablePairingUrl =
     endpointPairingUrl ??
     (endpointUrl != null && endpointUrl !== ""
-      ? (hostedPairingUrl ?? resolveDesktopPairingUrl(endpointUrl, pairingLink.credential))
+      ? (hostedPairingUrl ??
+        (credential === undefined ? null : resolveDesktopPairingUrl(endpointUrl, credential)))
       : isLoopbackHostname(window.location.hostname)
         ? null
         : currentOriginPairingUrl);
-  const revealValue = shareablePairingUrl ?? pairingLink.credential;
+  const revealValue = shareablePairingUrl ?? credential ?? null;
   const isShareableHostedAppPairingUrl =
     shareablePairingUrl !== null && isHostedAppPairingUrl(shareablePairingUrl);
   const localNetworkPairingHost = useMemo(
@@ -638,8 +573,9 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   );
 
   const handleCopyCode = useCallback(() => {
-    copyPairingValue(pairingLink.credential, "code");
-  }, [copyPairingValue, pairingLink.credential]);
+    if (credential === undefined) return;
+    copyPairingValue(credential, "code");
+  }, [copyPairingValue, credential]);
 
   const handleCopyDefaultLink = useCallback(() => {
     if (!shareablePairingUrl) return;
@@ -649,11 +585,11 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   const expiresAbsolute = formatAccessTimestamp(pairingLink.expiresAt);
 
   const primaryLabel = pairingLink.label ?? "Pairing link";
-  const defaultEndpointCopyOption =
-    endpointCopyOptions.find((option) => option.key === defaultEndpointKey) ??
-    endpointCopyOptions[0] ??
-    null;
-  const defaultEndpointCopyLabel = defaultEndpointCopyOption?.label ?? "URL";
+  // Names the endpoint the button actually copies. Resolving the label from
+  // its own fallback chain let it advertise one endpoint while copying
+  // another's URL.
+  const defaultEndpointCopyLabel =
+    (endpointPairingUrl === null ? null : selectedEndpoint?.label) ?? "URL";
   const backendEndpointCopyOptions = endpointCopyOptions.filter(
     (option) => !isHostedAppPairingUrl(option.url),
   );
@@ -666,7 +602,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   ) =>
     options.map((option) => (
       <MenuItem
-        key={option.key}
+        key={option.url}
         onClick={() => copyPairingValue(option.url, copyKindForUrl(option.url))}
       >
         <span className="min-w-0 flex-1">
@@ -776,12 +712,24 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
               ) : null}
             </Popover>
           </div>
-          <p className="text-xs text-muted-foreground" title={expiresAbsolute}>
-            {formatExpiresInLabel(pairingLink.expiresAt, nowMs)}
-            <span aria-hidden> · </span>
-            <AccessScopeSummary scopes={pairingLink.scopes} label="Pairing link scopes" />
-          </p>
-          {shareablePairingUrl === null ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <p className="text-xs text-muted-foreground">
+                  {formatExpiresInLabel(pairingLink.expiresAt, nowMs)}
+                  <span aria-hidden> · </span>
+                  <AccessScopeSummary scopes={pairingLink.scopes} label="Pairing link scopes" />
+                </p>
+              }
+            />
+            <TooltipPopup>{expiresAbsolute}</TooltipPopup>
+          </Tooltip>
+          {credential === undefined ? (
+            <p className="text-[11px] text-muted-foreground/70">
+              The server only hands out a link&apos;s token when the link is created, so this one
+              can no longer be copied. Create a new pairing link to share.
+            </p>
+          ) : shareablePairingUrl === null ? (
             <p className="text-[11px] text-muted-foreground/70">
               Copy the token and pair from another client using this backend&apos;s reachable host.
             </p>
@@ -796,7 +744,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
         </div>
         <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
           <Dialog open={isRevealDialogOpen} onOpenChange={setIsRevealDialogOpen}>
-            {canCopyToClipboard ? (
+            {credential === undefined ? null : canCopyToClipboard ? (
               <>
                 {shareablePairingUrl ? (
                   <Group aria-label="Copy selected endpoint">
@@ -860,7 +808,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
               <DialogPanel className="space-y-4">
                 <Textarea
                   readOnly
-                  value={revealValue}
+                  value={revealValue ?? ""}
                   rows={shareablePairingUrl ? 4 : 3}
                   className="text-xs leading-relaxed"
                   onFocus={(event) => event.currentTarget.select()}
@@ -988,12 +936,14 @@ type AuthorizedClientsHeaderActionProps = {
   clientSessions: ReadonlyArray<ServerClientSessionRecord>;
   isRevokingOtherClients: boolean;
   onRevokeOtherClients: () => void;
+  onPairingLinkCreated: (id: string, credential: string) => void;
 };
 
 const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderAction({
   clientSessions,
   isRevokingOtherClients,
   onRevokeOtherClients,
+  onPairingLinkCreated,
 }: AuthorizedClientsHeaderActionProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [pairingLabel, setPairingLabel] = useState("");
@@ -1005,7 +955,14 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
   const handleCreatePairingLink = useCallback(async () => {
     setIsCreatingPairingLink(true);
     try {
-      await createServerPairingCredential({ label: pairingLabel, scopes: pairingScopes });
+      // Creation is the only moment the credential exists outside the server;
+      // the listing deliberately withholds it. Dropping it here is what left
+      // every fresh link with a copy button that could never produce anything.
+      const created = await createServerPairingCredential({
+        label: pairingLabel,
+        scopes: pairingScopes,
+      });
+      onPairingLinkCreated(created.id, created.credential);
       setPairingLabel("");
       setPairingScopes([...AuthStandardClientScopes]);
       setDialogOpen(false);
@@ -1021,7 +978,7 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
     } finally {
       setIsCreatingPairingLink(false);
     }
-  }, [pairingLabel, pairingScopes]);
+  }, [onPairingLinkCreated, pairingLabel, pairingScopes]);
 
   const togglePairingScope = useCallback((scope: AuthEnvironmentScope, checked: boolean) => {
     setPairingScopes((current) =>
@@ -1166,6 +1123,8 @@ type PairingClientsListProps = {
   isLoading: boolean;
   pairingLinks: ReadonlyArray<ServerPairingLinkRecord>;
   clientSessions: ReadonlyArray<ServerClientSessionRecord>;
+  /** Tokens this client captured at creation, keyed by pairing link id. */
+  createdCredentials: ReadonlyMap<string, string>;
   revokingPairingLinkId: string | null;
   revokingClientSessionId: string | null;
   onRevokePairingLink: (id: string) => void;
@@ -1180,6 +1139,7 @@ const PairingClientsList = memo(function PairingClientsList({
   isLoading,
   pairingLinks,
   clientSessions,
+  createdCredentials,
   revokingPairingLinkId,
   revokingClientSessionId,
   onRevokePairingLink,
@@ -1195,6 +1155,7 @@ const PairingClientsList = memo(function PairingClientsList({
           endpoints={endpoints}
           defaultEndpointKey={defaultEndpointKey}
           presentation={presentation}
+          credential={pairingLink.credential ?? createdCredentials.get(pairingLink.id)}
           revokingPairingLinkId={revokingPairingLinkId}
           onRevoke={onRevokePairingLink}
         />
@@ -1255,12 +1216,16 @@ const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow({
             {endpoint.label}
           </h3>
           {shouldShowEndpointUrl ? (
-            <p
-              className="min-w-0 truncate text-xs leading-5 text-muted-foreground"
-              title={endpoint.httpBaseUrl}
-            >
-              {endpoint.httpBaseUrl}
-            </p>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <p className="min-w-0 truncate text-xs leading-5 text-muted-foreground">
+                    {endpoint.httpBaseUrl}
+                  </p>
+                }
+              />
+              <TooltipPopup>{endpoint.httpBaseUrl}</TooltipPopup>
+            </Tooltip>
           ) : null}
           {!isAvailable ? (
             <span className="shrink-0 rounded-md border border-border/70 px-1 py-0.5 text-[10px] text-muted-foreground">
@@ -1801,6 +1766,24 @@ export function ConnectionsSettings() {
     string | null
   >(null);
   const [isRevokingOtherDesktopClients, setIsRevokingOtherDesktopClients] = useState(false);
+  // Pairing tokens captured from creation responses, so a link created here
+  // stays copyable for the rest of this session. In memory only: the server
+  // never lists these back, and persisting them would outlive the tab that
+  // was trusted with them.
+  const [createdPairingCredentials, setCreatedPairingCredentials] = useState<
+    ReadonlyMap<string, string>
+  >(() => new Map());
+  const handlePairingLinkCreated = useCallback((id: string, credential: string) => {
+    setCreatedPairingCredentials((current) => new Map(current).set(id, credential));
+  }, []);
+  const forgetPairingCredential = useCallback((id: string) => {
+    setCreatedPairingCredentials((current) => {
+      if (!current.has(id)) return current;
+      const next = new Map(current);
+      next.delete(id);
+      return next;
+    });
+  }, []);
   const [addBackendDialogOpen, setAddBackendDialogOpen] = useState(false);
   const [savedBackendMode, setSavedBackendMode] = useState<"remote" | "ssh">("remote");
   const [savedBackendHost, setSavedBackendHost] = useState("");
@@ -2052,25 +2035,29 @@ export function ConnectionsSettings() {
     setDisableTailscaleServeDialogOpen(true);
   }, []);
 
-  const handleRevokeDesktopPairingLink = useCallback(async (id: string) => {
-    setRevokingDesktopPairingLinkId(id);
-    setDesktopAccessManagementMutationError(null);
-    try {
-      await revokeServerPairingLink(id);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to revoke pairing link.";
-      setDesktopAccessManagementMutationError(message);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not revoke pairing link",
-          description: message,
-        }),
-      );
-    } finally {
-      setRevokingDesktopPairingLinkId(null);
-    }
-  }, []);
+  const handleRevokeDesktopPairingLink = useCallback(
+    async (id: string) => {
+      setRevokingDesktopPairingLinkId(id);
+      setDesktopAccessManagementMutationError(null);
+      try {
+        await revokeServerPairingLink(id);
+        forgetPairingCredential(id);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to revoke pairing link.";
+        setDesktopAccessManagementMutationError(message);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not revoke pairing link",
+            description: message,
+          }),
+        );
+      } finally {
+        setRevokingDesktopPairingLinkId(null);
+      }
+    },
+    [forgetPairingCredential],
+  );
 
   const handleRevokeDesktopClientSession = useCallback(
     async (sessionId: ServerClientSessionRecord["sessionId"]) => {
@@ -2332,14 +2319,15 @@ export function ConnectionsSettings() {
       selectPairingEndpoint(visibleDesktopNetworkAdvertisedEndpoints, defaultAdvertisedEndpointKey),
     [defaultAdvertisedEndpointKey, visibleDesktopNetworkAdvertisedEndpoints],
   );
+  // Pairing resolves across every visible endpoint, Tailscale HTTPS included.
+  // Resolving over the network-only list first dropped an explicit Tailscale
+  // choice whenever LAN access was on, because that list excludes the
+  // Tailscale HTTPS endpoint and the lookup then fell through to the LAN
+  // endpoint. The network-only list still drives the "Reachable at" summary,
+  // which has its own Tailscale row beneath it.
   const defaultDesktopAdvertisedEndpoint = useMemo(
-    () =>
-      defaultDesktopNetworkAdvertisedEndpoint ??
-      selectPairingEndpoint(
-        tailscaleHttpsEndpoint ? [tailscaleHttpsEndpoint] : [],
-        defaultAdvertisedEndpointKey,
-      ),
-    [defaultAdvertisedEndpointKey, defaultDesktopNetworkAdvertisedEndpoint, tailscaleHttpsEndpoint],
+    () => selectPairingEndpoint(visibleDesktopAdvertisedEndpoints, defaultAdvertisedEndpointKey),
+    [defaultAdvertisedEndpointKey, visibleDesktopAdvertisedEndpoints],
   );
   const defaultDesktopAdvertisedEndpointKey = defaultDesktopAdvertisedEndpoint
     ? endpointDefaultPreferenceKey(defaultDesktopAdvertisedEndpoint)
@@ -2879,6 +2867,12 @@ export function ConnectionsSettings() {
     );
   };
 
+  // The switch tracks the persisted setting, not the HTTPS probe. Probing
+  // only turns true once the relaunched backend has Tailscale Serve answering,
+  // so reading it here made a successful toggle look like it did nothing,
+  // and left a failed `tailscale serve` (Tailscale stopped, signed out) with
+  // no visible explanation at all.
+  const isTailscaleServeEnabled = desktopServerExposureState?.tailscaleServeEnabled ?? false;
   const renderTailscaleRow = () => (
     <SettingsRow
       title="Tailscale HTTPS"
@@ -2886,13 +2880,15 @@ export function ConnectionsSettings() {
         tailscaleHttpsEndpoint
           ? tailscaleHttpsEndpoint.status === "available"
             ? tailscaleHttpsEndpoint.httpBaseUrl
-            : "Use Tailscale Serve to expose this backend through a MagicDNS HTTPS URL."
+            : isTailscaleServeEnabled
+              ? "Tailscale Serve is on, but this HTTPS endpoint isn't answering yet. Check that Tailscale is running and signed in."
+              : "Use Tailscale Serve to expose this backend through a MagicDNS HTTPS URL."
           : "Start Tailscale to set up HTTPS access through MagicDNS."
       }
       control={
         tailscaleHttpsEndpoint ? (
           <Switch
-            checked={tailscaleHttpsEndpoint.status === "available"}
+            checked={isTailscaleServeEnabled}
             disabled={isUpdatingTailscaleServe}
             onCheckedChange={(checked) => {
               if (checked) {
@@ -2922,6 +2918,7 @@ export function ConnectionsSettings() {
         isLoading={isLoadingDesktopAccessManagement}
         pairingLinks={visibleDesktopPairingLinks}
         clientSessions={desktopClientSessions}
+        createdCredentials={createdPairingCredentials}
         revokingPairingLinkId={revokingDesktopPairingLinkId}
         revokingClientSessionId={revokingDesktopClientSessionId}
         onRevokePairingLink={handleRevokeDesktopPairingLink}
@@ -3043,6 +3040,7 @@ export function ConnectionsSettings() {
                   clientSessions={desktopClientSessions}
                   isRevokingOtherClients={isRevokingOtherDesktopClients}
                   onRevokeOtherClients={handleRevokeOtherDesktopClients}
+                  onPairingLinkCreated={handlePairingLinkCreated}
                 />
               }
             >
@@ -3289,12 +3287,18 @@ export function ConnectionsSettings() {
                 ) : null}
                 <div className="rounded-md border border-border/70 bg-muted/20 px-3 py-2">
                   <p className="text-xs font-medium text-muted-foreground">HTTPS endpoint</p>
-                  <p
-                    className="mt-1 truncate text-sm text-foreground"
-                    title={pendingTailscaleServeBaseUrl ?? undefined}
-                  >
-                    {pendingTailscaleServeBaseUrl ?? "Pending MagicDNS endpoint"}
-                  </p>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <p className="mt-1 truncate text-sm text-foreground">
+                          {pendingTailscaleServeBaseUrl ?? "Pending MagicDNS endpoint"}
+                        </p>
+                      }
+                    />
+                    <TooltipPopup>
+                      {pendingTailscaleServeBaseUrl ?? "Pending MagicDNS endpoint"}
+                    </TooltipPopup>
+                  </Tooltip>
                 </div>
               </DialogPanel>
               <DialogFooter>

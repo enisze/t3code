@@ -44,9 +44,18 @@ export const useDiffViewedStore = create<DiffViewedStoreState>()(
           const current = state.viewedByScope[scopeKey];
           if (!current) return state;
           const valid = Object.fromEntries(
-            Object.entries(current).filter(
-              ([filePath, signature]) => currentSignatures.get(filePath) === signature,
-            ),
+            Object.entries(current).filter(([filePath, signature]) => {
+              const currentSignature = currentSignatures.get(filePath);
+              // Absent means the file is missing from the diff we are comparing
+              // against — a partial or still-loading snapshot (e.g. the branch
+              // diff refetching after leaving a turn view), or a file that
+              // dropped out of scope. Keep the mark; only a file that is present
+              // with a *different* signature was actually edited since it was
+              // reviewed, so only that clears the mark. Reconcile is storage
+              // cleanup: the visible checkbox already recomputes live, so a stale
+              // entry is harmless while wiping a live one is the reported bug.
+              return currentSignature === undefined || currentSignature === signature;
+            }),
           );
           if (Object.keys(valid).length === Object.keys(current).length) return state;
           return { viewedByScope: { ...state.viewedByScope, [scopeKey]: valid } };

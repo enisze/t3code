@@ -23,6 +23,8 @@ import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 
+import type { PullRequestState } from "@t3tools/contracts";
+import type { DesktopPreviewOverlay } from "~/previewStateStore";
 interface RightPanelTabsProps {
   mode: PreviewPanelMode;
   maximized?: boolean;
@@ -68,6 +70,8 @@ function surfaceTitle(
       );
     case "plan":
       return "Plan";
+    case "pull-request":
+      return `#${surface.number}`;
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -231,15 +235,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     >
       <div
         className={cn(
-          "workspace-topbar justify-end gap-1 pl-2",
+          "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center justify-end gap-1 pl-2 pr-3",
           !ownsDesktopTitleBar && "[--workspace-topbar-height:--spacing(11)]",
-          props.mode === "inline" ? "pr-28" : "pr-3",
-          ownsDesktopTitleBar && "wco:pr-[calc(var(--workspace-native-controls-inset)+6rem)]",
+          ownsDesktopTitleBar && "wco:pr-[var(--workspace-native-controls-inset)]",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         )}
       >
+        {props.layoutControls ? (
+          // The panel's own collapse control leads the header; the git actions
+          // stay on the trailing edge.
+          <div className="me-auto flex h-full shrink-0 items-center">{props.layoutControls}</div>
+        ) : null}
         {props.headerActions}
-        {props.layoutControls}
       </div>
       <div
         className="flex h-9 shrink-0 items-center gap-1 border-b border-border/60 px-2"
@@ -328,3 +335,70 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     </PreviewPanelShell>
   );
 }
+
+export type PullRequestTabStatusSeed = Pick<PullRequestTabStatus, "state" | "isDraft">;
+
+export interface PullRequestTabStatus {
+  projectId: string;
+  repository: string;
+  number: number;
+  state: PullRequestState;
+  isDraft: boolean;
+}
+
+export function shouldOpenDefaultBrowserProfileFromMenuClick(
+  pointerType: string | undefined,
+): boolean {
+  return pointerType !== "touch";
+}
+
+/**
+ * Label and enabled state for a preview tab's mute menu entry.
+ * Stays disabled until desktop overlay state arrives: a server session id can
+ * resolve while the preview manager's createTab is still in flight, and muting
+ * then fails with a PreviewTabNotFoundError nothing surfaces to the user.
+ */
+export function tabMuteMenuItem(input: {
+  overlay: DesktopPreviewOverlay | null;
+  canResolveRuntimeTabId: boolean;
+}): { label: string; disabled: boolean } {
+  const muted = input.overlay?.audioMuted ?? false;
+  return {
+    label: muted ? "Unmute tab" : "Mute tab",
+    disabled: input.overlay === null || !input.canResolveRuntimeTabId,
+  };
+}
+
+export function surfaceShortcutActionForKey<
+  const Action extends { available: boolean; shortcut: string },
+>(actions: readonly Action[], event: SurfaceShortcutEvent): Action | null {
+  if (event.defaultPrevented || event.isComposing) return null;
+  if (event.metaKey || event.ctrlKey || event.altKey) return null;
+  return (
+    actions.find(
+      (action) => action.available && action.shortcut.toLowerCase() === event.key.toLowerCase(),
+    ) ?? null
+  );
+}
+
+/**
+ * A focused editable is a typing context whether or not it has text yet: an
+ * empty chat composer at rest is still where the user's next keystrokes are
+ * meant to land, and claiming launcher letters from it would redirect prompts
+ * into whatever surface opens. The `:not` clause lets `closest` see past
+ * non-editable islands (`contenteditable="false"`) to an editable host around
+ * them, matching ComposerPendingUserInputPanel's typing guard.
+ */
+export function surfaceShortcutTargetsTypingContext(
+  target: { closest(selectors: string): unknown } | null,
+): boolean {
+  return (
+    target?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])') !=
+    null
+  );
+}
+
+type SurfaceShortcutEvent = Pick<
+  KeyboardEvent,
+  "altKey" | "ctrlKey" | "defaultPrevented" | "isComposing" | "key" | "metaKey"
+>;

@@ -87,7 +87,11 @@ import {
   isLatestTurnSettled,
 } from "../session-logic";
 import { type LegendListRef } from "@legendapp/list/react";
-import { timelineContentOverflowsViewport, type TimelineScrollMode } from "./chat/timelineScroll";
+import {
+  resolveTimelineLiveFollow,
+  timelineContentOverflowsViewport,
+  type TimelineScrollMode,
+} from "./chat/timelineScroll";
 import {
   buildPendingUserInputAnswers,
   derivePendingUserInputProgress,
@@ -109,9 +113,9 @@ import {
   type ChatMessage,
   type SessionPhase,
   type Thread,
-  type TurnDiffSummary,
 } from "../types";
 import { useTheme } from "../hooks/useTheme";
+import { useReopenClosedChat } from "../hooks/useReopenClosedChat";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
@@ -223,7 +227,7 @@ import {
   serverEnvironment,
 } from "../state/server";
 import { terminalEnvironment } from "../state/terminal";
-import { threadEnvironment } from "../state/threads";
+import { retryThreadDetail, threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
@@ -244,7 +248,7 @@ import { FileViewModeToggle } from "./FileViewModeToggle";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
 import { WorktreeThreadTabs } from "./chat/WorktreeThreadTabs";
-import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
+import { PanelLayoutControls } from "./chat/PanelLayoutControls";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { resolveEffectiveEnvMode, resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
@@ -253,8 +257,14 @@ import {
   ProviderStatusBanner,
   shouldShowProviderStatusBanner,
 } from "./chat/ProviderStatusBanner";
-import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
-import { resolveThreadPr } from "./ThreadStatusIndicators";
+import {
+  dismissThreadErrorBannerForSession,
+  getThreadErrorBannerKey,
+  isThreadErrorBannerDismissedForSession,
+  shouldShowThreadErrorBanner,
+  ThreadErrorBanner,
+} from "./chat/ThreadErrorBanner";
+import { resolveThreadPr, ThreadReadyCheckIcon } from "./ThreadStatusIndicators";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { ThreadSyncStatusPill } from "./chat/ThreadSyncStatusPill";
 import {
@@ -271,6 +281,7 @@ import {
   buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
   buildLoadingThreadFromShell,
+  buildTurnDiffSummaryByAssistantMessageId,
   buildThreadTurnInterruptInput,
   canCreateEmptyWorktreeThread,
   collectUserMessageBlobPreviewUrls,
@@ -326,6 +337,7 @@ import {
   serverUpdateGuidance,
 } from "../versionSkew";
 import { useAssetUrls } from "../assets/assetUrls";
+import { isImageAttachment } from "../types";
 import {
   buildUnavailableAttachmentsToastCopy,
   reuseMessageAttachments,
@@ -1201,7 +1213,12 @@ function ChatViewContent(props: ChatViewProps) {
   } = props;
   const draftId = routeKind === "draft" ? props.draftId : null;
   const threadSyncPhase = routeKind === "server" ? (props.threadSyncPhase ?? null) : null;
-  const threadDetailLoading = threadSyncPhase === "loading";
+  // "failed" means the load stopped with nothing on screen, so it gates the
+  // same things a load in flight does; only the reason shown to the user differs.
+  const threadDetailUnavailable = threadSyncPhase === "loading" || threadSyncPhase === "failed";
+  const retryThreadDetailLoad = useCallback(() => {
+    retryThreadDetail(environmentId, threadId);
+  }, [environmentId, threadId]);
   const handleNewThread = useNewThreadHandler();
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -1263,10 +1280,10 @@ function ChatViewContent(props: ChatViewProps) {
   const serverThread = useThread(routeThreadRef, { waitForShell: draftThread !== null });
   const loadingServerThread = useMemo(
     () =>
-      threadDetailLoading && routeServerThreadShell
+      threadDetailUnavailable && routeServerThreadShell
         ? buildLoadingThreadFromShell(routeServerThreadShell)
         : null,
-    [routeServerThreadShell, threadDetailLoading],
+    [routeServerThreadShell, threadDetailUnavailable],
   );
   const activeServerThread = serverThread ?? loadingServerThread;
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
@@ -1505,6 +1522,22 @@ function ChatViewContent(props: ChatViewProps) {
   const threadError = isServerThread
     ? (localServerError ?? activeServerThread?.session?.lastError ?? null)
     : localDraftError;
+  // Dismissals can only mask the shown error, never clear it: a server thread
+  // keeps its error in session.lastError, so clearing the local shadow would
+  // just fall through to the persisted one. Mask the current error until a
+  // different error arrives, mirroring the provider status banner.
+  const threadErrorBannerKey = getThreadErrorBannerKey(routeThreadKey, threadError);
+  const visibleThreadError = shouldShowThreadErrorBanner(
+    routeThreadKey,
+    threadError,
+    isThreadErrorBannerDismissedForSession(threadErrorBannerKey),
+  )
+    ? threadError
+    : null;
+  // The session-scoped mask set does not trigger a render on its own, and
+  // setThreadError(null) bails when the banner is driven purely by
+  // session.lastError. Bump a tick so the banner hides immediately.
+  const [, setThreadErrorBannerDismissTick] = useState(0);
   const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode =
     composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
@@ -2055,7 +2088,7 @@ function ChatViewContent(props: ChatViewProps) {
           <>
             Client {versionMismatch.clientVersion} is connected to {versionMismatchServerLabel}{" "}
             {versionMismatch.serverVersion}.{" "}
-            {serverUpdateGuidance(versionMismatchSelfUpdate, versionMismatchServerLabel)}
+            {versionMismatchSelfUpdate ? serverUpdateGuidance(versionMismatchSelfUpdate) : null}
           </>
         ),
         // The desktop-managed guidance is already the description; the action
@@ -2318,7 +2351,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
 
       const serverPreviewUrls = serverMessage.attachments.flatMap((attachment) =>
-        attachment.type === "image" && attachment.previewUrl ? [attachment.previewUrl] : [],
+        isImageAttachment(attachment) && attachment.previewUrl ? [attachment.previewUrl] : [],
       );
       if (
         serverPreviewUrls.length === 0 ||
@@ -2406,7 +2439,10 @@ function ChatViewContent(props: ChatViewProps) {
               }
               const handoffPreviewUrl = handoffPreviewUrls[imageIndex];
               imageIndex += 1;
-              if (!handoffPreviewUrl || attachment.previewUrl === handoffPreviewUrl) {
+              if (
+                !handoffPreviewUrl ||
+                (isImageAttachment(attachment) && attachment.previewUrl === handoffPreviewUrl)
+              ) {
                 return attachment;
               }
               changed = true;
@@ -2458,14 +2494,10 @@ function ChatViewContent(props: ChatViewProps) {
   ] = useDraftHeroLayoutTransition(isDraftHeroState);
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
-  const turnDiffSummaryByAssistantMessageId = useMemo(() => {
-    const byMessageId = new Map<MessageId, TurnDiffSummary>();
-    for (const summary of turnDiffSummaries) {
-      if (!summary.assistantMessageId) continue;
-      byMessageId.set(summary.assistantMessageId, summary);
-    }
-    return byMessageId;
-  }, [turnDiffSummaries]);
+  const turnDiffSummaryByAssistantMessageId = useMemo(
+    () => buildTurnDiffSummaryByAssistantMessageId(timelineMessages, turnDiffSummaries),
+    [timelineMessages, turnDiffSummaries],
+  );
   const revertTurnCountByUserMessageId = useMemo(() => {
     const byUserMessageId = new Map<MessageId, number>();
     for (let index = 0; index < timelineEntries.length; index += 1) {
@@ -2573,7 +2605,7 @@ function ChatViewContent(props: ChatViewProps) {
   )
     ? activeProviderStatus
     : null;
-  const hasTimelineTopBanner = Boolean(threadError) || visibleProviderStatus !== null;
+  const hasTimelineTopBanner = Boolean(visibleThreadError) || visibleProviderStatus !== null;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
@@ -3247,17 +3279,25 @@ function ChatViewContent(props: ChatViewProps) {
     primaryServerSettings.reviewPrompt,
   ]);
   const startConflictResolutionInNewChat = useCallback(() => {
-    if (!activeProjectRef || !newChatWorktreePath || !activeThread) return;
+    if (!activeProjectRef || !activeProject) return;
+    // Conflicts are usually noticed right after picking a worktree, before it
+    // has any chat, so this must not require an existing thread: fall back to
+    // the project's default model, and target whichever checkout the Git
+    // actions are already reporting on — the worktree when one is in scope,
+    // otherwise the project's own checkout.
+    const conflictModelSelection =
+      activeThread?.modelSelection ?? activeProject.defaultModelSelection;
     void handleNewThread(activeProjectRef, {
       branch: newChatWorktreeBranch,
       worktreePath: newChatWorktreePath,
-      envMode: "worktree",
+      envMode: newChatWorktreePath ? "worktree" : "local",
       forceNew: true,
       initialPrompt: primaryServerSettings.resolvePrompt,
-      modelSelection: activeThread.modelSelection,
+      ...(conflictModelSelection ? { modelSelection: conflictModelSelection } : {}),
       autoSubmitInitialPrompt: true,
     });
   }, [
+    activeProject,
     activeProjectRef,
     activeThread,
     handleNewThread,
@@ -3322,13 +3362,19 @@ function ChatViewContent(props: ChatViewProps) {
       activePreviewState.sessions,
     ],
   );
-  // Reopen the most recently closed content tab in this worktree, browser-style
-  // (Cmd/Ctrl+Shift+T). File/diff tabs reopen by path; a preview reopens by
+  // Reopen the most recently closed tab, browser-style (Cmd/Ctrl+Shift+T): any
+  // closed chat, or a content tab of this worktree. A chat reopens by
+  // unarchiving it; file/diff tabs reopen by path; a preview reopens by
   // re-navigating a fresh session to the URL it was last showing.
-  const reopenClosedContentTab = useCallback(() => {
-    if (!contentTabsWorktreeKey) return;
+  const reopenClosedChat = useReopenClosedChat();
+  const reopenClosedTab = useCallback(async () => {
     const closed = useWorkspaceContentTabsStore.getState().popClosedTab(contentTabsWorktreeKey);
     if (!closed) return;
+    if (closed.view === "chat") {
+      await reopenClosedChat(closed);
+      return;
+    }
+    if (!contentTabsWorktreeKey) return;
     if (closed.view === "preview") {
       if (!workspaceThreadRef || !closed.previewUrl || !isPreviewSupportedInRuntime()) return;
       void openUrlInPreview({
@@ -3338,18 +3384,22 @@ function ChatViewContent(props: ChatViewProps) {
       });
       return;
     }
-    const store = useWorkspaceContentTabsStore.getState();
-    if (closed.view === "diff") {
-      store.openFileDiff(contentTabsWorktreeKey, closed.filePath);
-    } else {
-      store.openFile(contentTabsWorktreeKey, closed.filePath);
-    }
-  }, [contentTabsWorktreeKey, workspaceThreadRef, openPreview]);
+    useWorkspaceContentTabsStore
+      .getState()
+      .reopenFileTab(contentTabsWorktreeKey, closed.filePath, closed.view);
+  }, [contentTabsWorktreeKey, workspaceThreadRef, openPreview, reopenClosedChat]);
+  const keepContentTab = useCallback(
+    (tabId: string) => {
+      if (!contentTabsWorktreeKey) return;
+      useWorkspaceContentTabsStore.getState().keepTab(contentTabsWorktreeKey, tabId);
+    },
+    [contentTabsWorktreeKey],
+  );
   const activateChatContent = useCallback(() => {
     if (!contentTabsWorktreeKey) return;
     useWorkspaceContentTabsStore.getState().activateChat(contentTabsWorktreeKey);
   }, [contentTabsWorktreeKey]);
-  // Flip the single file viewer between the diff and the editable file contents.
+  // Flip the active file tab between the diff and the editable file contents.
   const setContentTabView = useCallback(
     (view: WorkspaceContentTabView) => {
       if (!contentTabsWorktreeKey) return;
@@ -3529,12 +3579,6 @@ function ChatViewContent(props: ChatViewProps) {
     }
     useRightPanelStore.getState().toggleVisibility(workspaceThreadRef);
   }, [workspaceThreadRef, closePlanSidebar, closePreviewPanel, planSidebarOpen, rightPanelOpen]);
-  const toggleRightPanelMaximized = useCallback(() => {
-    if (!canMaximizeRightPanel) return;
-    setMaximizedRightPanelThreadKey((threadKey) =>
-      threadKey === routeThreadKey ? null : routeThreadKey,
-    );
-  }, [canMaximizeRightPanel, routeThreadKey]);
   const cleanupRightPanelSurfaces = useCallback(
     (surfaces: readonly RightPanelSurface[]) => {
       if (!workspaceThreadRef) return;
@@ -3756,13 +3800,6 @@ function ChatViewContent(props: ChatViewProps) {
     timelineScrollModeRef.current = "free-scrolling";
     liveFollowUserScrollGenerationRef.current = null;
   }, []);
-  const cancelTimelineLiveFollowForUserNavigationRef = useRef(
-    cancelTimelineLiveFollowForUserNavigation,
-  );
-  useEffect(() => {
-    cancelTimelineLiveFollowForUserNavigationRef.current =
-      cancelTimelineLiveFollowForUserNavigation;
-  }, [cancelTimelineLiveFollowForUserNavigation]);
   const timelineRealContentOverflowsViewport = useCallback(
     (list?: LegendListRef | null) => {
       const state = (list ?? legendListRef.current)?.getState();
@@ -3786,54 +3823,26 @@ function ChatViewContent(props: ChatViewProps) {
     setShowScrollToBottom(false);
     void legendListRef.current?.scrollToEnd?.({ animated });
   }, []);
-  useEffect(() => {
-    let removeListeners: (() => void) | null = null;
-    const frame = requestAnimationFrame(() => {
-      const scrollNode = legendListRef.current?.getScrollableNode();
-      if (!scrollNode) {
-        return;
-      }
-      const handleManualNavigation = () => {
-        cancelTimelineLiveFollowForUserNavigationRef.current();
-      };
-      scrollNode.addEventListener("wheel", handleManualNavigation, {
-        passive: true,
-      });
-      scrollNode.addEventListener("touchmove", handleManualNavigation, {
-        passive: true,
-      });
-      scrollNode.addEventListener("pointerdown", handleManualNavigation, {
-        passive: true,
-      });
-      removeListeners = () => {
-        scrollNode.removeEventListener("wheel", handleManualNavigation);
-        scrollNode.removeEventListener("touchmove", handleManualNavigation);
-        scrollNode.removeEventListener("pointerdown", handleManualNavigation);
-      };
-    });
-
-    return () => {
-      cancelAnimationFrame(frame);
-      removeListeners?.();
-    };
-  }, [activeThread?.id]);
-
   const onIsAtEndChange = useCallback((isAtEnd: boolean) => {
-    if (!isAtEnd && liveFollowUserScrollGenerationRef.current === userScrollGenerationRef.current) {
-      showScrollDebouncer.current.cancel();
-      setShowScrollToBottom(false);
-      return;
-    }
-    if (isAtEndRef.current === isAtEnd) return;
+    const { mode, pill } = resolveTimelineLiveFollow({
+      armed: liveFollowUserScrollGenerationRef.current === userScrollGenerationRef.current,
+      isAtEnd,
+      wasAtEnd: isAtEndRef.current,
+    });
     isAtEndRef.current = isAtEnd;
-    if (isAtEnd) {
-      timelineScrollModeRef.current = "following-end";
+
+    if (mode === "following-end") {
+      timelineScrollModeRef.current = mode;
       liveFollowUserScrollGenerationRef.current = userScrollGenerationRef.current;
+    } else if (mode === "free-scrolling") {
+      timelineScrollModeRef.current = mode;
+      liveFollowUserScrollGenerationRef.current = null;
+    }
+
+    if (pill === "hide") {
       showScrollDebouncer.current.cancel();
       setShowScrollToBottom(false);
-    } else {
-      timelineScrollModeRef.current = "free-scrolling";
-      liveFollowUserScrollGenerationRef.current = null;
+    } else if (pill === "show") {
       showScrollDebouncer.current.maybeExecute();
     }
   }, []);
@@ -4025,6 +4034,8 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const supportsSettlement = serverConfig?.environment.capabilities.threadSettlement === true;
   const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;
+  const supportsReadyMark = serverConfig?.environment.capabilities.threadReadyMark === true;
+  const activeThreadReady = activeThreadShell?.readyAt != null;
   const nowMinute = useNowMinute();
   const activeThreadSnoozed =
     activeThreadShell !== null &&
@@ -4115,6 +4126,42 @@ function ChatViewContent(props: ChatViewProps) {
       setUnsnoozingThreadKey((current) => (current === threadKey ? null : current));
     }
   }, [activeThreadRef, unsnoozeThreadMutation]);
+  const markThreadReadyMutation = useAtomCommand(threadEnvironment.markReady, {
+    reportFailure: false,
+  });
+  const clearThreadReadyMutation = useAtomCommand(threadEnvironment.clearReady, {
+    reportFailure: false,
+  });
+  // Keyed by thread for the same reason as un-settle: the pending state must
+  // follow the thread it belongs to across navigation.
+  const [readyTogglingThreadKey, setReadyTogglingThreadKey] = useState<string | null>(null);
+  const isTogglingReady =
+    readyTogglingThreadKey !== null && readyTogglingThreadKey === activeThreadKey;
+  const handleToggleActiveThreadReady = useCallback(async () => {
+    if (!activeThreadRef) return;
+    const threadKey = scopedThreadKey(activeThreadRef);
+    const wasReady = activeThreadReady;
+    setReadyTogglingThreadKey(threadKey);
+    try {
+      const mutate = wasReady ? clearThreadReadyMutation : markThreadReadyMutation;
+      const result = await mutate({
+        environmentId: activeThreadRef.environmentId,
+        input: { threadId: activeThreadRef.threadId },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: wasReady ? "Failed to clear ready mark" : "Failed to mark thread ready",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    } finally {
+      setReadyTogglingThreadKey((current) => (current === threadKey ? null : current));
+    }
+  }, [activeThreadReady, activeThreadRef, clearThreadReadyMutation, markThreadReadyMutation]);
   const [isRestoringThreadBranch, setIsRestoringThreadBranch] = useState(false);
   const [branchRestoreConfirmOpen, setBranchRestoreConfirmOpen] = useState(false);
   // Once revealed for a given mismatch, the banner stays mounted until the
@@ -4519,7 +4566,7 @@ function ChatViewContent(props: ChatViewProps) {
       if (command === "tab.reopenClosed") {
         event.preventDefault();
         event.stopPropagation();
-        reopenClosedContentTab();
+        void reopenClosedTab();
         return;
       }
 
@@ -4556,7 +4603,7 @@ function ChatViewContent(props: ChatViewProps) {
     splitPanelTerminal,
     keybindings,
     onToggleDiff,
-    reopenClosedContentTab,
+    reopenClosedTab,
     toggleRightPanel,
     toggleTerminalVisibility,
     composerRef,
@@ -4627,7 +4674,7 @@ function ChatViewContent(props: ChatViewProps) {
       !activeThread ||
       isSendBusy ||
       isConnecting ||
-      threadDetailLoading ||
+      threadDetailUnavailable ||
       activeEnvironmentUnavailable ||
       sendInFlightRef.current
     )
@@ -4761,7 +4808,6 @@ function ChatViewContent(props: ChatViewProps) {
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
-      activateChatContent();
       setMaximizedRightPanelThreadKey(null);
       await onSubmitPlanFollowUp({
         text: followUp.text,
@@ -4828,7 +4874,8 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     sendInFlightRef.current = true;
-    activateChatContent();
+    // Sending leaves an open file/diff/preview tab in place: the composer stays
+    // docked below it, so the user can keep reviewing while the turn runs.
     setMaximizedRightPanelThreadKey(null);
     if (isDraftHeroState && activeThreadKey) {
       let resolveDockStarted: (() => void) | undefined;
@@ -5138,7 +5185,7 @@ function ChatViewContent(props: ChatViewProps) {
       !activeThread ||
       isSendBusy ||
       isConnecting ||
-      threadDetailLoading ||
+      threadDetailUnavailable ||
       activeEnvironmentUnavailable ||
       sendInFlightRef.current ||
       !composerRef.current?.getSendContext().providerAvailable ||
@@ -5198,10 +5245,6 @@ function ChatViewContent(props: ChatViewProps) {
     async (requestId: ApprovalRequestId, answers: Record<string, unknown>) => {
       if (!activeThreadId) return;
 
-      // Answering the agent hands the turn back to the conversation, so reveal
-      // it exactly like sending a message does. Without this, a file/diff tab
-      // opened while reviewing keeps covering the chat the answer just resumed.
-      activateChatContent();
       setMaximizedRightPanelThreadKey(null);
       setRespondingUserInputRequestIds((existing) =>
         existing.includes(requestId) ? existing : [...existing, requestId],
@@ -5224,7 +5267,7 @@ function ChatViewContent(props: ChatViewProps) {
       setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
       return result;
     },
-    [activateChatContent, activeThreadId, environmentId, respondToThreadUserInput, setThreadError],
+    [activeThreadId, environmentId, respondToThreadUserInput, setThreadError],
   );
 
   const setActivePendingUserInputQuestionIndex = useCallback(
@@ -5811,9 +5854,11 @@ function ChatViewContent(props: ChatViewProps) {
   const onOpenTurnDiff = useCallback(
     (turnId: TurnId, filePath?: string) => {
       if (!isServerThread || !workspaceThreadRef || !activeThreadRef) return;
-      // A turn belongs to this conversation, so its selection is per chat; the
-      // diff surface itself is shared across the worktree.
-      useDiffPanelStore.getState().selectTurn(activeThreadRef, turnId, filePath);
+      // The diff surface is shared across the worktree, so the selection keys
+      // off the representative; the turn itself belongs to this conversation.
+      useDiffPanelStore
+        .getState()
+        .selectTurn(workspaceThreadRef, activeThreadRef, turnId, filePath);
       // Choosing a specific file opens its diff as its own tab in the chat
       // column; the bare "open diff" action lands on the surface navigator.
       if (filePath && contentTabsWorktreeKey) {
@@ -5894,19 +5939,71 @@ function ChatViewContent(props: ChatViewProps) {
       onToggleRightPanel={toggleRightPanel}
     />
   );
+  // Open inline, the right panel owns its own header, so the toggle rides in it
+  // at the left instead of floating over the viewport's corner: anchored to the
+  // panel it collapses, and out of the tab row's way.
+  const rightPanelInlineLayoutControls = (
+    <PanelLayoutControls
+      showTerminalControl={false}
+      terminalAvailable={activeProject !== null}
+      terminalOpen={terminalUiState.terminalOpen}
+      terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
+      rightPanelAvailable={activeProject !== null}
+      rightPanelOpen={rightPanelOpen}
+      rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
+      onToggleTerminal={toggleTerminalVisibility}
+      onToggleRightPanel={toggleRightPanel}
+    />
+  );
   const panelLayoutControls = (
-    <div className="workspace-titlebar-controls z-50 gap-1 [-webkit-app-region:no-drag]">
-      {rightPanelOpen && !shouldUsePlanSidebarSheet ? (
-        <RightPanelMaximizeControl
-          maximized={rightPanelMaximized}
-          onToggle={toggleRightPanelMaximized}
+    <div
+      // Keep one viewport anchor inside the header's no-drag region. The header
+      // can shrink behind the right panel without moving the controls.
+      className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]"
+      data-workspace-titlebar-controls
+    >
+      <div className="pointer-events-auto flex h-full items-center">
+        <PanelLayoutControls
+          showTerminalControl={false}
+          terminalAvailable={activeProject !== null}
+          terminalOpen={terminalUiState.terminalOpen}
+          terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
+          rightPanelAvailable={activeProject !== null}
+          rightPanelOpen={rightPanelOpen}
+          rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
+          onToggleTerminal={toggleTerminalVisibility}
+          onToggleRightPanel={toggleRightPanel}
         />
-      ) : null}
-      {panelToggleControls}
+      </div>
     </div>
   );
   const rightPanelTabActions = activeProject ? (
-    <div className="flex shrink-0 items-center [-webkit-app-region:no-drag]">
+    <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
+      {supportsReadyMark && activeThreadShell !== null ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                size="xs"
+                variant="ghost"
+                disabled={isTogglingReady}
+                className="px-1.5"
+                onClick={() => void handleToggleActiveThreadReady()}
+                aria-pressed={activeThreadReady}
+                aria-label={activeThreadReady ? "Clear ready mark" : "Mark thread ready"}
+              />
+            }
+          >
+            <ThreadReadyCheckIcon marked={activeThreadReady} />
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">
+            {activeThreadReady
+              ? "Clear the ready mark on this thread"
+              : "Mark this thread ready — a green check shows on its sidebar row"}
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
       <Tooltip>
         <TooltipTrigger
           render={
@@ -6047,7 +6144,6 @@ function ChatViewContent(props: ChatViewProps) {
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
-      {rightPanelOpen && !shouldUsePlanSidebarSheet ? panelLayoutControls : null}
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
@@ -6062,12 +6158,12 @@ function ChatViewContent(props: ChatViewProps) {
             "bg-background transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none",
             isElectron
               ? cn(
-                  "workspace-topbar drag-region relative px-3 sm:px-5",
+                  "drag-region relative flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center px-3 sm:px-5",
                   reserveTitleBarControlInset &&
                     !inlineRightPanelOwnsTitleBar &&
                     "wco:pr-[var(--workspace-native-controls-inset)]",
                 )
-              : "workspace-topbar pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.75rem)] sm:pl-[calc(env(safe-area-inset-left)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+1.25rem)]",
+              : "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.75rem)] sm:pl-[calc(env(safe-area-inset-left)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+1.25rem)]",
             COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
           )}
         >
@@ -6110,6 +6206,7 @@ function ChatViewContent(props: ChatViewProps) {
                 id: tab.id,
                 title: tab.filePath.slice(tab.filePath.lastIndexOf("/") + 1),
                 view: tab.view,
+                browsing: !tab.kept,
               };
             }
             const session = tab.previewTabId
@@ -6121,12 +6218,17 @@ function ChatViewContent(props: ChatViewProps) {
           activeContentTabId={contentTabsState.activeTabId}
           onSelectContentTab={selectContentTab}
           onCloseContentTab={closeContentTab}
+          onKeepContentTab={keepContentTab}
           onActivateChat={activateChatContent}
         />
 
         <ThreadErrorBanner
-          error={threadError}
-          onDismiss={() => setThreadError(activeThread.id, null)}
+          error={visibleThreadError}
+          onDismiss={() => {
+            setThreadError(activeThread.id, null);
+            dismissThreadErrorBannerForSession(threadErrorBannerKey);
+            setThreadErrorBannerDismissTick((tick) => tick + 1);
+          }}
         />
         {/* Main content area with optional plan sidebar */}
         <div className="flex min-h-0 min-w-0 flex-1">
@@ -6175,7 +6277,7 @@ function ChatViewContent(props: ChatViewProps) {
                 contentInsetEndAdjustment={timelineComposerLayout.contentInsetEndAdjustment}
                 onIsAtEndChange={onIsAtEndChange}
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
-                hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
+                hideEmptyPlaceholder={isDraftHeroState || threadDetailUnavailable}
                 topFadeEnabled={!hasTimelineTopBanner}
               />
 
@@ -6188,7 +6290,6 @@ function ChatViewContent(props: ChatViewProps) {
                   <button
                     type="button"
                     aria-label="Scroll to end"
-                    title="Scroll to end"
                     onClick={() => scrollToEnd(true)}
                     className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/60 bg-card px-3 py-1 text-muted-foreground text-xs shadow-sm transition-colors hover:border-border hover:text-foreground hover:cursor-pointer"
                   >
@@ -6294,7 +6395,7 @@ function ChatViewContent(props: ChatViewProps) {
                     <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
                   )}
                   {threadSyncPhase && !activeEnvironmentUnavailable ? (
-                    <ThreadSyncStatusPill phase={threadSyncPhase} />
+                    <ThreadSyncStatusPill onRetry={retryThreadDetailLoad} phase={threadSyncPhase} />
                   ) : null}
                   <div
                     className="relative"
@@ -6332,7 +6433,13 @@ function ChatViewContent(props: ChatViewProps) {
                             phase={phase}
                             isConnecting={isConnecting}
                             isSendBusy={isSendBusy}
-                            sendDisabledReason={threadDetailLoading ? "Messages loading" : null}
+                            sendDisabledReason={
+                              threadSyncPhase === "failed"
+                                ? "Messages could not be loaded"
+                                : threadDetailUnavailable
+                                  ? "Messages loading"
+                                  : null
+                            }
                             isPreparingWorktree={isPreparingWorktree}
                             environmentUnavailable={activeEnvironmentUnavailableState}
                             activePendingApproval={activePendingApproval}
@@ -6527,6 +6634,7 @@ function ChatViewContent(props: ChatViewProps) {
         <RightPanelTabs
           mode="inline"
           maximized={rightPanelMaximized}
+          layoutControls={rightPanelInlineLayoutControls}
           headerActions={rightPanelHeaderActions}
           tabActions={rightPanelTabActions}
           surfaces={rightPanelState.surfaces}

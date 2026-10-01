@@ -82,4 +82,34 @@ describe("diffViewedStore", () => {
       "same.ts": "sig-same",
     });
   });
+
+  it("keeps viewed marks for files missing from a partial or loading snapshot", () => {
+    const store = useDiffViewedStore.getState();
+    store.setFileViewed(SCOPE, "a.ts", "sig-a", true);
+    store.setFileViewed(SCOPE, "b.ts", "sig-b", true);
+
+    // Returning to the working tree while its diff refetches (e.g. after leaving
+    // a turn view) reconciles against an empty/partial signature map. A missing
+    // file is not an edited file, so its mark must survive rather than reset.
+    store.reconcileViewedSignatures(SCOPE, new Map());
+
+    expect(selectViewedSignatures(useDiffViewedStore.getState().viewedByScope, SCOPE)).toEqual({
+      "a.ts": "sig-a",
+      "b.ts": "sig-b",
+    });
+  });
+
+  it("prunes only the edited file when a snapshot omits the rest", () => {
+    const store = useDiffViewedStore.getState();
+    store.setFileViewed(SCOPE, "a.ts", "sig-a", true);
+    store.setFileViewed(SCOPE, "edited.ts", "sig-old", true);
+
+    // Only "edited.ts" is present, and with a new signature; "a.ts" is absent
+    // from this snapshot. The edit clears its mark, the absent file keeps its.
+    store.reconcileViewedSignatures(SCOPE, new Map([["edited.ts", "sig-new"]]));
+
+    expect(selectViewedSignatures(useDiffViewedStore.getState().viewedByScope, SCOPE)).toEqual({
+      "a.ts": "sig-a",
+    });
+  });
 });

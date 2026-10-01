@@ -61,7 +61,10 @@ const DEFAULT_TASK_ROWS = 30;
 
 const COLLAPSED_STORAGE_KEY = "t3code:tasks-dock-collapsed";
 const HEIGHT_STORAGE_KEY = "t3code:tasks-dock-height";
-const ACTIVE_TAB_STORAGE_KEY = "t3code:tasks-dock-active-tab";
+// v2: the previous key was written on every render, including the derived
+// default, so every existing install has a tab pinned that the user never
+// picked. A new key starts them on the shell default instead.
+const ACTIVE_TAB_STORAGE_KEY = "t3code:tasks-dock-active-tab:v2";
 const MIN_BODY_HEIGHT = 140;
 const DEFAULT_BODY_HEIGHT = 280;
 
@@ -88,10 +91,10 @@ function readStoredCollapsed(): boolean {
 }
 
 // Restore the last-opened tab so the dock resumes where it was left, rather
-// than snapping back to Setup on every mount. Defaults to the Run tab.
-function readStoredActiveTab(): string {
-  if (typeof window === "undefined") return TAB_RUN;
-  return window.localStorage.getItem(ACTIVE_TAB_STORAGE_KEY) ?? TAB_RUN;
+// than snapping back to Setup on every mount.
+function readStoredActiveTab(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(ACTIVE_TAB_STORAGE_KEY);
 }
 
 const runShortcutLabel = () =>
@@ -152,7 +155,7 @@ export default function TasksDock({
   onDeleteScript,
   onAddTerminalContext,
 }: TasksDockProps) {
-  const [activeTabId, setActiveTabId] = useState<string>(readStoredActiveTab);
+  const [storedActiveTabId, setActiveTabId] = useState<string | null>(readStoredActiveTab);
   // Terminal ids started this mount — lets the viewport render optimistically the
   // moment we launch, before the metadata subscription reflects the session.
   const [startedTerminalIds, setStartedTerminalIds] = useState<ReadonlySet<string>>(
@@ -266,6 +269,11 @@ export default function TasksDock({
     return taskTabs;
   }, [setupScript, runScriptEntry, customScripts, shellIds]);
 
+  // Opening the dock should give you a shell, not a task. Setup/Run are still a
+  // click away and an explicit pick is still remembered, but the dock no longer
+  // lands on a tab whose only affordance is running a command.
+  const defaultTabId = TASK_SHELL_TERMINAL_ID;
+  const activeTabId = storedActiveTabId ?? defaultTabId;
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId) ?? tabs[0]!,
     [tabs, activeTabId],
@@ -289,16 +297,20 @@ export default function TasksDock({
 
   useEffect(() => {
     if (typeof window !== "undefined") {
-      window.localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, activeTabId);
+      // Only an explicit pick is remembered; persisting the derived default
+      // would pin the dock to whatever it happened to open on first.
+      if (storedActiveTabId !== null) {
+        window.localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, storedActiveTabId);
+      }
     }
-  }, [activeTabId]);
+  }, [storedActiveTabId]);
 
   // Keep the active tab valid as scripts/terminals change (e.g. a closed
-  // terminal tab); fall back to the Run tab when it disappears.
+  // terminal tab); fall back to the default when it disappears.
   useEffect(() => {
     if (tabs.some((tab) => tab.id === activeTabId)) return;
-    setActiveTabId(TAB_RUN);
-  }, [activeTabId, tabs]);
+    setActiveTabId(defaultTabId);
+  }, [activeTabId, defaultTabId, tabs]);
 
   // Refit the terminal whenever the dock body resizes.
   useEffect(() => {
@@ -663,7 +675,10 @@ export default function TasksDock({
           <TooltipPopup side="top">{collapsed ? "Expand" : "Collapse"}</TooltipPopup>
         </Tooltip>
 
-        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+        {/* Full height plus a hidden scrollbar: an overflowing tab strip would
+            otherwise reserve gutter space at its bottom, lifting the tabs and
+            leaving the run button beside it looking low. */}
+        <div className="flex h-full min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {tabs.map((tab) => {
             const active = !collapsed && tab.id === activeTab.id;
             const running = runningSet.has(tab.terminalId);
@@ -838,7 +853,10 @@ export default function TasksDock({
           className="relative min-h-0 bg-background p-1.5"
           style={{ height: `${bodyHeight}px` }}
         >
-          {activeTerminalId !== null && activeTerminalStarted ? (
+          {/* A shell tab has no command to configure and nothing to "run": it is a
+              terminal, so it opens one. Only script tabs get the run-first empty
+              states below. */}
+          {activeTerminalId !== null && (activeIsShell || activeTerminalStarted) ? (
             <TerminalViewport
               key={activeTerminalId}
               threadRef={threadRef}

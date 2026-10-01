@@ -8,7 +8,7 @@ describe("applyAuthAccessStreamEvent", () => {
   it("accumulates rapid pairing-link and client updates into one snapshot", () => {
     const pairingLink = {
       id: "pairing-link",
-      credential: "credential",
+      credential: "pairing-credential",
       scopes: ["orchestration:read"],
       subject: "subject",
       label: "Phone",
@@ -56,7 +56,7 @@ describe("applyAuthAccessStreamEvent", () => {
         pairingLinks: [
           {
             id: "pairing-link",
-            credential: "credential",
+            credential: "pairing-credential",
             scopes: ["orchestration:read"],
             subject: "subject",
             label: "Phone",

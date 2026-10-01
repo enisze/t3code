@@ -29,7 +29,7 @@ function documentAttachment(name: string, previewUrl?: string): ChatAttachment {
 }
 
 const loadFile = async (attachment: ChatAttachment) =>
-  attachment.previewUrl
+  "previewUrl" in attachment && attachment.previewUrl
     ? new File([`bytes-of-${attachment.name}`], attachment.name, { type: attachment.mimeType })
     : null;
 

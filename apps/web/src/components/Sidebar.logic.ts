@@ -14,6 +14,9 @@ import { isLatestTurnSettled } from "../session-logic";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
 import { worktreeActivityKey } from "../uiStateStore";
 
+import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // Visible sidebar rows are prewarmed into the thread-detail cache so opening a
@@ -422,7 +425,7 @@ export type SidebarV2Status = "approval" | "input" | "working" | "failed" | "rea
 
 type SidebarV2StatusInput = Pick<
   SidebarThreadSummary,
-  "hasPendingApprovals" | "hasPendingUserInput" | "session"
+  "hasPendingApprovals" | "hasPendingUserInput" | "session" | "latestTurn"
 >;
 
 export function resolveSidebarV2Status(thread: SidebarV2StatusInput): SidebarV2Status {
@@ -435,7 +438,14 @@ export function resolveSidebarV2Status(thread: SidebarV2StatusInput): SidebarV2S
   if (thread.session?.status === "running" || thread.session?.status === "starting") {
     return "working";
   }
-  if (thread.session?.status === "error") {
+  // A session-level error is only this thread's state while it is still the
+  // last word. The session record keeps `error` after a provider process dies,
+  // so a thread that went on to finish a turn would otherwise fly a red flag
+  // forever — sidebar v1 never labelled these rows at all.
+  if (
+    thread.session?.status === "error" &&
+    !isLatestTurnSettled(thread.latestTurn, thread.session)
+  ) {
     return "failed";
   }
   return "ready";
@@ -477,13 +487,13 @@ export function firstValidTimestamp(
 // Keep the chats users touched most recently at the top of each project. The
 // project grouping step preserves this incoming order within every section.
 //
-// `worktreeLastActivityAtByKey` folds a locally-recorded worktree interaction
-// (e.g. closing a chat) into each chat's effective sort time. A worktree row is
-// positioned by its newest surviving chat — collapsing keeps the group at that
-// chat's slot — so closing the newest chat would otherwise sink the row to an
-// older sibling's timestamp even though closing is a recent interaction. Taking
-// the max of the chat's own time and its worktree's recorded activity keeps the
-// row in place. Callers that omit the map keep the plain activity sort.
+// `worktreeLastActivityAtByKey` folds a locally-recorded worktree sort time
+// (the sort time of a chat closed from its tab bar) into each chat's effective
+// sort time. A worktree row is positioned by its newest surviving chat —
+// collapsing keeps the group at that chat's slot — so closing the newest chat
+// would otherwise sink the row to an older sibling's timestamp. Taking the max
+// of the chat's own time and its worktree's recorded time keeps the row in
+// place. Callers that omit the map keep the plain activity sort.
 export function sortThreadsForSidebarV2<
   T extends {
     readonly id: string;
@@ -902,7 +912,10 @@ export function resolveWorktreeWorkspaceRepresentative<
  * flags here is enough for the row to read "Approval"/"Input" over "Working".
  */
 export function mergeWorktreeSiblingRunningStatus<
-  T extends Pick<SidebarThreadSummary, "session" | "hasPendingApprovals" | "hasPendingUserInput">,
+  T extends Pick<
+    SidebarThreadSummary,
+    "session" | "hasPendingApprovals" | "hasPendingUserInput" | "readyAt"
+  >,
 >(representative: T, members: readonly T[]): T {
   const runningSibling = members.find(
     (thread) => thread.session?.status === "running" || thread.session?.status === "starting",
@@ -913,14 +926,26 @@ export function mergeWorktreeSiblingRunningStatus<
       : representative.session;
   const hasPendingApprovals = members.some((thread) => thread.hasPendingApprovals);
   const hasPendingUserInput = members.some((thread) => thread.hasPendingUserInput);
+  // The row stands in for every chat in the worktree, so a mark on any member
+  // has to surface here — otherwise marking a collapsed sibling looks like
+  // nothing happened. Earliest mark wins so the badge stops flickering between
+  // members as they are marked and cleared.
+  const readyAt = members.reduce<string | null | undefined>(
+    (earliest, thread) =>
+      thread.readyAt != null && (earliest == null || thread.readyAt < earliest)
+        ? thread.readyAt
+        : earliest,
+    representative.readyAt,
+  );
   if (
     session === representative.session &&
     hasPendingApprovals === representative.hasPendingApprovals &&
-    hasPendingUserInput === representative.hasPendingUserInput
+    hasPendingUserInput === representative.hasPendingUserInput &&
+    readyAt === representative.readyAt
   ) {
     return representative;
   }
-  return { ...representative, session, hasPendingApprovals, hasPendingUserInput };
+  return { ...representative, session, hasPendingApprovals, hasPendingUserInput, readyAt };
 }
 
 /**
@@ -1198,4 +1223,92 @@ export function sortScopedProjectsForSidebar<
       left.environmentId.localeCompare(right.environmentId) ||
       left.id.localeCompare(right.id),
   );
+}
+
+/**
+ * Shared-worktree checks must exclude only successful deletions, never the
+ * whole batch. A null result skips an entry that the caller can no longer find.
+ */
+export async function deleteSelectedThreadEntries<
+  TEntry extends { readonly threadKey: string },
+>(input: {
+  entries: readonly TEntry[];
+  delete: (
+    entry: TEntry,
+    deletedThreadKeys: ReadonlySet<string>,
+  ) => Promise<AtomCommandResult<unknown, unknown> | null>;
+}) {
+  const deletedThreadKeys = new Set<string>();
+  let firstFailure: AsyncResult.Failure<unknown, unknown> | null = null;
+
+  for (const entry of input.entries) {
+    const result = await input.delete(entry, deletedThreadKeys);
+    if (result === null) continue;
+    if (result._tag === "Failure") {
+      if (isAtomCommandInterrupted(result)) break;
+      firstFailure ??= result;
+      continue;
+    }
+    deletedThreadKeys.add(entry.threadKey);
+  }
+
+  return { deletedThreadKeys, firstFailure };
+}
+
+/** Clicks on a nested link keep the link's meaning. The row must not treat them as multi-select. */
+export function isSidebarNestedLinkClick(target: EventTarget | null): boolean {
+  if (target == null || typeof target !== "object") return false;
+  if (nodeClosest(target, "a[href]") !== null) return true;
+  const parent =
+    "parentElement" in target &&
+    target.parentElement !== null &&
+    typeof target.parentElement === "object"
+      ? target.parentElement
+      : null;
+  return nodeClosest(parent, "a[href]") !== null;
+}
+
+export function useSidebarRowSubscriptionLease(isActive: boolean): {
+  readonly leaseLiveStatus: boolean;
+  readonly rowRef: React.Dispatch<React.SetStateAction<HTMLElement | null>>;
+} {
+  const [row, setRow] = React.useState<HTMLElement | null>(null);
+  const [isNearViewport, setIsNearViewport] = React.useState(isActive);
+
+  React.useEffect(() => {
+    if (isActive) {
+      setIsNearViewport(true);
+      return;
+    }
+    if (row === null) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setIsNearViewport(true);
+      return;
+    }
+
+    const scrollRoot = row.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
+    const observer = new IntersectionObserver(
+      ([entry]) => setIsNearViewport(entry?.isIntersecting === true),
+      {
+        root: scrollRoot,
+        rootMargin: `${SIDEBAR_ROW_SUBSCRIPTION_OVERSCAN_PX}px 0px`,
+      },
+    );
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, [isActive, row]);
+
+  return {
+    leaseLiveStatus: isActive || isNearViewport,
+    rowRef: setRow,
+  };
+}
+
+// A small buffer keeps the next few rows warm without leasing every row that
+// content-visibility leaves mounted below the scroll viewport.
+const SIDEBAR_ROW_SUBSCRIPTION_OVERSCAN_PX = 160;
+
+function nodeClosest(node: object | null, selector: string): unknown {
+  if (node === null || !("closest" in node) || typeof node.closest !== "function") return null;
+  return node.closest(selector);
 }

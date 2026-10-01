@@ -362,6 +362,7 @@ export function useGitMergePullRequestAction(scope: SourceControlActionScope) {
         })
       : null,
   );
+  const refreshStatus = status.refresh;
   const action = useCallback(
     async (input: { reference: string }) => {
       const target = resolveScope(scope);
@@ -376,22 +377,25 @@ export function useGitMergePullRequestAction(scope: SourceControlActionScope) {
           ),
         );
       }
-      return mergePullRequest({
+      const result = await mergePullRequest({
         environmentId: target.environmentId,
         input: {
           cwd: target.cwd,
           reference: input.reference,
         },
       });
+      // Refresh on failure too: a merge refused for conflicts flips the button
+      // to "Resolve conflicts" instead of offering the same doomed merge again.
+      refreshStatus();
+      return result;
     },
-    [mergePullRequest, scope],
+    [mergePullRequest, refreshStatus, scope],
   );
   return useAction({
     kind: "mergePullRequest",
     label: "Merging pull request",
     scope,
     action,
-    onSuccess: status.refresh,
   });
 }
 

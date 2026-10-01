@@ -22,6 +22,7 @@ import { useThreadShells } from "~/state/entities";
 import { buildThreadRouteParams } from "~/threadRoutes";
 import { buildDraftThreadRouteParams } from "~/threadRoutes";
 import { cn } from "~/lib/utils";
+import { getThreadSortTimestamp } from "~/lib/threadSort";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Spinner } from "~/components/ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -31,12 +32,15 @@ import { readLocalApi } from "~/localApi";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { useUiStateStore, worktreeActivityKey } from "~/uiStateStore";
+import { useWorkspaceContentTabsStore } from "~/workspaceContentTabsStore";
 
 export interface WorktreeContentTabDescriptor {
   id: string;
   title: string;
   /** Which view the tab renders — picks the tab icon. */
   view: "diff" | "file" | "preview";
+  /** The file tab that browsing replaces; shown in italics, like VS Code. */
+  browsing?: boolean;
 }
 
 const EMPTY_CONTENT_TABS: ReadonlyArray<WorktreeContentTabDescriptor> = [];
@@ -57,6 +61,8 @@ interface WorktreeThreadTabsProps {
   activeContentTabId?: string | null;
   onSelectContentTab?: (tabId: string) => void;
   onCloseContentTab?: (tabId: string) => void;
+  // Keep the browsing tab open as its own tab (double-click, like VS Code).
+  onKeepContentTab?: (tabId: string) => void;
   // Return to the chat conversation (deactivate any content tab).
   onActivateChat?: () => void;
 }
@@ -116,6 +122,7 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
   activeContentTabId = null,
   onSelectContentTab,
   onCloseContentTab,
+  onKeepContentTab,
   onActivateChat,
 }: WorktreeThreadTabsProps) {
   const router = useRouter();
@@ -184,15 +191,17 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
         if (!confirmed) return;
       }
 
-      // Closing a chat is a fresh interaction with its worktree. Record it so
-      // the collapsed sidebar row keeps its position instead of sinking to a
-      // surviving sibling's older timestamp. See `sortThreadsForSidebarV2`.
-      if (shell.worktreePath !== null) {
+      // Carry the closed chat's sort time over to its worktree so the collapsed
+      // sidebar row stays exactly where it was: it neither sinks to a surviving
+      // sibling's older timestamp nor jumps to the top as if it had new
+      // activity. See `sortThreadsForSidebarV2`.
+      const closedSortMs = getThreadSortTimestamp(shell, "updated_at");
+      if (shell.worktreePath !== null && Number.isFinite(closedSortMs)) {
         useUiStateStore
           .getState()
           .markWorktreeActive(
             worktreeActivityKey(shell.environmentId, shell.worktreePath),
-            new Date().toISOString(),
+            new Date(closedSortMs).toISOString(),
           );
       }
 
@@ -215,6 +224,15 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
               description: error instanceof Error ? error.message : "An error occurred.",
             }),
           );
+        } else if (result._tag === "Success" && shell.latestUserMessageAt !== null) {
+          // Remember the chat so Cmd/Ctrl+Shift+T can reopen it. Chats that
+          // never sent a message are empty "new chat" shells — reopening one
+          // just drops you into a blank composer, so leave them off the stack.
+          useWorkspaceContentTabsStore.getState().pushClosedChat({
+            view: "chat",
+            environmentId: shell.environmentId,
+            threadId: shell.id,
+          });
         }
       } finally {
         setClosingThreadId(null);
@@ -455,9 +473,12 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
                         aria-current={active ? "page" : undefined}
                         className="flex min-w-0 flex-1 items-center gap-1.5 truncate py-1 pl-2.5 text-left"
                         onClick={() => onSelectContentTab?.(tab.id)}
+                        onDoubleClick={tab.browsing ? () => onKeepContentTab?.(tab.id) : undefined}
                       >
                         <TabIcon aria-hidden="true" className="size-3.5 shrink-0" />
-                        <span className="truncate">{tab.title}</span>
+                        <span className={cn("truncate", tab.browsing && "italic")}>
+                          {tab.title}
+                        </span>
                       </button>
                     }
                   />

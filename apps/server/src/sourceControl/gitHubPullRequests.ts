@@ -14,6 +14,9 @@ export interface NormalizedGitHubPullRequestRecord {
   readonly baseRefName: string;
   readonly headRefName: string;
   readonly state: "open" | "closed" | "merged";
+  readonly isDraft?: boolean;
+  readonly closedAt?: string | null;
+  readonly mergedAt?: string | null;
   readonly mergeability?: "clean" | "conflicting" | "blocked" | "unknown";
   readonly checks?: "passing" | "failing" | "pending" | "unknown";
   readonly failedCheckCount?: number;
@@ -30,6 +33,8 @@ const GitHubPullRequestSchema = Schema.Struct({
   baseRefName: TrimmedNonEmptyString,
   headRefName: TrimmedNonEmptyString,
   state: Schema.optional(Schema.NullOr(Schema.String)),
+  isDraft: Schema.optional(Schema.Boolean),
+  closedAt: Schema.optional(Schema.NullOr(Schema.String)),
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
   mergeable: Schema.optional(Schema.NullOr(Schema.String)),
   mergeStateStatus: Schema.optional(Schema.NullOr(Schema.String)),
@@ -163,6 +168,9 @@ function normalizeGitHubPullRequestRecord(
     baseRefName: raw.baseRefName,
     headRefName: raw.headRefName,
     state: normalizeGitHubPullRequestState(raw),
+    ...(raw.isDraft === true ? { isDraft: true } : {}),
+    closedAt: raw.closedAt ?? null,
+    mergedAt: raw.mergedAt ?? null,
     ...(raw.mergeable != null || raw.mergeStateStatus != null ? { mergeability } : {}),
     ...(checks ? { checks } : {}),
     ...(raw.statusCheckRollup != null ? { failedCheckCount } : {}),

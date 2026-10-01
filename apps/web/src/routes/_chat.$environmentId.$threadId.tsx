@@ -10,6 +10,7 @@ import { SidebarInset } from "~/components/ui/sidebar";
 import {
   useEnvironmentThreadRefs,
   useThreadDetail,
+  useThreadError,
   useThreadShell,
   useThreadStatus,
 } from "../state/entities";
@@ -27,6 +28,7 @@ function ChatThreadRouteView() {
   const serverThreadShell = useThreadShell(threadRef);
   const serverThreadDetail = useThreadDetail(threadRef);
   const serverThreadStatus = useThreadStatus(threadRef);
+  const serverThreadError = useThreadError(threadRef);
   const environmentThreadRefs = useEnvironmentThreadRefs(threadRef?.environmentId ?? null);
   const bootstrapComplete = shell.data?.snapshot._tag === "Some";
   const environmentHasServerThreads = environmentThreadRefs.length > 0;
@@ -53,6 +55,7 @@ function ChatThreadRouteView() {
     detailExists: serverThreadDetail !== null,
     shellExists: serverThreadShell !== null,
     status: serverThreadStatus,
+    failed: serverThreadError !== null,
   });
   const serverThreadStarted = threadHasStarted(serverThreadDetail);
   const environmentHasAnyThreads = environmentHasServerThreads || environmentHasDraftThreads;

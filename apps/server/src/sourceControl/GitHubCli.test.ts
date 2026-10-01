@@ -126,7 +126,9 @@ describe("GitHubCli.layer", () => {
               baseRefName: "main",
               headRefName: "feature/pr-threads",
               state: "OPEN",
+              isDraft: true,
               mergedAt: null,
+              updatedAt: "2026-08-24T12:34:56Z",
               mergeable: "CONFLICTING",
               mergeStateStatus: "DIRTY",
               statusCheckRollup: [{ status: "COMPLETED", conclusion: "FAILURE" }],
@@ -155,6 +157,10 @@ describe("GitHubCli.layer", () => {
         baseRefName: "main",
         headRefName: "feature/pr-threads",
         state: "open",
+        closedAt: null,
+        mergedAt: null,
+        isDraft: true,
+        updatedAt: "2026-08-24T12:34:56.000Z",
         mergeability: "conflicting",
         checks: "failing",
         failedCheckCount: 1,
@@ -217,6 +223,8 @@ describe("GitHubCli.layer", () => {
         baseRefName: "main",
         headRefName: "feature/pr-threads",
         state: "open",
+        closedAt: null,
+        mergedAt: null,
         isCrossRepository: true,
         headRepositoryNameWithOwner: "octocat/codething-mvp",
         headRepositoryOwnerLogin: "octocat",
@@ -270,6 +278,8 @@ describe("GitHubCli.layer", () => {
           baseRefName: "main",
           headRefName: "feature/pr-list",
           state: "open",
+          closedAt: null,
+          mergedAt: null,
         },
       ]);
     }).pipe(Effect.provide(layer)),
@@ -322,6 +332,8 @@ describe("GitHubCli.layer", () => {
           baseRefName: "main",
           headRefName: "t3code/codex-turn-mapping",
           state: "open",
+          closedAt: null,
+          mergedAt: null,
           isCrossRepository: false,
           headRepositoryNameWithOwner: "pingdotgg/codething-mvp",
           headRepositoryOwnerLogin: "pingdotgg",
@@ -438,6 +450,36 @@ describe("GitHubCli.layer", () => {
       assert.strictEqual(error.cwd, "/repo");
       assert.strictEqual(error.cause, cause);
       assert.equal(error.message.includes(cause.detail), false);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("surfaces an actionable rate-limit error without exposing provider stderr", () =>
+    Effect.gen(function* () {
+      const cause = new VcsProcessExitError({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        cwd: "/repo",
+        exitCode: 1,
+        failureKind: "rate-limited",
+        detail: "API rate limit exceeded.",
+        stderrLength: 82,
+        stderrTruncated: false,
+      });
+      mockRun.mockReturnValueOnce(Effect.fail(cause));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const error = yield* gh
+        .listOpenPullRequests({
+          cwd: "/repo",
+          headSelector: "feature/rate-limited",
+        })
+        .pipe(Effect.flip);
+
+      assert.strictEqual(error._tag, "GitHubCliRateLimitError");
+      assert.include(error.detail, "GitHub API rate limit exceeded");
+      assert.include(error.detail, "gh api rate_limit");
+      assert.strictEqual(error.cause, cause);
+      assert.notInclude(error.message, "user ID");
     }).pipe(Effect.provide(layer)),
   );
 
@@ -814,7 +856,7 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("names merge conflicts when GitHub refuses a conflicting PR", () =>
+  it.effect("refuses to merge a PR GitHub reports as conflicting", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(
         Effect.succeed(
@@ -836,33 +878,21 @@ describe("GitHubCli.layer", () => {
           ),
         ),
       );
-      // Every merge attempt is refused because the PR conflicts.
-      mockRun.mockReturnValue(
-        Effect.fail(
-          new VcsProcessExitError({
-            operation: "GitHubCli.execute",
-            command: "gh",
-            cwd: "/repo",
-            exitCode: 1,
-            detail: "blocked",
-            failureKind: "merge-blocked",
-          }),
-        ),
-      );
 
       const gh = yield* GitHubCli.GitHubCli;
-      const merge = yield* gh
+      const error = yield* gh
         .mergePullRequest({ cwd: "/repo", reference: "#42" })
-        .pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
-      // Let the retry backoffs elapse so every attempt runs and the final
-      // failure is returned.
-      yield* TestClock.adjust("5 seconds");
-      const error = yield* Fiber.join(merge);
+        .pipe(Effect.flip);
 
       assert.strictEqual(error._tag, "GitHubMergeBlockedError");
       if (error._tag !== "GitHubMergeBlockedError") throw error;
       assert.strictEqual(error.mergeability, "conflicting");
       assert.equal(error.detail.includes("merge conflicts"), true);
+      // `gh pr merge` is never attempted.
+      assert.strictEqual(
+        mockRun.mock.calls.some(([input]) => input.args.includes("merge")),
+        false,
+      );
     }).pipe(Effect.provide(layer)),
   );
 });

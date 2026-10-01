@@ -2,6 +2,7 @@ import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ProjectId, ScopedProjectRef } from "@t3tools/contracts";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 
+import type { ThreadId } from "@t3tools/contracts";
 interface ThreadContextLike {
   environmentId: EnvironmentId;
   projectId: ProjectId;
@@ -16,7 +17,9 @@ interface NewThreadHandler {
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
     },
-  ): Promise<void>;
+    // Returns the thread the draft was opened for, so desktop activation can
+    // report it back; null when nothing was opened.
+  ): Promise<{ readonly threadId: ThreadId } | null>;
 }
 
 export interface ChatThreadActionContext {

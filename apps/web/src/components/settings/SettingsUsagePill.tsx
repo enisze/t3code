@@ -1,20 +1,31 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import type { ProviderUsage, ProviderUsageWindow, ServerProvider } from "@t3tools/contracts";
+import type {
+  ProviderUsage,
+  ProviderUsageWindow,
+  ScopedThreadRef,
+  ServerProvider,
+} from "@t3tools/contracts";
 import { useParams } from "@tanstack/react-router";
 import { ChevronUpIcon, GaugeIcon, RefreshCwIcon } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 
 import { cn } from "../../lib/utils";
+import { DraftId, useComposerDraftModelState } from "../../composerDraftStore";
 import { useProject, useThreadShell } from "../../state/entities";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { primaryServerProvidersAtom, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { resolveThreadRouteRef } from "../../threadRoutes";
+import { resolveThreadRouteRef, resolveThreadRouteTarget } from "../../threadRoutes";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { ProviderUsageMeters } from "./ProviderUsageSection";
+import { prioritizeActiveProvider, resolveProviderUsage } from "./providerUsage";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 type ProviderWithUsage = ServerProvider & { readonly usage: ProviderUsage };
+
+/** Stable "no draft" target so the composer lookup keeps a constant identity. */
+const EMPTY_DRAFT_ID = DraftId.make("");
 
 function summaryColor(usedPercent: number): string {
   if (usedPercent >= 90) return "var(--color-red-500)";
@@ -48,9 +59,11 @@ function summaryWindow(usage: ProviderUsage): ProviderUsageWindow | null {
  * card. Self-hides when no account reports usage.
  *
  * The collapsed summary percentage is scoped to the provider instance backing
- * the chat the user currently has open — its thread `modelSelection`, falling
- * back to the owning project's `defaultModelSelection` — rather than the worst
- * percent across every account. Within that account it reflects the hourly
+ * the chat the user currently has open: the composer's live provider pick
+ * first, so switching model in the picker re-points the meter immediately,
+ * then the thread's `modelSelection`, then the owning project's
+ * `defaultModelSelection` — rather than the worst percent across every
+ * account. Within that account it reflects the hourly
  * (shortest) window (see `summaryWindow`) so the number tracks the limit users
  * hit mid-session, not the slow weekly/monthly max; the tooltip lists every
  * window. Off a chat route (or when the active provider reports no usage) the
@@ -61,6 +74,14 @@ export function SettingsUsagePill() {
   const primaryEnvironment = usePrimaryEnvironment();
   const activeThreadRef = useParams({ strict: false, select: resolveThreadRouteRef });
   const activeThreadShell = useThreadShell(activeThreadRef);
+  // Drafts have no thread row yet, so read the composer through the route
+  // target (server ref or draft id) to cover both kinds of chat route.
+  const routeTarget = useParams({ strict: false, select: resolveThreadRouteTarget });
+  const composerTarget: ScopedThreadRef | DraftId =
+    routeTarget?.kind === "server"
+      ? routeTarget.threadRef
+      : (routeTarget?.draftId ?? EMPTY_DRAFT_ID);
+  const { activeProvider: composerActiveProvider } = useComposerDraftModelState(composerTarget);
   const activeProjectRef =
     activeThreadShell !== null
       ? scopeProjectRef(activeThreadShell.environmentId, activeThreadShell.projectId)
@@ -90,22 +111,36 @@ export function SettingsUsagePill() {
     })();
   }, [primaryEnvironment, refreshServerProviders]);
 
-  const withUsage = providers.filter(
-    (provider): provider is ProviderWithUsage =>
-      provider.usage !== undefined && provider.usage.windows.length > 0,
-  );
-  if (withUsage.length === 0) return null;
-
-  // Summary reflects only the active chat's provider instance (its own model
-  // selection, else the project default), so the number matches the account
-  // that chat actually spends against — not whichever account is most maxed.
+  // Summary reflects only the active chat's provider instance, so the number
+  // matches the account that chat actually spends against — not whichever
+  // account is most maxed. The composer's unsent pick wins over the thread's
+  // stored selection because it is what the next message will bill to; it is
+  // ignored when it names an instance this server no longer reports.
+  const composerInstanceId =
+    composerActiveProvider !== null &&
+    providers.some((provider) => provider.instanceId === composerActiveProvider)
+      ? composerActiveProvider
+      : null;
   const activeInstanceId =
+    composerInstanceId ??
     activeThreadShell?.modelSelection.instanceId ??
     activeProject?.defaultModelSelection?.instanceId ??
     null;
+
+  // Every connected instance that reports windows, with the active chat's
+  // provider first and the registry order preserved for all remaining rows.
+  const withUsage = prioritizeActiveProvider(
+    providers.flatMap((provider): ProviderWithUsage[] => {
+      const usage = resolveProviderUsage(provider);
+      return usage === null ? [] : [{ ...provider, usage }];
+    }),
+    activeInstanceId,
+  );
+  if (withUsage.length === 0) return null;
+
   const activeProvider =
     activeInstanceId !== null
-      ? providers.find((provider) => provider.instanceId === activeInstanceId)
+      ? withUsage.find((provider) => provider.instanceId === activeInstanceId)
       : undefined;
   // Summarize the hourly window, not the max across windows, so the collapsed
   // number reflects the short-term limit users hit mid-session. Every window
@@ -136,18 +171,24 @@ export function SettingsUsagePill() {
           <span className="flex-1 truncate text-[13px] font-medium text-foreground">
             Usage limits
           </span>
-          <span
-            className="shrink-0 text-xs font-medium tabular-nums"
-            title={summaryTitle}
-            style={{
-              color:
-                activePercent === null
-                  ? "var(--color-muted-foreground)"
-                  : summaryColor(activePercent),
-            }}
-          >
-            {activePercent === null ? "—" : `${Math.round(activePercent)}%`}
-          </span>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span
+                  className="shrink-0 text-xs font-medium tabular-nums"
+                  style={{
+                    color:
+                      activePercent === null
+                        ? "var(--color-muted-foreground)"
+                        : summaryColor(activePercent),
+                  }}
+                >
+                  {activePercent === null ? "—" : `${Math.round(activePercent)}%`}
+                </span>
+              }
+            />
+            <TooltipPopup>{summaryTitle}</TooltipPopup>
+          </Tooltip>
           <ChevronUpIcon
             className={cn(
               "size-3.5 shrink-0 text-muted-foreground transition-transform",
@@ -160,7 +201,6 @@ export function SettingsUsagePill() {
           onClick={refreshProviders}
           disabled={isRefreshing}
           aria-label="Refresh usage limits"
-          title="Refresh usage limits"
           className={cn(
             "mr-1 shrink-0 rounded-md p-1.5 text-muted-foreground outline-none",
             "transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:bg-muted/40",

@@ -146,7 +146,7 @@ import {
   sortThreadsForSidebarV2,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
-import { prStatusIndicator, resolveThreadPr } from "./ThreadStatusIndicators";
+import { prStatusIndicator, resolveThreadPr, ThreadReadyCheck } from "./ThreadStatusIndicators";
 import {
   resolveSnoozePresets,
   snoozeWakeDescription,
@@ -706,6 +706,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 fallbackIcon={MessageSquareIcon}
               />
             </span>
+            <ThreadReadyCheck readyAt={thread.readyAt} />
             {title}
             {previewRunning ? (
               <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
@@ -867,7 +868,10 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 </span>
               </span>
             </div>
-            <div className="mt-1 flex min-w-0">{title}</div>
+            <div className="mt-1 flex min-w-0 items-center gap-1.5">
+              <ThreadReadyCheck readyAt={thread.readyAt} />
+              {title}
+            </div>
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground/75">
               {displayedBranch ? (
                 <span className="min-w-0 flex-1 truncate whitespace-nowrap">{displayedBranch}</span>
@@ -876,15 +880,21 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               )}
               {prBadge}
               {gitStatus.data?.hasWorkingTreeChanges ? (
-                <span
-                  className="inline-flex shrink-0 items-center gap-0.5 font-mono text-amber-600 dark:text-amber-400"
-                  title={`${gitStatus.data.workingTree.files.length} modified file${
-                    gitStatus.data.workingTree.files.length === 1 ? "" : "s"
-                  } in the working tree`}
-                >
-                  <FilePenIcon aria-hidden className="size-3" />
-                  {gitStatus.data.workingTree.files.length}
-                </span>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span className="inline-flex shrink-0 items-center gap-0.5 font-mono text-amber-600 dark:text-amber-400">
+                        <FilePenIcon aria-hidden className="size-3" />
+                        {gitStatus.data.workingTree.files.length}
+                      </span>
+                    }
+                  />
+                  <TooltipPopup>
+                    {`${gitStatus.data.workingTree.files.length} modified file${
+                      gitStatus.data.workingTree.files.length === 1 ? "" : "s"
+                    } in the working tree`}
+                  </TooltipPopup>
+                </Tooltip>
               ) : null}
               {diff ? (
                 <span className="shrink-0 font-mono">
@@ -1643,7 +1653,7 @@ export default function SidebarV2() {
       const target = projectGroup.memberProjects[0] ?? null;
       if (!target) return;
       void navigate({
-        to: "/settings/projects/$environmentId/$projectId",
+        to: "/settings/project/$environmentId/$projectId",
         params: { environmentId: target.environmentId, projectId: target.id },
       });
     },
@@ -1655,7 +1665,7 @@ export default function SidebarV2() {
   const openProjectSettingsForThread = useCallback(
     (thread: SidebarThreadSummary) => {
       void navigate({
-        to: "/settings/projects/$environmentId/$projectId",
+        to: "/settings/project/$environmentId/$projectId",
         params: { environmentId: thread.environmentId, projectId: thread.projectId },
       });
     },
@@ -2836,7 +2846,6 @@ export default function SidebarV2() {
                             <button
                               type="button"
                               aria-label={`Project actions for ${project.displayName}`}
-                              title={`Project actions for ${project.displayName}`}
                               className="ml-auto inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/55 outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                               onPointerDown={(event) => event.stopPropagation()}
                               onClick={(event) => {
@@ -2914,7 +2923,7 @@ export default function SidebarV2() {
                       }
                       snoozeWakeLabelText={
                         section === "snoozed" && thread.snoozedUntil != null
-                          ? snoozeWakeLabel(thread.snoozedUntil, new Date())
+                          ? snoozeWakeLabel(thread.snoozedUntil, { now: new Date().toISOString() })
                           : null
                       }
                       // A woken thread's wake signal must survive until visited;

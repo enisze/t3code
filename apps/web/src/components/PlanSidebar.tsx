@@ -19,7 +19,7 @@ import {
 import { cn } from "~/lib/utils";
 import type { ActivePlanState } from "../session-logic";
 import type { LatestProposedPlanState } from "../session-logic";
-import { formatTimestamp } from "../timestampFormat";
+import { formatShortTimestamp } from "../timestampFormat";
 import {
   proposedPlanTitle,
   buildProposedPlanMarkdownFilename,
@@ -156,7 +156,7 @@ const PlanSidebar = memo(function PlanSidebar({
           </Badge>
           {activePlan ? (
             <span className="text-[11px] text-muted-foreground/60 tabular-nums">
-              {formatTimestamp(activePlan.createdAt, timestampFormat)}
+              {formatShortTimestamp(activePlan.createdAt, timestampFormat)}
             </span>
           ) : null}
         </div>

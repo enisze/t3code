@@ -6,6 +6,11 @@ import type {
   FileDiffMetadata,
   SelectedLineRange,
 } from "@pierre/diffs";
+// Not StyledDiffCodeView: this surface's only caller (DiffPanel) supplies its own
+// unsafeCSS, itemMetrics and layout — the three things StyledDiffCodeView owns and
+// would overwrite. Its metrics are tuned for wrapped rows, and the shared ones make
+// the virtual window jump a chunk at a time.
+// eslint-disable-next-line no-restricted-imports
 import { CodeView, type CodeViewHandle, type CodeViewProps } from "@pierre/diffs/react";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useCallback, useMemo, useState, type ReactNode, type Ref } from "react";

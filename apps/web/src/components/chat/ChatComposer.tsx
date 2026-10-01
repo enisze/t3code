@@ -96,6 +96,9 @@ import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { ComposerControl, ComposerControlIcon, ComposerSelectControl } from "./ComposerControl";
+import { ComposerDictationButton } from "./ComposerDictationButton";
+import { useClientSettings } from "../../hooks/useSettings";
+import { useVoiceInput } from "../../voice/useVoiceInput";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 import {
@@ -442,7 +445,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
       {props.activeContextWindow ? (
         <ContextWindowMeter
           usage={props.activeContextWindow}
-          providerDisplayName={props.activeThreadProviderDisplayName}
+          modelDisplayName={props.activeThreadProviderDisplayName}
         />
       ) : null}
       {props.isPreparingWorktree ? (
@@ -1610,6 +1613,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ],
   );
 
+  // Dictation writes the finished transcript straight into the draft; the
+  // controller has already merged it with the text and caret it captured when
+  // recording started, and refuses to commit if either moved since.
+  const dictationLocale = useClientSettings((clientSettings) => clientSettings.dictationLocale);
+  const dictation = useVoiceInput({
+    ownerKey: activeThreadId ?? "new-thread",
+    preferredLocale: dictationLocale,
+    draftMessage: prompt,
+    selection: { start: composerCursor, end: composerCursor },
+    disabled: isConnecting || isComposerApprovalState || projectSelectionRequired,
+    onCommitTranscript: (text, selection) => {
+      promptRef.current = text;
+      setPrompt(text);
+      setComposerCursor(selection.start);
+      window.requestAnimationFrame(() => {
+        composerEditorRef.current?.focusAt(selection.start);
+      });
+    },
+  });
+
   // ------------------------------------------------------------------
   // Callbacks: prompt replacement / menu
   // ------------------------------------------------------------------
@@ -1851,9 +1874,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     showPlanFollowUpPrompt,
   ]);
 
+  const dictationBlocksSubmission = dictation.blocksSubmission;
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }) => {
-      if ((noProviderAvailable && !canCreateEmptyWorktreeThread) || isSendDisabled) {
+      // Sending mid-dictation would clear the draft the pending transcript is
+      // about to be merged into, so the transcript would land in the next
+      // message instead of this one.
+      if (
+        (noProviderAvailable && !canCreateEmptyWorktreeThread) ||
+        isSendDisabled ||
+        dictationBlocksSubmission
+      ) {
         event?.preventDefault();
         return;
       }
@@ -1865,6 +1896,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [
       blurMobileComposerAfterSend,
       canCreateEmptyWorktreeThread,
+      dictationBlocksSubmission,
       isSendDisabled,
       noProviderAvailable,
       onSend,
@@ -3019,14 +3051,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         ),
                     )
                     .map((image) => (
-                      <div
-                        key={image.id}
-                        className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
-                      >
+                      <div key={image.id} className="group relative shrink-0">
                         {image.previewUrl ? (
                           <button
                             type="button"
-                            className="h-full w-full cursor-zoom-in"
+                            className="block cursor-zoom-in overflow-hidden rounded-lg border border-border/80 bg-muted/40"
                             aria-label={`Preview ${image.name}`}
                             onClick={() => {
                               const preview = buildExpandedImagePreview(composerImages, image.id);
@@ -3037,11 +3066,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             <img
                               src={image.previewUrl}
                               alt={image.name}
-                              className="h-full w-full object-cover"
+                              className="h-20 w-auto max-w-64 object-contain"
                             />
                           </button>
                         ) : (
-                          <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground/70">
+                          <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-lg border border-border/80 bg-background px-1 text-center text-[10px] text-muted-foreground/70">
                             {image.name}
                           </div>
                         )}
@@ -3070,7 +3099,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         <Button
                           variant="ghost"
                           size="icon-xs"
-                          className="absolute right-1 top-1 bg-background/80 hover:bg-background/90"
+                          className="absolute -right-1.5 -top-1.5 size-5 rounded-full border border-border/80 bg-background text-muted-foreground shadow-sm hover:bg-accent hover:text-foreground"
                           onClick={() => removeComposerImage(image.id)}
                           aria-label={`Remove ${image.name}`}
                         >
@@ -3092,9 +3121,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       className="relative flex max-w-56 items-center gap-2 rounded-lg border border-border/80 bg-background py-1.5 pl-2 pr-8 text-xs"
                     >
                       <FileIcon className="size-4 shrink-0 text-muted-foreground" />
-                      <span className="min-w-0 truncate" title={document.name}>
-                        {document.name}
-                      </span>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={<span className="min-w-0 truncate">{document.name}</span>}
+                        />
+                        <TooltipPopup>{document.name}</TooltipPopup>
+                      </Tooltip>
                       <Button
                         variant="ghost"
                         size="icon-xs"
@@ -3146,7 +3178,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               ? "Ask for follow-up changes or attach images"
                               : "Ask anything, @tag files/folders, $use skills, or / for commands"
                 }
-                disabled={isConnecting || isComposerApprovalState || projectSelectionRequired}
+                disabled={
+                  isConnecting ||
+                  isComposerApprovalState ||
+                  projectSelectionRequired ||
+                  dictation.freezesEditor
+                }
               />
               {showMobilePendingAnswerActions ? (
                 <div
@@ -3266,6 +3303,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   </TooltipTrigger>
                   <TooltipPopup side="top">Attach files</TooltipPopup>
                 </Tooltip>
+
+                {dictation.isAvailable ? (
+                  <>
+                    <ComposerDictationButton
+                      state={dictation.state}
+                      disabled={isConnecting || isComposerApprovalState || projectSelectionRequired}
+                      onStart={dictation.start}
+                      onStop={dictation.stop}
+                    />
+                    {dictation.state.phase === "error" && dictation.state.error ? (
+                      <span
+                        data-composer-dictation-error="true"
+                        className="min-w-0 shrink truncate text-xs text-destructive"
+                        title={dictation.state.error}
+                      >
+                        {dictation.state.error}
+                      </span>
+                    ) : null}
+                  </>
+                ) : null}
 
                 {isComposerFooterCompact ? (
                   <CompactComposerControlsMenu

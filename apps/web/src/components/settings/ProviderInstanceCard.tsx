@@ -44,9 +44,11 @@ import type { DriverOption } from "./providerDriverMeta";
 import { ProviderSettingsForm } from "./ProviderSettingsForm";
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderUsageMeters } from "./ProviderUsageSection";
+import { resolveProviderUsage } from "./providerUsage";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import { readCustomModelEntries, type CustomModelDefinition } from "@t3tools/shared/model";
 import {
   getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
@@ -115,7 +117,7 @@ function nextConfigBlobWithValue(
 
 export function deriveProviderModelsForDisplay(input: {
   readonly liveModels: ReadonlyArray<ServerProviderModel> | undefined;
-  readonly customModels: ReadonlyArray<string>;
+  readonly customModels: ReadonlyArray<CustomModelDefinition>;
 }): ReadonlyArray<ServerProviderModel> {
   const liveCustomModelsBySlug = new Map(
     Arr.filterMap(input.liveModels ?? [], (model) =>
@@ -124,12 +126,12 @@ export function deriveProviderModelsForDisplay(input: {
   );
   const serverModels = input.liveModels?.filter((model) => !model.isCustom) ?? [];
   const customModels = input.customModels.map(
-    (slug) =>
-      liveCustomModelsBySlug.get(slug) ?? {
-        slug,
-        name: slug,
+    (entry) =>
+      liveCustomModelsBySlug.get(entry.slug) ?? {
+        slug: entry.slug,
+        name: entry.name || entry.slug,
         isCustom: true,
-        capabilities: null,
+        capabilities: entry.capabilities,
       },
   );
   return [...serverModels, ...customModels];
@@ -421,6 +423,9 @@ export function ProviderInstanceCard({
   const summary = rawSummary;
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
   const versionAdvisory = getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
+  // A failed or timed-out status probe may omit the legacy account-usage
+  // payload while the server keeps the last known rate-limit snapshot.
+  const providerUsage = liveProvider ? resolveProviderUsage(liveProvider) : null;
   const updateCommand = versionAdvisory?.updateCommand ?? null;
   const FallbackIconComponent = driverOption?.icon;
   const displayName =
@@ -453,7 +458,11 @@ export function ProviderInstanceCard({
     ? instance.driver
     : null;
 
-  const customModels = readConfigStringArray(instance.config, "customModels");
+  // Upstream stores custom models as {slug,name,capabilities} entries rather
+  // than bare slugs; readCustomModelEntries tolerates both shapes.
+  const customModels = readCustomModelEntries(
+    (instance.config as Record<string, unknown> | undefined)?.["customModels"],
+  );
   // Server-returned models may lag behind settings writes. Treat probe
   // models as the source for built-ins only; custom rows come directly
   // from the current instance config so add/remove reflects immediately.
@@ -509,7 +518,7 @@ export function ProviderInstanceCard({
     );
   };
 
-  const updateCustomModels = (next: ReadonlyArray<string>) => {
+  const updateCustomModels = (next: ReadonlyArray<CustomModelDefinition>) => {
     const nextConfig = nextConfigBlobWithValue(instance.config, "customModels", [...next]);
     const { config: _omit, ...rest } = instance;
     onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
@@ -812,10 +821,10 @@ export function ProviderInstanceCard({
       <Collapsible open={isExpanded} onOpenChange={onExpandedChange}>
         <CollapsibleContent>
           <div className="space-y-5 px-3 pb-4 pt-2 sm:px-4">
-            {liveProvider?.usage ? (
+            {providerUsage ? (
               <div>
                 <span className="text-xs font-medium text-foreground">Usage limits</span>
-                <ProviderUsageMeters usage={liveProvider.usage} className="mt-2" />
+                <ProviderUsageMeters usage={providerUsage} className="mt-2" />
                 <span className="mt-1.5 block text-xs text-muted-foreground">
                   Refreshed when provider status is checked. Use “Refresh providers” to update.
                 </span>

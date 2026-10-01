@@ -116,6 +116,8 @@ function matchMedia() {
 }
 
 let MessagesTimeline: typeof import("./MessagesTimeline").MessagesTimeline;
+let compactMinimapPreview: typeof import("./MessagesTimeline").compactMinimapPreview;
+let TIMELINE_MINIMAP_PREVIEW_MAX_LENGTH: typeof import("./MessagesTimeline").TIMELINE_MINIMAP_PREVIEW_MAX_LENGTH;
 
 beforeAll(async () => {
   const classList = {
@@ -149,7 +151,8 @@ beforeAll(async () => {
     },
   });
 
-  ({ MessagesTimeline } = await import("./MessagesTimeline"));
+  ({ MessagesTimeline, compactMinimapPreview, TIMELINE_MINIMAP_PREVIEW_MAX_LENGTH } =
+    await import("./MessagesTimeline"));
 }, 30_000);
 
 const ACTIVE_THREAD_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
@@ -206,6 +209,19 @@ function buildUserTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("bounds and normalizes compact minimap previews", () => {
+    const prefix = "First\n\tsecond  ";
+    const longTail = "x".repeat(TIMELINE_MINIMAP_PREVIEW_MAX_LENGTH * 4);
+    const compact = compactMinimapPreview(`${prefix}${longTail}`);
+
+    expect(compact).toHaveLength(TIMELINE_MINIMAP_PREVIEW_MAX_LENGTH);
+    expect(compact).toMatch(/^First second x+$/);
+    expect(compactMinimapPreview(" \n\t ")).toBeNull();
+    expect(
+      compactMinimapPreview(`${"x".repeat(TIMELINE_MINIMAP_PREVIEW_MAX_LENGTH - 1)}\u{1F680}`),
+    ).toBe("x".repeat(TIMELINE_MINIMAP_PREVIEW_MAX_LENGTH - 1));
+  });
+
   it("uses the larger leading inset only when the top fade is enabled", () => {
     const timelineEntries = [buildUserTimelineEntry("Hello")];
 
@@ -312,7 +328,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("1 changed file");
   });
 
-  it("uses LegendList isNearEnd when deciding whether the live edge is visible", async () => {
+  it("uses LegendList isAtEnd when deciding whether the live edge is visible", async () => {
     const {
       resolveTimelineIsAtEnd,
       resolveTimelineMinimapHasPersistentGutter,
@@ -323,9 +339,11 @@ describe("MessagesTimeline", () => {
       resolveTimelineMinimapTopPercent,
     } = await import("./MessagesTimeline.logic");
 
-    expect(resolveTimelineIsAtEnd({ isNearEnd: true, isAtEnd: false })).toBe(true);
-    expect(resolveTimelineIsAtEnd({ isNearEnd: false, isAtEnd: true })).toBe(false);
-    expect(resolveTimelineIsAtEnd({ isAtEnd: true })).toBe(true);
+    // isNearEnd spans the bottom half of the viewport, so a deliberate scroll-up
+    // must not read as sitting at the live edge.
+    expect(resolveTimelineIsAtEnd({ isNearEnd: true, isAtEnd: false })).toBe(false);
+    expect(resolveTimelineIsAtEnd({ isNearEnd: false, isAtEnd: true })).toBe(true);
+    expect(resolveTimelineIsAtEnd({ isNearEnd: true })).toBe(true);
     expect(resolveTimelineIsAtEnd(undefined)).toBeUndefined();
 
     expect(resolveTimelineMinimapHeightStyle(5)).toBe("min(32px, calc(100vh - 18rem))");
