@@ -224,8 +224,10 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
               description: error instanceof Error ? error.message : "An error occurred.",
             }),
           );
-        } else if (result._tag === "Success") {
-          // Remember the chat so Cmd/Ctrl+Shift+T can reopen it.
+        } else if (result._tag === "Success" && shell.latestUserMessageAt !== null) {
+          // Remember the chat so Cmd/Ctrl+Shift+T can reopen it. Chats that
+          // never sent a message are empty "new chat" shells — reopening one
+          // just drops you into a blank composer, so leave them off the stack.
           useWorkspaceContentTabsStore.getState().pushClosedChat({
             view: "chat",
             environmentId: shell.environmentId,
