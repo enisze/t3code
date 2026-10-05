@@ -1,6 +1,7 @@
 import {
   EnvironmentId,
   EventId,
+  MessageId,
   ORCHESTRATION_WS_METHODS,
   OrchestrationGetSnapshotError,
   ProjectId,
@@ -303,6 +304,32 @@ const titleUpdated = (title: string, sequence = 2): OrchestrationThreadStreamIte
       threadId: THREAD_ID,
       title,
       updatedAt: "2026-04-01T01:00:00.000Z",
+    },
+  },
+});
+
+const messageSent = (sequence: number): OrchestrationThreadStreamItem => ({
+  kind: "event",
+  event: {
+    eventId: EventId.make(`event-message-${sequence}`),
+    sequence,
+    occurredAt: "2026-04-01T00:00:00.000Z",
+    commandId: null,
+    causationEventId: null,
+    correlationId: null,
+    metadata: {},
+    aggregateKind: "thread",
+    aggregateId: THREAD_ID,
+    type: "thread.message-sent",
+    payload: {
+      threadId: THREAD_ID,
+      messageId: MessageId.make(`message-${sequence}`),
+      role: "user",
+      text: "/simplify",
+      turnId: null,
+      streaming: false,
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
     },
   },
 });
@@ -891,38 +918,15 @@ describe("EnvironmentThreads", () => {
         yield* Effect.yieldNow;
       }
 
-      yield* Queue.offer(harness.inputs, {
-        kind: "event",
-        event: {
-          eventId: EventId.make("event-created"),
-          sequence: 1,
-          occurredAt: "2026-04-01T00:00:00.000Z",
-          commandId: null,
-          causationEventId: null,
-          correlationId: null,
-          metadata: {},
-          aggregateKind: "thread",
-          aggregateId: THREAD_ID,
-          type: "thread.created",
-          payload: {
-            threadId: THREAD_ID,
-            projectId: BASE_THREAD.projectId,
-            title: BASE_THREAD.title,
-            modelSelection: BASE_THREAD.modelSelection,
-            runtimeMode: BASE_THREAD.runtimeMode,
-            interactionMode: BASE_THREAD.interactionMode,
-            branch: BASE_THREAD.branch,
-            worktreePath: BASE_THREAD.worktreePath,
-            createdAt: BASE_THREAD.createdAt,
-            updatedAt: BASE_THREAD.updatedAt,
-          },
-        },
-      });
+      // The thread stream never carries `thread.created`; the first event a
+      // live subscription sees for a just-created thread is its first message.
+      yield* Queue.offer(harness.inputs, messageSent(2));
       for (let attempt = 0; attempt < 100; attempt += 1) {
         if ((yield* Ref.get(harness.subscriptionCount)) >= 3) break;
         yield* Effect.yieldNow;
       }
       expect(yield* Ref.get(harness.subscriptionCount)).toBe(3);
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(2);
       expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBeUndefined();
 
       yield* Queue.offer(harness.inputs, snapshot(BASE_THREAD));
@@ -931,6 +935,41 @@ describe("EnvironmentThreads", () => {
       );
       expect(recovered.status).not.toBe("deleted");
       expect(Option.getOrThrow(recovered.data).id).toBe(THREAD_ID);
+    }),
+  );
+
+  it.effect("reloads a missing thread only once while its events keep arriving", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const notFound = new OrchestrationGetSnapshotError({
+        message: `Thread ${THREAD_ID} was not found`,
+        cause: THREAD_ID,
+        reason: "not_found",
+      });
+      const awaitSubscriptions = Effect.fn(function* (count: number) {
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          if ((yield* Ref.get(harness.subscriptionCount)) >= count) break;
+          yield* Effect.yieldNow;
+        }
+      });
+      yield* Queue.offer(harness.inputs, notFound);
+      yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
+      yield* TestClock.adjust("250 millis");
+      yield* awaitSubscriptions(2);
+
+      // An archived thread also answers "not found" while its session streams.
+      yield* Queue.offer(harness.inputs, messageSent(2));
+      yield* awaitSubscriptions(3);
+      yield* Queue.offer(harness.inputs, notFound);
+      yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
+      yield* TestClock.adjust("250 millis");
+      yield* awaitSubscriptions(4);
+
+      yield* Queue.offer(harness.inputs, messageSent(3));
+      yield* awaitSubscriptions(5);
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(4);
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(2);
+      expect((yield* Ref.get(harness.latest)).status).toBe("deleted");
     }),
   );
 

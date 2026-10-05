@@ -279,6 +279,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   } | null>(null);
   const persistence = yield* Queue.sliding<OrchestrationThreadDetailSnapshot>(1);
   const recreatedResubscriptions = yield* Queue.sliding<void>(1);
+  // A missing thread is reloaded at most once when events arrive for it: an
+  // archived thread also answers "not found" while its session keeps
+  // streaming, and reloading on every event would never settle.
+  const revivalRequested = yield* Ref.make(false);
 
   const persist = Effect.fn("EnvironmentThreadState.persist")(function* (
     snapshot: OrchestrationThreadDetailSnapshot,
@@ -472,10 +476,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     if (Option.isNone(current.data)) {
       if (item.event.type === "thread.deleted") {
         yield* setDeleted();
-      } else if (current.status === "deleted" && item.event.type === "thread.created") {
+      } else if (current.status === "deleted" && !(yield* Ref.getAndSet(revivalRequested, true))) {
         // A draft subscribes under its pre-assigned id before the server
-        // creates the thread, so "not found" was only "not yet". Leave the
-        // deleted state and resubscribe to load the new thread's snapshot.
+        // creates the thread, so "not found" was only "not yet". The thread
+        // stream never carries `thread.created`, but any event for this id
+        // means the thread exists now: leave the deleted state and
+        // resubscribe to load its snapshot.
         yield* SubscriptionRef.set(state, { ...current, status: "empty" as const });
         yield* Queue.offer(recreatedResubscriptions, undefined);
       }
