@@ -13,6 +13,7 @@ import {
   type PermissionMode,
   type PermissionResult,
   type PermissionUpdate,
+  type SDKControlGetUsageResponse,
   type SDKMessage,
   type SDKRateLimitInfo,
   type SDKResultMessage,
@@ -22,7 +23,11 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
-import { type ClaudeScopedLimitNames, claudeRateLimitEventToUpdate } from "./claudeUsageLimits.ts";
+import {
+  type ClaudeScopedLimitNames,
+  claudeRateLimitEventToUpdate,
+  claudeUsageResponseToLimits,
+} from "./claudeUsageLimits.ts";
 import {
   ApprovalRequestId,
   classifyTaskAgentKind,
@@ -113,6 +118,9 @@ const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonStri
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 
 const PROVIDER = ProviderDriverKind.make("claudeAgent");
+/** Deadline for the post-turn `get_usage` control read; it is optional, so a
+ * slow session never holds anything up. */
+const DEFAULT_USAGE_READ_TIMEOUT_MS = 8_000;
 type ClaudeTextStreamKind = Extract<RuntimeContentStreamKind, "assistant_text" | "reasoning_text">;
 type ClaudeToolResultStreamKind = Extract<
   RuntimeContentStreamKind,
@@ -338,6 +346,12 @@ interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
   readonly setPermissionMode: (mode: PermissionMode) => Promise<void>;
   readonly setMaxThinkingTokens: (maxThinkingTokens: number | null) => Promise<void>;
   readonly close: () => void;
+  /**
+   * On-demand usage read on the open session (the SDK's `get_usage` control
+   * request). Optional because test doubles supply their own runtime; absent
+   * means "can't read usage here", not an error.
+   */
+  readonly usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?: () => Promise<SDKControlGetUsageResponse>;
 }
 
 export interface ClaudeAdapterLiveOptions {
@@ -3224,6 +3238,57 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     yield* updateResumeCursor(context);
   });
 
+  /**
+   * Refresh the subscription usage windows off the live session. The CLI's
+   * `get_usage` control request reports every window at once, so issuing it
+   * once per completed turn keeps the usage meters current as the user actually
+   * works — no background polling, just one piggybacked read on the session
+   * that is already open. Best-effort: a missing control method (test doubles),
+   * a timeout, or an account without rate limits all resolve to "no update".
+   */
+  const refreshSessionUsageLimits = Effect.fn("refreshSessionUsageLimits")(function* (
+    context: ClaudeSessionContext,
+  ) {
+    const getUsage = context.query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET;
+    if (typeof getUsage !== "function") {
+      return;
+    }
+    const response = yield* Effect.tryPromise(() => getUsage.call(context.query)).pipe(
+      Effect.timeout(DEFAULT_USAGE_READ_TIMEOUT_MS),
+      Effect.orElseSucceed(() => undefined),
+    );
+    if (!response) {
+      return;
+    }
+    const checkedAt = yield* nowIso;
+    const { limits, names } = claudeUsageResponseToLimits({
+      response: {
+        rate_limits_available: response.rate_limits_available,
+        rate_limits: response.rate_limits,
+      },
+      checkedAt,
+    });
+    // Keep the scoped-bucket names the probe shares with the event mapper fresh,
+    // so a later streamed overage event still lands on the row this read drew.
+    if (options?.scopedLimitNames) {
+      yield* Ref.set(options.scopedLimitNames, names);
+    }
+    if (limits.windows.length === 0) {
+      return;
+    }
+    const stamp = yield* makeEventStamp();
+    yield* offerRuntimeEvent({
+      type: "account.rate-limits.updated",
+      eventId: stamp.eventId,
+      provider: PROVIDER,
+      createdAt: stamp.createdAt,
+      threadId: context.session.threadId,
+      ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+      payload: { limits: { windows: limits.windows } },
+      providerRefs: nativeProviderRefs(context),
+    });
+  });
+
   const handleResultMessage = Effect.fn("handleResultMessage")(function* (
     context: ClaudeSessionContext,
     message: SDKMessage,
@@ -3239,6 +3304,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     yield* completeTurn(context, status, errorMessage, message);
+    // Piggyback a usage read on the just-finished turn so the meters move as the
+    // user works. Forked so the control round-trip never stalls the message loop
+    // (the turn's own events are already out); best-effort and self-contained.
+    yield* refreshSessionUsageLimits(context).pipe(Effect.forkDetach, Effect.asVoid);
   });
 
   /**

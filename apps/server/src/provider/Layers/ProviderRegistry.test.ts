@@ -5,6 +5,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -3005,6 +3006,72 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   stderr: "",
                   code: 1,
                 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("still surfaces OAuth usage windows when the init result can't verify auth", () =>
+        // The init payload failed to confirm auth (status stays "warning"), but
+        // the claude.ai usage endpoint is independent of it. A logged-in
+        // subscription should still see its usage — and be able to refresh it —
+        // rather than having the meters vanish entirely.
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const home = yield* fs.makeTempDirectoryScoped();
+          yield* fs.writeFileString(
+            path.join(home, ".credentials.json"),
+            '{"claudeAiOauth":{"accessToken":"test-oauth-token"}}',
+          );
+
+          const usageHttpClient = Layer.succeed(
+            HttpClient.HttpClient,
+            HttpClient.make((request) =>
+              Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  request.url.includes("/api/oauth/usage")
+                    ? Response.json({
+                        five_hour: { utilization: 42, resets_at: "2026-01-01T00:00:00.000Z" },
+                      })
+                    : Response.json({ version: "0.0.0" }),
+                ),
+              ),
+            ),
+          );
+
+          const status = yield* checkClaudeProviderStatus(
+            { ...defaultClaudeSettings, homePath: home },
+            noClaudeCapabilities,
+          ).pipe(Effect.provide(usageHttpClient));
+
+          // Auth is still unverified, so the warning and its message stand.
+          assert.strictEqual(status.status, "warning");
+          assert.strictEqual(status.auth.status, "unknown");
+          assert.strictEqual(
+            status.message,
+            "Could not verify Claude authentication status from initialization result.",
+          );
+          // But the usage windows are now carried, so the meters render and refresh.
+          assert.deepStrictEqual(
+            status.usageLimits?.windows.map((window) => ({
+              id: window.id,
+              kind: window.kind,
+              usedPercent: window.usedPercent,
+            })),
+            [{ id: "five_hour", kind: "session", usedPercent: 42 }],
+          );
+          assert.strictEqual(status.usage?.windows[0]?.usedPercent, 42);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return { stdout: '{"loggedIn":false}\n', stderr: "", code: 1 };
               throw new Error(`Unexpected args: ${joined}`);
             }),
           ),
