@@ -873,6 +873,67 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect("recovers a thread that is created after a not-found snapshot", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Queue.offer(
+        harness.inputs,
+        new OrchestrationGetSnapshotError({
+          message: `Thread ${THREAD_ID} was not found`,
+          cause: THREAD_ID,
+          reason: "not_found",
+        }),
+      );
+      yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
+      yield* TestClock.adjust("250 millis");
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(harness.subscriptionCount)) >= 2) break;
+        yield* Effect.yieldNow;
+      }
+
+      yield* Queue.offer(harness.inputs, {
+        kind: "event",
+        event: {
+          eventId: EventId.make("event-created"),
+          sequence: 1,
+          occurredAt: "2026-04-01T00:00:00.000Z",
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          aggregateKind: "thread",
+          aggregateId: THREAD_ID,
+          type: "thread.created",
+          payload: {
+            threadId: THREAD_ID,
+            projectId: BASE_THREAD.projectId,
+            title: BASE_THREAD.title,
+            modelSelection: BASE_THREAD.modelSelection,
+            runtimeMode: BASE_THREAD.runtimeMode,
+            interactionMode: BASE_THREAD.interactionMode,
+            branch: BASE_THREAD.branch,
+            worktreePath: BASE_THREAD.worktreePath,
+            createdAt: BASE_THREAD.createdAt,
+            updatedAt: BASE_THREAD.updatedAt,
+          },
+        },
+      });
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(harness.subscriptionCount)) >= 3) break;
+        yield* Effect.yieldNow;
+      }
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(3);
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBeUndefined();
+
+      yield* Queue.offer(harness.inputs, snapshot(BASE_THREAD));
+      const recovered = yield* awaitThreadState(harness.observed, (value) =>
+        Option.isSome(value.data),
+      );
+      expect(recovered.status).not.toBe("deleted");
+      expect(Option.getOrThrow(recovered.data).id).toBe(THREAD_ID);
+    }),
+  );
+
   it.effect("does not overwrite a live snapshot when the supervisor becomes ready", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_THREAD });
