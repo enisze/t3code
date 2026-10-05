@@ -548,6 +548,18 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 
   if (!capabilities) {
+    // The CLI init result didn't carry capabilities, so we can't verify the
+    // auth method or subscription. The claude.ai OAuth usage endpoint is
+    // independent of that payload, though, so attempt it best-effort: a
+    // logged-in subscription still shows its usage windows (and stays
+    // refreshable) even when the init probe can't confirm auth. It resolves to
+    // `undefined` when no OAuth token is present (e.g. API-key auth), so the
+    // attempt is harmless for accounts that have no usage endpoint.
+    const usage = yield* fetchClaudeAccountUsage({
+      claudeSettings,
+      cliVersion: parsedVersion,
+      fetchedAt: checkedAt,
+    }).pipe(Effect.catchCause(() => Effect.succeed(undefined)));
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: claudeSettings.enabled,
@@ -555,12 +567,21 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       models,
       slashCommands: dedupedSlashCommands,
       skills,
+      ...(usage ? { usage } : {}),
       probe: {
         installed: true,
         version: parsedVersion,
         status: "warning",
         auth: { status: "unknown" },
         message: "Could not verify Claude authentication status from initialization result.",
+        ...(usage
+          ? {
+              usageLimits: resolveClaudeUsageLimits(
+                makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" }),
+                usage,
+              ),
+            }
+          : {}),
       },
     });
   }

@@ -8,6 +8,7 @@ import type {
   Options as ClaudeQueryOptions,
   PermissionMode,
   PermissionResult,
+  SDKControlGetUsageResponse,
   SDKMessage,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
@@ -71,6 +72,9 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   public readonly setMaxThinkingTokensCalls: Array<number | null> = [];
   public closeCalls = 0;
   public closeError: unknown | undefined;
+  /** Absent by default so most sessions expose no on-demand usage read; a test
+   * that exercises the post-turn refresh assigns one. */
+  public usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?: () => Promise<SDKControlGetUsageResponse>;
 
   emit(message: SDKMessage): void {
     if (this.done) {
@@ -1323,6 +1327,71 @@ describe("ClaudeAdapterLive", () => {
           ],
         },
       ]);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("reads usage off the live session when a turn completes", () => {
+    const scopedLimitNames = Ref.makeUnsafe<ClaudeScopedLimitNames>({ overageIncluded: undefined });
+    const harness = makeHarness({ scopedLimitNames });
+    // The live session's on-demand `get_usage` read, which the probe otherwise
+    // only reaches on a manual refresh. A completed turn should trigger it.
+    let usageReads = 0;
+    harness.query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET = async () => {
+      usageReads += 1;
+      return {
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: { utilization: 55, resets_at: "2026-01-01T00:00:00.000Z" },
+        },
+      } as unknown as SDKControlGetUsageResponse;
+    };
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      // The refresh is forked off the turn, so collect until it lands rather
+      // than stopping at turn.completed (which fires first).
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "account.rate-limits.updated"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.sendTurn({ threadId: session.threadId, input: "hello", attachments: [] });
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        num_turns: 1,
+        session_id: "sdk-session-1",
+        uuid: "result-usage",
+      } as unknown as SDKMessage);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const update = events.find((event) => event.type === "account.rate-limits.updated");
+      assert.strictEqual(usageReads, 1);
+      assert.deepStrictEqual(
+        update?.type === "account.rate-limits.updated" ? update.payload.limits : undefined,
+        {
+          windows: [
+            {
+              id: "five_hour",
+              kind: "session",
+              label: "Session",
+              usedPercent: 55,
+              windowDurationMins: 300,
+              resetsAt: "2026-01-01T00:00:00.000Z",
+            },
+          ],
+        },
+      );
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
