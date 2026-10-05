@@ -1,6 +1,7 @@
 "use client";
 
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { getDefaultCloneUrl } from "@t3tools/client-runtime/operations/projects";
 import {
   canPreloadBrowsePath,
   createBrowseNavigationCoordinator,
@@ -1819,7 +1820,7 @@ function OpenCommandPaletteDialog(props: {
         source: addProjectCloneFlow.source,
         repositoryInput: rawRepository,
         repository,
-        remoteUrl: repository.sshUrl,
+        remoteUrl: getDefaultCloneUrl(repository),
       });
       setHighlightedItemValue(null);
       setQuery(destinationPath);
