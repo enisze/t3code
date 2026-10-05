@@ -278,6 +278,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     readonly epoch: number;
   } | null>(null);
   const persistence = yield* Queue.sliding<OrchestrationThreadDetailSnapshot>(1);
+  const recreatedResubscriptions = yield* Queue.sliding<void>(1);
 
   const persist = Effect.fn("EnvironmentThreadState.persist")(function* (
     snapshot: OrchestrationThreadDetailSnapshot,
@@ -471,6 +472,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     if (Option.isNone(current.data)) {
       if (item.event.type === "thread.deleted") {
         yield* setDeleted();
+      } else if (current.status === "deleted" && item.event.type === "thread.created") {
+        // A draft subscribes under its pre-assigned id before the server
+        // creates the thread, so "not found" was only "not yet". Leave the
+        // deleted state and resubscribe to load the new thread's snapshot.
+        yield* SubscriptionRef.set(state, { ...current, status: "empty" as const });
+        yield* Queue.offer(recreatedResubscriptions, undefined);
       }
       return;
     }
@@ -674,6 +681,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     onSome: (service) =>
       service.changes.pipe(Stream.filter(ConnectionWakeups.shouldResubscribeAfterWakeup)),
   });
+  const resubscriptions = Stream.merge(
+    foregroundResubscriptions,
+    Stream.fromQueue(recreatedResubscriptions),
+  );
 
   // Only the first subscription after a warm live resume keeps the retained
   // status. A replacement session or foreground resubscribe on the same scope
@@ -791,7 +802,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         onDefect: () => setStreamError("Could not synchronize the thread."),
         onExpectedFailure: handleStreamError,
         retryExpectedFailureAfter: "250 millis",
-        resubscribe: foregroundResubscriptions,
+        resubscribe: resubscriptions,
       },
     ).pipe(Stream.runForEach(applyItem)),
   );
