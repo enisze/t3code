@@ -566,6 +566,7 @@ export function BranchToolbarBranchSelector({
   // Combobox / list plumbing
   // ---------------------------------------------------------------------------
   const branchListScrollElementRef = useRef<HTMLElement | null>(null);
+  const highlightedItemValueRef = useRef<string | null>(null);
   const previousBranchListScrollTopRef = useRef<number | null>(null);
   const handleOpenChange = useCallback((open: boolean) => {
     previousBranchListScrollTopRef.current = null;
@@ -727,6 +728,25 @@ export function BranchToolbarBranchSelector({
     });
   };
 
+  const activatePickerItem = (itemValue: string) => {
+    if (checkoutPullRequestItemValue && itemValue === checkoutPullRequestItemValue) {
+      if (!prReference || !onCheckoutPullRequestRequest) {
+        return;
+      }
+      setIsBranchMenuOpen(false);
+      setBranchQuery("");
+      onComposerFocusRequest?.();
+      onCheckoutPullRequestRequest(prReference);
+      return;
+    }
+    if (createBranchItemValue && itemValue === createBranchItemValue) {
+      createRef(trimmedBranchQuery);
+      return;
+    }
+    const refName = branchByName.get(itemValue);
+    if (refName) selectBranch(refName);
+  };
+
   function renderPickerItem(itemValue: string, index: number) {
     if (checkoutPullRequestItemValue && itemValue === checkoutPullRequestItemValue) {
       return (
@@ -736,15 +756,7 @@ export function BranchToolbarBranchSelector({
           index={index}
           value={itemValue}
           className="pe-2"
-          onClick={() => {
-            if (!prReference || !onCheckoutPullRequestRequest) {
-              return;
-            }
-            setIsBranchMenuOpen(false);
-            setBranchQuery("");
-            onComposerFocusRequest?.();
-            onCheckoutPullRequestRequest(prReference);
-          }}
+          onClick={() => activatePickerItem(itemValue)}
         >
           <div className="flex min-w-0 items-center gap-2 py-1">
             <SourceControlIcon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -766,7 +778,7 @@ export function BranchToolbarBranchSelector({
           index={index}
           value={itemValue}
           className="pe-1.5"
-          onClick={() => createRef(trimmedBranchQuery)}
+          onClick={() => activatePickerItem(itemValue)}
         >
           <span className="truncate">Create new ref &quot;{trimmedBranchQuery}&quot;</span>
         </ComboboxItem>
@@ -794,7 +806,7 @@ export function BranchToolbarBranchSelector({
         index={index}
         value={itemValue}
         className="pe-1.5"
-        onClick={() => selectBranch(refName)}
+        onClick={() => activatePickerItem(itemValue)}
         onContextMenu={(event) => handleBranchContextMenu(event, itemValue)}
       >
         <div className="group flex w-full min-w-0 items-center justify-between gap-2">
@@ -834,7 +846,8 @@ export function BranchToolbarBranchSelector({
       filteredItems={filteredBranchPickerItems}
       autoHighlight
       virtualized
-      onItemHighlighted={(_value, eventDetails) => {
+      onItemHighlighted={(value, eventDetails) => {
+        highlightedItemValueRef.current = typeof value === "string" ? value : null;
         if (!isBranchMenuOpen || eventDetails.index < 0 || eventDetails.reason !== "keyboard") {
           return;
         }
@@ -932,6 +945,25 @@ export function BranchToolbarBranchSelector({
               unstyled
               value={branchQuery}
               onChange={(event) => setBranchQuery(event.target.value)}
+              onKeyDown={(event) => {
+                // Searches are answered by the server, so the list is briefly
+                // empty while results load and Base UI drops its auto-highlight.
+                // Enter should still pick the first result.
+                const firstItemValue = filteredBranchPickerItems[0];
+                if (
+                  event.key !== "Enter" ||
+                  trimmedBranchQuery.length === 0 ||
+                  highlightedItemValueRef.current ||
+                  !firstItemValue
+                ) {
+                  return;
+                }
+                (
+                  event as typeof event & { preventBaseUIHandler?: () => void }
+                ).preventBaseUIHandler?.();
+                event.preventDefault();
+                activatePickerItem(firstItemValue);
+              }}
             />
           </div>
         </div>
