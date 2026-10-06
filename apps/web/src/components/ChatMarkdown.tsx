@@ -35,6 +35,9 @@ import React, {
 import type { Components, Options as ReactMarkdownOptions } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import { defaultUrlTransform } from "react-markdown";
+import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-images";
+import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
+import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
@@ -199,7 +202,10 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
     code: [...(defaultSchema.attributes?.code ?? []), "dataCodeMeta", "dataInlineCode"],
   },
   protocols: {
-    ...defaultSchema.protocols,
+    // Image sources are classified before rendering; host paths become signed URLs.
+    ...Object.fromEntries(
+      Object.entries(defaultSchema.protocols ?? {}).filter(([property]) => property !== "src"),
+    ),
     href: [...(defaultSchema.protocols?.href ?? []), "file"],
   },
 } satisfies Parameters<typeof rehypeSanitize>[0];
@@ -1349,6 +1355,8 @@ function ChatMarkdown({
     return extraRemarkPlugins ? [...base, ...extraRemarkPlugins] : base;
   }, [lineBreaks, extraRemarkPlugins]);
   const { resolvedTheme } = useTheme();
+  const [imagePreview, setImagePreview] = useState<ExpandedImagePreview | null>(null);
+  const mediaEnvironmentId = threadRef?.environmentId ?? explicitEnvironmentId;
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
   });
@@ -1382,7 +1390,7 @@ function ChatMarkdown({
       }
     }
     return metaByHref;
-  }, [cwd, text]);
+  }, [cwd, imageBaseDir, text]);
   const inlineCodeFileLinkMetaByText = useMemo(() => {
     const metaByText = new Map<string, MarkdownFileLinkMeta>();
     for (const span of extractInlineCodeSpans(text)) {
@@ -1393,7 +1401,7 @@ function ChatMarkdown({
       }
     }
     return metaByText;
-  }, [cwd, text]);
+  }, [cwd, imageBaseDir, text]);
   const fileLinkParentSuffixByPath = useMemo(() => {
     const filePaths = [
       ...[...markdownFileLinkMetaByHref.values()].map((meta) => meta.filePath),
@@ -1401,9 +1409,17 @@ function ChatMarkdown({
     ];
     return buildFileLinkParentSuffixByPath(filePaths);
   }, [inlineCodeFileLinkMetaByText, markdownFileLinkMetaByHref]);
-  const markdownUrlTransform = useCallback((href: string) => {
-    return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
-  }, []);
+  const markdownUrlTransform = useCallback(
+    (href: string, key: string) => {
+      if (key === "src") {
+        return classifyMarkdownImageSource(href, imageBaseDir ?? cwd)._tag === "Blocked"
+          ? ""
+          : href;
+      }
+      return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
+    },
+    [cwd, imageBaseDir],
+  );
   // Re-emit highlighted content as markdown so copying out of the rendered
   // view keeps links, emphasis, lists, and code fences intact.
   const handleCopy = useCallback((event: ReactClipboardEvent<HTMLDivElement>) => {
@@ -1498,6 +1514,68 @@ function ChatMarkdown({
     };
 
     return {
+      img({ node: _node, src, alt, width, height, ...props }) {
+        const source = typeof src === "string" ? src : "";
+        const media = resolveMediaSource(source, {
+          threadId: threadRef?.threadId,
+          workspaceRoot: imageBaseDir ?? cwd,
+          imageEmbed: true,
+        });
+        const label = alt ?? "";
+        const copyMarkdown = `![${label}](${source})`;
+        const style = authoredImageSizeStyle(width, height, 16);
+        if (!media || media.access === "unavailable") {
+          return <ChatMarkdownImageFallback alt={label} copyMarkdown={copyMarkdown} />;
+        }
+        if (media.access === "environment") {
+          return mediaEnvironmentId ? (
+            <ChatMarkdownAssetImage
+              environmentId={mediaEnvironmentId}
+              resource={media.resource}
+              kind={media.kind}
+              alt={label}
+              copyMarkdown={copyMarkdown}
+              srcFragment={media.srcFragment}
+              style={style}
+              maxHeightRem={16}
+              workspaceRoot={imageBaseDir ?? cwd}
+              onImageExpand={setImagePreview}
+            />
+          ) : (
+            <ChatMarkdownImageFallback alt={label} copyMarkdown={copyMarkdown} />
+          );
+        }
+        const actionsSource: MediaActionSource = {
+          kind: media.kind,
+          name: label || media.name,
+          src: media.uri,
+          ...(media.reference ? { reference: media.reference } : {}),
+        };
+        if (media.kind === "video") {
+          return (
+            <ChatMarkdownVideo
+              src={media.uri}
+              alt={label}
+              copyMarkdown={copyMarkdown}
+              actionsSource={actionsSource}
+              style={style}
+            />
+          );
+        }
+        return (
+          <ChatMarkdownImage
+            key={media.uri}
+            src={media.uri}
+            alt={label}
+            copyMarkdown={copyMarkdown}
+            standalone
+            imageProps={props}
+            style={style}
+            actionsSource={actionsSource}
+            onImageExpand={setImagePreview}
+          />
+        );
+      },
       p({ node: _node, children, ...props }) {
         return <p {...props}>{renderSkillInlineMarkdownChildren(children, skills)}</p>;
       },
@@ -1671,6 +1749,8 @@ function ChatMarkdown({
     };
   }, [
     cwd,
+    imageBaseDir,
+    mediaEnvironmentId,
     diffThemeName,
     fileLinkParentSuffixByPath,
     inlineCodeFileLinkMetaByText,
@@ -1702,6 +1782,9 @@ function ChatMarkdown({
       >
         {text}
       </ReactMarkdown>
+      {imagePreview && (
+        <ExpandedImageDialog preview={imagePreview} onClose={() => setImagePreview(null)} />
+      )}
     </div>
   );
 }
