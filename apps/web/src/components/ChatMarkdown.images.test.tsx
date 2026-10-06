@@ -3,6 +3,8 @@ import { act, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+vi.mock("react-dom", () => ({ createPortal: (children: ReactNode) => children }));
+
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
 vi.mock("../state/server", () => ({ serverEnvironment: { configValueAtom: () => null } }));
 vi.mock("../state/assets", () => ({ assetEnvironment: { createUrl: {} } }));
@@ -118,6 +120,7 @@ describe("chat markdown images", () => {
   });
 
   it("opens and closes a decoded image preview", async () => {
+    vi.stubGlobal("document", { body: {} });
     vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
     const view = await renderImage("/tmp/result.png");
     await act(async () => view.root.findByType("img").props.onLoad());

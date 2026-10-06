@@ -32,6 +32,7 @@ import React, {
   useState,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import type { Components, Options as ReactMarkdownOptions } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import { defaultUrlTransform } from "react-markdown";
@@ -1782,9 +1783,11 @@ function ChatMarkdown({
       >
         {text}
       </ReactMarkdown>
-      {imagePreview && (
-        <ExpandedImageDialog preview={imagePreview} onClose={() => setImagePreview(null)} />
-      )}
+      {imagePreview &&
+        createPortal(
+          <ExpandedImageDialog preview={imagePreview} onClose={() => setImagePreview(null)} />,
+          document.body,
+        )}
     </div>
   );
 }
