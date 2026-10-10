@@ -7,7 +7,6 @@ import {
   type ModelSelection,
   type ProjectScript,
   type ProjectId,
-  type PreviewSessionSnapshot,
   type ProviderApprovalDecision,
   ProviderInstanceId,
   type ServerProvider,
@@ -129,10 +128,8 @@ import {
   useRightPanelStore,
 } from "../rightPanelStore";
 import {
-  type ClosedWorkspaceContentTab,
   selectWorktreeContentTabs,
   useWorkspaceContentTabsStore,
-  type WorkspaceContentTab,
   type WorkspaceContentTabView,
 } from "../workspaceContentTabsStore";
 import {
@@ -1183,23 +1180,6 @@ type LocalThreadErrorEntry = {
 
 function chatActionErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "An error occurred.";
-}
-
-// Snapshot the info needed to reopen a content tab later (Cmd/Ctrl+Shift+T).
-// A preview is only reopenable when it has a URL to re-navigate to — its live
-// session is torn down on close — so a never-navigated preview is not
-// remembered (returns undefined).
-function closedTabRecordForContentTab(
-  tab: WorkspaceContentTab,
-  previewSessions: Record<string, PreviewSessionSnapshot>,
-): ClosedWorkspaceContentTab | undefined {
-  if (tab.view !== "preview") {
-    return { view: tab.view, filePath: tab.filePath };
-  }
-  const snapshot = tab.previewTabId ? previewSessions[tab.previewTabId] : undefined;
-  const url = snapshot && snapshot.navStatus._tag !== "Idle" ? snapshot.navStatus.url : undefined;
-  if (!url) return undefined;
-  return { view: "preview", filePath: "", previewUrl: url };
 }
 
 function ChatViewContent(props: ChatViewProps) {
@@ -3339,11 +3319,7 @@ function ChatViewContent(props: ChatViewProps) {
     (tabId: string) => {
       if (!contentTabsWorktreeKey) return;
       const tab = contentTabsState.tabs.find((entry) => entry.id === tabId);
-      // Remember the tab so Cmd/Ctrl+Shift+T can reopen it.
-      const closedRecord = tab
-        ? closedTabRecordForContentTab(tab, activePreviewState.sessions)
-        : undefined;
-      useWorkspaceContentTabsStore.getState().closeTab(contentTabsWorktreeKey, tabId, closedRecord);
+      useWorkspaceContentTabsStore.getState().closeTab(contentTabsWorktreeKey, tabId);
       // Closing a preview tab also tears down its underlying browser session.
       if (tab?.view === "preview" && tab.previewTabId && workspaceThreadRef) {
         void closePreviewSession({
@@ -3362,32 +3338,7 @@ function ChatViewContent(props: ChatViewProps) {
       activePreviewState.sessions,
     ],
   );
-  // Reopen the most recently closed tab, browser-style (Cmd/Ctrl+Shift+T): any
-  // closed chat, or a content tab of this worktree. A chat reopens by
-  // unarchiving it; file/diff tabs reopen by path; a preview reopens by
-  // re-navigating a fresh session to the URL it was last showing.
   const reopenClosedChat = useReopenClosedChat();
-  const reopenClosedTab = useCallback(async () => {
-    const closed = useWorkspaceContentTabsStore.getState().popClosedTab(contentTabsWorktreeKey);
-    if (!closed) return;
-    if (closed.view === "chat") {
-      await reopenClosedChat(closed);
-      return;
-    }
-    if (!contentTabsWorktreeKey) return;
-    if (closed.view === "preview") {
-      if (!workspaceThreadRef || !closed.previewUrl || !isPreviewSupportedInRuntime()) return;
-      void openUrlInPreview({
-        threadRef: workspaceThreadRef,
-        url: closed.previewUrl,
-        openPreview,
-      });
-      return;
-    }
-    useWorkspaceContentTabsStore
-      .getState()
-      .reopenFileTab(contentTabsWorktreeKey, closed.filePath, closed.view);
-  }, [contentTabsWorktreeKey, workspaceThreadRef, openPreview, reopenClosedChat]);
   const keepContentTab = useCallback(
     (tabId: string) => {
       if (!contentTabsWorktreeKey) return;
@@ -4566,7 +4517,7 @@ function ChatViewContent(props: ChatViewProps) {
       if (command === "tab.reopenClosed") {
         event.preventDefault();
         event.stopPropagation();
-        void reopenClosedTab();
+        void reopenClosedChat();
         return;
       }
 
@@ -4603,7 +4554,7 @@ function ChatViewContent(props: ChatViewProps) {
     splitPanelTerminal,
     keybindings,
     onToggleDiff,
-    reopenClosedTab,
+    reopenClosedChat,
     toggleRightPanel,
     toggleTerminalVisibility,
     composerRef,

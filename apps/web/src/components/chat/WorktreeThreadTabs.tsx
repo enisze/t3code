@@ -32,7 +32,7 @@ import { readLocalApi } from "~/localApi";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { useUiStateStore, worktreeActivityKey } from "~/uiStateStore";
-import { useWorkspaceContentTabsStore } from "~/workspaceContentTabsStore";
+import { useClosedChatsStore } from "~/closedChatsStore";
 
 export interface WorktreeContentTabDescriptor {
   id: string;
@@ -228,8 +228,7 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
           // Remember the chat so Cmd/Ctrl+Shift+T can reopen it. Chats that
           // never sent a message are empty "new chat" shells — reopening one
           // just drops you into a blank composer, so leave them off the stack.
-          useWorkspaceContentTabsStore.getState().pushClosedChat({
-            view: "chat",
+          useClosedChatsStore.getState().pushClosedChat({
             environmentId: shell.environmentId,
             threadId: shell.id,
           });

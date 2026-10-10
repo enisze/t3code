@@ -4,24 +4,18 @@
  * The chat-column tab strip lists the worktree's chats plus content-viewer
  * tabs. Browsing files (explorer, diff navigator, file picker) reuses ONE
  * browsing tab, so clicking through files never piles up tabs — like VS Code's
- * preview tab. A file reopened with Cmd/Ctrl+Shift+T comes back as its own
- * kept tab, which browsing does not replace. Opening a preview adds a new tab
- * (each backed by its own preview session). A file tab can flip between the
- * diff and the editable contents via `setTabView` (the edit/view toggle).
+ * preview tab. A kept tab (see `keepTab`) is not replaced by browsing. Opening
+ * a preview adds a new tab (each backed by its own preview session). A file
+ * tab can flip between the diff and the editable contents via `setTabView`
+ * (the edit/view toggle).
  * Keyed by worktree so the strip stays visible while switching between chats
  * in the same worktree. `activeTabId === null` means the chat is shown.
- *
- * The closed-tab history persists across reloads; open tabs do not.
  */
 import {
   isWorkspaceImagePreviewPath,
   isWorkspacePdfPreviewPath,
 } from "@t3tools/shared/filePreview";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
-
-import { resolveStorage } from "./lib/storage";
 
 /** Which view the content viewer renders. */
 export type WorkspaceContentTabView = "diff" | "file" | "preview";
@@ -41,36 +35,10 @@ export interface WorkspaceContentTab {
    */
   previewTabId?: string;
   /**
-   * A file tab that browsing does not replace (a reopened tab). Unset on the
-   * worktree's single browsing tab and on preview tabs.
+   * A file tab that browsing does not replace. Unset on the worktree's single
+   * browsing tab and on preview tabs.
    */
   kept?: boolean;
-}
-
-/**
- * The minimum needed to reopen a closed content tab (the browser-style
- * "reopen last closed tab"). Preview sessions are torn down on close, so a
- * closed preview is reopened by re-navigating a fresh session to `previewUrl`
- * rather than reviving its old `previewTabId`.
- */
-export type ClosedWorkspaceContentTab =
-  | {
-      view: WorkspaceContentTabView;
-      /** Repo-relative path for the file/diff viewer; empty for previews. */
-      filePath: string;
-      /** The URL a closed preview was showing, so a new session can reopen it. */
-      previewUrl?: string;
-    }
-  /** A chat closed from the tab strip (archived); reopened by unarchiving it. */
-  | { view: "chat"; environmentId: EnvironmentId; threadId: ThreadId };
-
-/** How many closed tabs to remember for reopening, window-wide. */
-const MAX_CLOSED_TABS = 20;
-
-/** A closed tab plus the worktree strip it was closed from (null for chats). */
-interface ClosedTabEntry {
-  worktreeKey: string | null;
-  tab: ClosedWorkspaceContentTab;
 }
 
 /**
@@ -104,21 +72,12 @@ interface WorktreeContentTabsState {
 interface WorkspaceContentTabsStore {
   byWorktree: Record<string, WorktreeContentTabsState>;
   /**
-   * Window-wide LIFO stack of recently closed tabs, like a browser's. Chats
-   * reopen from anywhere, since closing one usually navigates away from its
-   * strip; content tabs only reopen inside the worktree they belong to.
-   */
-  closedTabs: ClosedTabEntry[];
-  /**
    * Show `filePath`'s diff: focus its tab if open, else load it into the
-   * browsing tab. The file the browsing tab showed counts as closed, so it can
-   * be reopened.
+   * browsing tab.
    */
   openFileDiff: (worktreeKey: string, filePath: string) => void;
   /** Like `openFileDiff`, showing `filePath`'s contents. */
   openFile: (worktreeKey: string, filePath: string) => void;
-  /** Bring a closed file back as its own kept tab (or focus it if open). */
-  reopenFileTab: (worktreeKey: string, filePath: string, view: "diff" | "file") => void;
   /** Turn the browsing tab into a kept tab, so browsing opens a new one. */
   keepTab: (worktreeKey: string, tabId: string) => void;
   /**
@@ -130,18 +89,7 @@ interface WorkspaceContentTabsStore {
   setTabView: (worktreeKey: string, view: WorkspaceContentTabView) => void;
   activateTab: (worktreeKey: string, tabId: string) => void;
   activateChat: (worktreeKey: string) => void;
-  /**
-   * Close a tab. When `closed` is supplied and a tab was actually removed, it
-   * is pushed onto the closed-tab stack so it can be reopened.
-   */
-  closeTab: (worktreeKey: string, tabId: string, closed?: ClosedWorkspaceContentTab) => void;
-  /** Remember a chat closed from a tab strip so it can be reopened. */
-  pushClosedChat: (closed: Extract<ClosedWorkspaceContentTab, { view: "chat" }>) => void;
-  /**
-   * Pop and return the most recently closed tab reopenable from `worktreeKey`
-   * (any chat, or a content tab of that worktree), or null when there is none.
-   */
-  popClosedTab: (worktreeKey: string | null) => ClosedWorkspaceContentTab | null;
+  closeTab: (worktreeKey: string, tabId: string) => void;
 }
 
 const EMPTY_STATE: WorktreeContentTabsState = { tabs: [], activeTabId: null };
@@ -198,176 +146,108 @@ const openFileViewer = (
     const browsingIndex = current.tabs.findIndex(
       (entry) => entry.view !== "preview" && !entry.kept,
     );
-    const replaced = current.tabs[browsingIndex];
-    const tabs = replaced
-      ? current.tabs.with(browsingIndex, tab)
-      : current.tabs.toSpliced(fileTabInsertIndex(current.tabs), 0, tab);
-    const byWorktree = updateWorktree(state.byWorktree, worktreeKey, () => ({
-      tabs,
-      activeTabId: filePath,
-    }));
-    if (!replaced) return { byWorktree };
+    const tabs =
+      browsingIndex === -1
+        ? current.tabs.toSpliced(fileTabInsertIndex(current.tabs), 0, tab)
+        : current.tabs.with(browsingIndex, tab);
     return {
-      byWorktree,
-      closedTabs: pushClosed(state.closedTabs, {
-        worktreeKey,
-        tab: { view: replaced.view, filePath: replaced.filePath },
-      }),
+      byWorktree: updateWorktree(state.byWorktree, worktreeKey, () => ({
+        tabs,
+        activeTabId: filePath,
+      })),
     };
   });
 };
 
-const pushClosed = (closedTabs: ClosedTabEntry[], entry: ClosedTabEntry): ClosedTabEntry[] =>
-  [...closedTabs, entry].slice(-MAX_CLOSED_TABS);
-
-export const useWorkspaceContentTabsStore = create<WorkspaceContentTabsStore>()(
-  persist(
-    (set) => ({
-      byWorktree: {},
-      closedTabs: [],
-      // PDFs and images have no textual diff; land on the file view so the inline
-      // viewer renders instead of a raw-bytes patch.
-      openFileDiff: (worktreeKey, filePath) =>
-        openFileViewer(
-          set,
-          worktreeKey,
-          filePath,
-          isWorkspacePdfPreviewPath(filePath) || isWorkspaceImagePreviewPath(filePath)
-            ? "file"
-            : "diff",
-        ),
-      openFile: (worktreeKey, filePath) => openFileViewer(set, worktreeKey, filePath, "file"),
-      reopenFileTab: (worktreeKey, filePath, view) =>
-        set((state) => ({
-          byWorktree: updateWorktree(state.byWorktree, worktreeKey, (current) => {
-            const focused = focusOpenFileTab(current, filePath, view);
-            if (focused) return focused;
-            const tab: WorkspaceContentTab = { id: filePath, filePath, view, kept: true };
-            return {
-              tabs: current.tabs.toSpliced(fileTabInsertIndex(current.tabs), 0, tab),
-              activeTabId: filePath,
-            };
-          }),
-        })),
-      openPreview: (worktreeKey, previewTabId) =>
-        set((state) => ({
-          byWorktree: updateWorktree(state.byWorktree, worktreeKey, (current) => {
-            const existing = current.tabs.find((tab) => tab.previewTabId === previewTabId);
-            if (existing) {
-              // Already open — just re-focus it.
-              return current.activeTabId === existing.id
-                ? current
-                : { ...current, activeTabId: existing.id };
-            }
-            const tab: WorkspaceContentTab = {
-              id: previewTabId,
-              filePath: "",
-              view: "preview",
-              previewTabId,
-            };
-            return { tabs: [...current.tabs, tab], activeTabId: previewTabId };
-          }),
-        })),
-      keepTab: (worktreeKey, tabId) =>
-        set((state) => ({
-          byWorktree: updateWorktree(state.byWorktree, worktreeKey, (current) => {
-            const index = current.tabs.findIndex(
-              (tab) => tab.id === tabId && tab.view !== "preview" && !tab.kept,
-            );
-            const tab = current.tabs[index];
-            if (!tab) return current;
-            return { ...current, tabs: current.tabs.with(index, { ...tab, kept: true }) };
-          }),
-        })),
-      setTabView: (worktreeKey, view) =>
-        set((state) => ({
-          byWorktree: updateWorktree(state.byWorktree, worktreeKey, (current) => {
-            // The edit/view toggle only applies to the file viewer; preview tabs
-            // have no file to flip.
-            if (view === "preview") return current;
-            const activeIndex = current.tabs.findIndex(
-              (tab) => tab.id === current.activeTabId && tab.view !== "preview",
-            );
-            const index =
-              activeIndex === -1
-                ? current.tabs.findIndex((tab) => tab.view !== "preview")
-                : activeIndex;
-            const tab = current.tabs[index];
-            if (!tab || tab.view === view) return current;
-            const tabs = [...current.tabs];
-            tabs[index] = { ...tab, view };
-            return { ...current, tabs };
-          }),
-        })),
-      activateTab: (worktreeKey, tabId) =>
-        set((state) => ({
-          byWorktree: updateWorktree(state.byWorktree, worktreeKey, (current) =>
-            current.tabs.some((tab) => tab.id === tabId)
-              ? { ...current, activeTabId: tabId }
-              : current,
-          ),
-        })),
-      activateChat: (worktreeKey) =>
-        set((state) => ({
-          byWorktree: updateWorktree(state.byWorktree, worktreeKey, (current) =>
-            current.activeTabId === null ? current : { ...current, activeTabId: null },
-          ),
-        })),
-      closeTab: (worktreeKey, tabId, closed) =>
-        set((state) => {
-          const current = state.byWorktree[worktreeKey] ?? EMPTY_STATE;
-          // Nothing removed → leave both the tab map and the closed stack untouched.
-          if (!current.tabs.some((tab) => tab.id === tabId)) return {};
-          const byWorktree = updateWorktree(state.byWorktree, worktreeKey, (curr) => {
-            const index = curr.tabs.findIndex((tab) => tab.id === tabId);
-            const tabs = curr.tabs.filter((tab) => tab.id !== tabId);
-            if (curr.activeTabId !== tabId) return { ...curr, tabs };
-            // Closing the active viewer falls back to a neighbour, else the chat.
-            const fallback = tabs[index] ?? tabs[index - 1] ?? null;
-            return { tabs, activeTabId: fallback?.id ?? null };
-          });
-          if (!closed) return { byWorktree };
-          return {
-            byWorktree,
-            closedTabs: pushClosed(state.closedTabs, { worktreeKey, tab: closed }),
-          };
-        }),
-      pushClosedChat: (closed) =>
-        set((state) => ({
-          closedTabs: pushClosed(state.closedTabs, { worktreeKey: null, tab: closed }),
-        })),
-      popClosedTab: (worktreeKey) => {
-        let popped: ClosedWorkspaceContentTab | null = null;
-        set((state) => {
-          const index = state.closedTabs.findLastIndex(
-            (entry) => entry.tab.view === "chat" || entry.worktreeKey === worktreeKey,
-          );
-          if (index === -1) return {};
-          popped = state.closedTabs[index]?.tab ?? null;
-          return { closedTabs: state.closedTabs.toSpliced(index, 1) };
-        });
-        return popped;
-      },
-    }),
-    {
-      name: "t3code:closed-content-tabs:v1",
-      version: 1,
-      storage: createJSONStorage(() =>
-        resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
-      ),
-      partialize: (state) => ({ closedTabs: state.closedTabs }),
-      merge: (persisted, current) => {
-        const closedTabs = (persisted as { closedTabs?: unknown } | undefined)?.closedTabs;
-        return {
-          ...current,
-          closedTabs: Array.isArray(closedTabs)
-            ? (closedTabs as ClosedTabEntry[]).slice(-MAX_CLOSED_TABS)
-            : [],
+export const useWorkspaceContentTabsStore = create<WorkspaceContentTabsStore>()((set) => ({
+  byWorktree: {},
+  // PDFs and images have no textual diff; land on the file view so the inline
+  // viewer renders instead of a raw-bytes patch.
+  openFileDiff: (worktreeKey, filePath) =>
+    openFileViewer(
+      set,
+      worktreeKey,
+      filePath,
+      isWorkspacePdfPreviewPath(filePath) || isWorkspaceImagePreviewPath(filePath)
+        ? "file"
+        : "diff",
+    ),
+  openFile: (worktreeKey, filePath) => openFileViewer(set, worktreeKey, filePath, "file"),
+  openPreview: (worktreeKey, previewTabId) =>
+    set((state) => ({
+      byWorktree: updateWorktree(state.byWorktree, worktreeKey, (current) => {
+        const existing = current.tabs.find((tab) => tab.previewTabId === previewTabId);
+        if (existing) {
+          // Already open — just re-focus it.
+          return current.activeTabId === existing.id
+            ? current
+            : { ...current, activeTabId: existing.id };
+        }
+        const tab: WorkspaceContentTab = {
+          id: previewTabId,
+          filePath: "",
+          view: "preview",
+          previewTabId,
         };
-      },
-    },
-  ),
-);
+        return { tabs: [...current.tabs, tab], activeTabId: previewTabId };
+      }),
+    })),
+  keepTab: (worktreeKey, tabId) =>
+    set((state) => ({
+      byWorktree: updateWorktree(state.byWorktree, worktreeKey, (current) => {
+        const index = current.tabs.findIndex(
+          (tab) => tab.id === tabId && tab.view !== "preview" && !tab.kept,
+        );
+        const tab = current.tabs[index];
+        if (!tab) return current;
+        return { ...current, tabs: current.tabs.with(index, { ...tab, kept: true }) };
+      }),
+    })),
+  setTabView: (worktreeKey, view) =>
+    set((state) => ({
+      byWorktree: updateWorktree(state.byWorktree, worktreeKey, (current) => {
+        // The edit/view toggle only applies to the file viewer; preview tabs
+        // have no file to flip.
+        if (view === "preview") return current;
+        const activeIndex = current.tabs.findIndex(
+          (tab) => tab.id === current.activeTabId && tab.view !== "preview",
+        );
+        const index =
+          activeIndex === -1
+            ? current.tabs.findIndex((tab) => tab.view !== "preview")
+            : activeIndex;
+        const tab = current.tabs[index];
+        if (!tab || tab.view === view) return current;
+        const tabs = [...current.tabs];
+        tabs[index] = { ...tab, view };
+        return { ...current, tabs };
+      }),
+    })),
+  activateTab: (worktreeKey, tabId) =>
+    set((state) => ({
+      byWorktree: updateWorktree(state.byWorktree, worktreeKey, (current) =>
+        current.tabs.some((tab) => tab.id === tabId) ? { ...current, activeTabId: tabId } : current,
+      ),
+    })),
+  activateChat: (worktreeKey) =>
+    set((state) => ({
+      byWorktree: updateWorktree(state.byWorktree, worktreeKey, (current) =>
+        current.activeTabId === null ? current : { ...current, activeTabId: null },
+      ),
+    })),
+  closeTab: (worktreeKey, tabId) =>
+    set((state) => ({
+      byWorktree: updateWorktree(state.byWorktree, worktreeKey, (current) => {
+        const index = current.tabs.findIndex((tab) => tab.id === tabId);
+        if (index === -1) return current;
+        const tabs = current.tabs.toSpliced(index, 1);
+        if (current.activeTabId !== tabId) return { ...current, tabs };
+        // Closing the active viewer falls back to a neighbour, else the chat.
+        const fallback = tabs[index] ?? tabs[index - 1] ?? null;
+        return { tabs, activeTabId: fallback?.id ?? null };
+      }),
+    })),
+}));
 
 export function selectWorktreeContentTabs(
   byWorktree: Record<string, WorktreeContentTabsState>,

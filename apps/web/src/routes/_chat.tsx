@@ -21,7 +21,6 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
-import { useWorkspaceContentTabsStore } from "../workspaceContentTabsStore";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 
@@ -116,13 +115,11 @@ function ChatRouteGlobalShortcuts() {
       }
 
       // ChatView handles this while a chat is open; this covers the screens
-      // without one (e.g. after closing the last chat), where only a closed
-      // chat can be reopened.
+      // without one (e.g. after closing the last chat).
       if (command === "tab.reopenClosed") {
         event.preventDefault();
         event.stopPropagation();
-        const closed = useWorkspaceContentTabsStore.getState().popClosedTab(null);
-        if (closed?.view === "chat") void reopenClosedChat(closed);
+        void reopenClosedChat();
         return;
       }
 
