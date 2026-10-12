@@ -114,12 +114,13 @@ function ChatRouteGlobalShortcuts() {
         return;
       }
 
-      // ChatView handles this while a chat is open; this covers the screens
-      // without one (e.g. after closing the last chat).
+      // ChatView handles this while a chat is open, scoped to its tab strip.
+      // This covers the screens without one (e.g. after closing the last chat),
+      // where there is no strip, so the latest chat closed anywhere comes back.
       if (command === "tab.reopenClosed") {
         event.preventDefault();
         event.stopPropagation();
-        void reopenClosedChat();
+        void reopenClosedChat(null);
         return;
       }
 
