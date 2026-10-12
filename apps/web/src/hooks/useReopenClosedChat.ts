@@ -6,46 +6,60 @@ import {
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback } from "react";
 
-import { useClosedChatsStore } from "../closedChatsStore";
+import { type ClosedChat, type ClosedChatScope, useClosedChatsStore } from "../closedChatsStore";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
-import { readThreadShell } from "../state/entities";
+import { readThreadShell, waitForThreadShell } from "../state/entities";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { activateWorkspaceChat } from "../workspaceContentTabsStore";
 import { useThreadActions } from "./useThreadActions";
 
+const showReopenError = (error: unknown) =>
+  toastManager.add(
+    stackedThreadToast({
+      type: "error",
+      title: "Failed to reopen chat",
+      description: error instanceof Error ? error.message : "An error occurred.",
+    }),
+  );
+
+/** Archived chats are absent from the shell store; open ones are present. */
+const isChatOpen = (closed: ClosedChat) =>
+  readThreadShell(scopeThreadRef(closed.environmentId, closed.threadId))?.archivedAt === null;
+
 /**
- * Reopens the most recently closed chat (Cmd/Ctrl+Shift+T): unarchives it and
- * switches to it, wherever the user has navigated since closing it. Repeated
- * calls walk back through older closed chats.
+ * Reopens the most recently closed chat of a tab strip (Cmd/Ctrl+Shift+T), or
+ * of any strip when `scope` is null: unarchives it and switches to it.
+ * Repeated calls walk back through older closed chats.
  */
 export function useReopenClosedChat() {
   const navigate = useNavigate();
   const { unarchiveThread } = useThreadActions();
-  return useCallback(async () => {
-    const closed = useClosedChatsStore.getState().popClosedChat();
-    if (!closed) return;
-    const threadRef = scopeThreadRef(closed.environmentId, closed.threadId);
-    // It may have been unarchived elsewhere since; then just switch to it.
-    if (readThreadShell(threadRef)?.archivedAt !== null) {
+  return useCallback(
+    async (scope: ClosedChatScope | null) => {
+      const { popClosedChat } = useClosedChatsStore.getState();
+      let closed = popClosedChat(scope);
+      // Skip chats already reopened another way (sidebar, archive, palette).
+      while (closed && isChatOpen(closed)) closed = popClosedChat(scope);
+      if (!closed) return;
+      const threadRef = scopeThreadRef(closed.environmentId, closed.threadId);
       const result = await unarchiveThread(threadRef);
       if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Failed to reopen chat",
-              description: error instanceof Error ? error.message : "An error occurred.",
-            }),
-          );
-        }
+        if (!isAtomCommandInterrupted(result)) showReopenError(squashAtomCommandFailure(result));
         return;
       }
-    }
-    activateWorkspaceChat(readThreadShell(threadRef));
-    await navigate({
-      to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(threadRef),
-    });
-  }, [navigate, unarchiveThread]);
+      // The thread route redirects a thread it doesn't know to a new chat, so
+      // wait until the unarchived chat is back in the client store.
+      const shell = await waitForThreadShell(threadRef).catch((error: unknown) => {
+        showReopenError(error);
+        return null;
+      });
+      if (!shell) return;
+      activateWorkspaceChat(shell);
+      await navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(threadRef),
+      });
+    },
+    [navigate, unarchiveThread],
+  );
 }

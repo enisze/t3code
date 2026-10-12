@@ -230,6 +230,8 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
           // just drops you into a blank composer, so leave them off the stack.
           useClosedChatsStore.getState().pushClosedChat({
             environmentId: shell.environmentId,
+            projectId: shell.projectId,
+            worktreePath: shell.worktreePath,
             threadId: shell.id,
           });
         }

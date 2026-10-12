@@ -3339,6 +3339,21 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
   const reopenClosedChat = useReopenClosedChat();
+  // Cmd/Ctrl+Shift+T only brings back chats closed from this tab strip, which
+  // groups a project's chats by worktree (see WorktreeThreadTabs).
+  const closedChatScopeEnvironmentId = activeThread?.environmentId ?? null;
+  const closedChatScopeProjectId = activeThread?.projectId ?? null;
+  const closedChatScope = useMemo(
+    () =>
+      closedChatScopeEnvironmentId && closedChatScopeProjectId
+        ? {
+            environmentId: closedChatScopeEnvironmentId,
+            projectId: closedChatScopeProjectId,
+            worktreePath: newChatWorktreePath,
+          }
+        : null,
+    [closedChatScopeEnvironmentId, closedChatScopeProjectId, newChatWorktreePath],
+  );
   const keepContentTab = useCallback(
     (tabId: string) => {
       if (!contentTabsWorktreeKey) return;
@@ -4517,7 +4532,7 @@ function ChatViewContent(props: ChatViewProps) {
       if (command === "tab.reopenClosed") {
         event.preventDefault();
         event.stopPropagation();
-        void reopenClosedChat();
+        void reopenClosedChat(closedChatScope);
         return;
       }
 
@@ -4555,6 +4570,7 @@ function ChatViewContent(props: ChatViewProps) {
     keybindings,
     onToggleDiff,
     reopenClosedChat,
+    closedChatScope,
     toggleRightPanel,
     toggleTerminalVisibility,
     composerRef,
