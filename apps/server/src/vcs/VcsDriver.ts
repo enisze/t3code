@@ -31,6 +31,7 @@ export interface VcsDiffCheckpointsInput {
   readonly toCheckpointRef: CheckpointRef;
   readonly fallbackFromToHead?: boolean;
   readonly ignoreWhitespace: boolean;
+  readonly fullContext?: boolean;
   readonly format?: "patch" | "numstat";
 }
 

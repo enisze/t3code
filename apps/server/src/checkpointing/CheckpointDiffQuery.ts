@@ -171,6 +171,7 @@ export const make = Effect.gen(function* () {
           toCheckpointRef,
           fallbackFromToHead: false,
           ignoreWhitespace,
+          fullContext: input.fullContext === true,
         });
       // A single turn diffs from the snapshot taken when it started, so changes
       // made between turns are not attributed to it. Turns captured before
@@ -270,6 +271,7 @@ export const make = Effect.gen(function* () {
         toCheckpointRef: threadContext.value.toCheckpointRef as CheckpointRef,
         fallbackFromToHead: false,
         ignoreWhitespace,
+        fullContext: input.fullContext === true,
       })
       .pipe(Effect.withSpan("checkpoint.fullThread.diffCheckpoints"));
 

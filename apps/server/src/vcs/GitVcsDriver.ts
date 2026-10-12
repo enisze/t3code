@@ -879,6 +879,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           "--no-textconv",
           ...PATCH_RENDER_PREFIX_ARGS,
           ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
+          ...(input.fullContext ? ["--unified=2147483647"] : []),
           `${fromRevision}^{commit}`,
           `${input.toCheckpointRef}^{commit}`,
         ],

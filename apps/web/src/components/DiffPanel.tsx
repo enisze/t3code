@@ -13,10 +13,12 @@ import {
   ChevronRightIcon,
   Columns2Icon,
   CopyIcon,
+  FoldVerticalIcon,
   PilcrowIcon,
   Rows3Icon,
   SearchIcon,
   Undo2Icon,
+  UnfoldVerticalIcon,
 } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useOpenInPreferredEditor } from "../editorPreferences";
@@ -269,6 +271,7 @@ export default function DiffPanel({
   // exposes a per-view toggle for it.
   const [wordWrap] = useState(settings.wordWrap);
   const [diffIgnoreWhitespace, setDiffIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
+  const [expandUnchanged, setExpandUnchanged] = useState(false);
   const [baseRefQuery, setBaseRefQuery] = useState("");
   const [copiedFilePath, setCopiedFilePath] = useState(false);
   const copiedResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -459,6 +462,9 @@ export default function DiffPanel({
     expandedDiffFiles.scopeKey === collapseScopeKey
       ? expandedDiffFiles.filePaths
       : EMPTY_EXPANDED_DIFF_FILE_PATHS;
+  // Rendering any file's body fetches complete file contents, so the gaps
+  // between hunks can be expanded and collapsed client-side.
+  const wantsFullContext = focusedFilePath !== null || expandedDiffFilePaths.size > 0;
   const viewedSignatures = useDiffViewedStore((state) =>
     selectViewedSignatures(state.viewedByScope, viewedScopeKey),
   );
@@ -482,6 +488,7 @@ export default function DiffPanel({
       fromTurnCount: selectedCheckpointRange?.fromTurnCount ?? null,
       toTurnCount: selectedCheckpointRange?.toTurnCount ?? null,
       ignoreWhitespace: diffIgnoreWhitespace,
+      fullContext: wantsFullContext,
       cacheScope: selectedTurn ? `turn:${selectedTurn.turnId}` : null,
     },
     { enabled: isGitRepo && selectedTurn !== undefined },
@@ -497,9 +504,7 @@ export default function DiffPanel({
               ? { preferRemoteBaseRef: true }
               : {}),
             ignoreWhitespace: diffIgnoreWhitespace,
-            ...(focusedFilePath !== null || expandedDiffFilePaths.size > 0
-              ? { fullContext: true }
-              : {}),
+            ...(wantsFullContext ? { fullContext: true } : {}),
           },
         })
       : null,
@@ -520,9 +525,7 @@ export default function DiffPanel({
               ? { preferRemoteBaseRef: true }
               : {}),
             ignoreWhitespace: diffIgnoreWhitespace,
-            ...(focusedFilePath !== null || expandedDiffFilePaths.size > 0
-              ? { fullContext: true }
-              : {}),
+            ...(wantsFullContext ? { fullContext: true } : {}),
           },
         })
       : null,
@@ -651,10 +654,9 @@ export default function DiffPanel({
     () =>
       getRenderablePatch(selectedPatch, `diff-panel:${resolvedTheme}`, {
         compactPartialHunkOffsets: selectedTurnId === null,
-        expandableFullContext:
-          selectedTurnId === null && (focusedFilePath !== null || expandedDiffFilePaths.size > 0),
+        expandableFullContext: wantsFullContext,
       }),
-    [expandedDiffFilePaths.size, focusedFilePath, resolvedTheme, selectedPatch, selectedTurnId],
+    [resolvedTheme, selectedPatch, selectedTurnId, wantsFullContext],
   );
   const renderableFiles = useMemo(() => {
     if (!renderablePatch || renderablePatch.kind !== "files") {
@@ -1250,6 +1252,32 @@ export default function DiffPanel({
               {diffIgnoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"}
             </TooltipPopup>
           </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  aria-label={
+                    expandUnchanged ? "Collapse unchanged lines" : "Expand unchanged lines"
+                  }
+                  variant="outline"
+                  size="xs"
+                  pressed={expandUnchanged}
+                  onPressedChange={(pressed) => {
+                    setExpandUnchanged(Boolean(pressed));
+                  }}
+                />
+              }
+            >
+              {expandUnchanged ? (
+                <FoldVerticalIcon className="size-3" />
+              ) : (
+                <UnfoldVerticalIcon className="size-3" />
+              )}
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {expandUnchanged ? "Collapse unchanged lines" : "Expand unchanged lines"}
+            </TooltipPopup>
+          </Tooltip>
           {focusedFile ? (
             <Tooltip>
               <TooltipTrigger
@@ -1357,7 +1385,9 @@ export default function DiffPanel({
                   {/* CodeView measures wrapped rows after rendering. Disable native scroll
                       anchoring so it does not compete with Pierre's viewport correction. */}
                   <AnnotatableCodeView
-                    key={`${collapseScopeKey ?? reviewSectionId}:${focusedFilePath ?? "all"}`}
+                    // Remount on the unchanged-lines toggle so collapsing also folds
+                    // gaps the user expanded one at a time.
+                    key={`${collapseScopeKey ?? reviewSectionId}:${focusedFilePath ?? "all"}:${expandUnchanged ? "expanded" : "folded"}`}
                     className="diff-render-surface h-full min-h-0 overflow-auto [overflow-anchor:none]"
                     files={displayedCodeViewFiles}
                     sectionId={reviewSectionId}
@@ -1431,6 +1461,7 @@ export default function DiffPanel({
                       unsafeCSS: DIFF_PANEL_UNSAFE_CSS,
                       stickyHeaders: true,
                       hunkSeparators: "line-info",
+                      expandUnchanged,
                       // Keep Pierre's virtual window fine-grained even for wrapped rows.
                       // Larger chunks leave the rendered content stationary until scrolling
                       // crosses a chunk boundary, then visibly jump to catch up.

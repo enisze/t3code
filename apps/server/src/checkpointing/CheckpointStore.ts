@@ -39,6 +39,8 @@ export interface DiffCheckpointsInput {
   readonly toCheckpointRef: CheckpointRef;
   readonly fallbackFromToHead?: boolean;
   readonly ignoreWhitespace: boolean;
+  /** Emit every unchanged line so clients can expand the gaps between hunks. */
+  readonly fullContext?: boolean;
   readonly format?: "patch" | "numstat";
 }
 
