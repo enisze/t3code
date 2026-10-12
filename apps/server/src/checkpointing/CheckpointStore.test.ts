@@ -180,6 +180,32 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
       }),
     );
 
+    it.effect("includes unchanged lines only when full context is requested", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("thread-checkpoint-store-full-context");
+        const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 0);
+        const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
+        const lines = Array.from({ length: 20 }, (_, index) => `line ${index + 1}`);
+
+        yield* writeTextFile(NodePath.join(tmp, "notes.txt"), `${lines.join("\n")}\n`);
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: fromCheckpointRef });
+        lines[19] = "line 20 changed";
+        yield* writeTextFile(NodePath.join(tmp, "notes.txt"), `${lines.join("\n")}\n`);
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: toCheckpointRef });
+
+        const input = { cwd: tmp, fromCheckpointRef, toCheckpointRef, ignoreWhitespace: false };
+        const compactDiff = yield* checkpointStore.diffCheckpoints(input);
+        const fullDiff = yield* checkpointStore.diffCheckpoints({ ...input, fullContext: true });
+
+        expect(compactDiff).not.toContain(" line 1\n");
+        expect(fullDiff).toContain("@@ -1,20 +1,20 @@");
+        expect(fullDiff).toContain(" line 1\n");
+      }),
+    );
+
     it.effect("can hide indentation churn when changes wrap existing lines", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();

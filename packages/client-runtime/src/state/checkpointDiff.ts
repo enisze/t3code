@@ -21,5 +21,7 @@ export interface CheckpointDiffTarget {
   readonly fromTurnCount: number | null;
   readonly toTurnCount: number | null;
   readonly ignoreWhitespace: boolean;
+  /** Request complete file contents so unchanged regions can be expanded. */
+  readonly fullContext?: boolean;
   readonly cacheScope?: string | null;
 }
