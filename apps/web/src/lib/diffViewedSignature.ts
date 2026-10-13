@@ -1,6 +1,6 @@
 import type { FileDiffMetadata } from "@pierre/diffs/types";
 
-import { fnv1a32 } from "./diffRendering";
+import { fnv1a32, getRenderablePatch, resolveFileDiffPath } from "./diffRendering";
 
 const SECONDARY_HASH_SEED = 0x9e3779b9;
 const SECONDARY_HASH_MULTIPLIER = 0x85ebca6b;
@@ -46,4 +46,20 @@ export function buildDiffViewedSignature(fileDiff: FileDiffMetadata): string {
   const primary = fnv1a32(body).toString(36);
   const secondary = fnv1a32(body, SECONDARY_HASH_SEED, SECONDARY_HASH_MULTIPLIER).toString(36);
   return `${body.length.toString(36)}:${primary}:${secondary}`;
+}
+
+/**
+ * Signs every file in a Git patch, keyed by path. Sign the patch as Git wrote
+ * it, never files rebuilt for rendering: the file view re-diffs full-context
+ * patches client-side (`makeFullContextPatchExpandable`), which can align the
+ * same edit differently than Git did, so the file view and the navigator would
+ * disagree about whether a file is still viewed.
+ */
+export function buildDiffViewedSignatures(patch: string | undefined): Map<string, string> {
+  const parsed = getRenderablePatch(patch, "diff-viewed");
+  return new Map(
+    parsed?.kind === "files"
+      ? parsed.files.map((file) => [resolveFileDiffPath(file), buildDiffViewedSignature(file)])
+      : [],
+  );
 }
