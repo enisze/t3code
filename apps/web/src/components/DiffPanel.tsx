@@ -40,7 +40,7 @@ import {
   getRenderablePatch,
   resolveFileDiffPath,
 } from "../lib/diffRendering";
-import { buildDiffViewedSignature } from "../lib/diffViewedSignature";
+import { buildDiffViewedSignature, buildDiffViewedSignatures } from "../lib/diffViewedSignature";
 import { useDiffThemeName } from "../hooks/useDiffThemeName";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useProject, useThread, useThreadShell } from "../state/entities";
@@ -669,25 +669,20 @@ export default function DiffPanel({
       }),
     );
   }, [renderablePatch]);
-  const sharedGitViewedSignatures = useMemo(() => {
-    // Match viewedScopeId: a selected turn (even one still resolving) never uses
-    // the shared working-tree/branch signatures.
-    if (selectedTurnId !== null || selectedGitScope === "unstaged") return null;
-    const signaturesByKind = new Map<ReviewDiffPreviewSourceKind, Map<string, string>>();
-    for (const kind of ["branch-range", "working-tree-all"] as const) {
-      const source = branchDiffPreview.data?.sources.find((candidate) => candidate.kind === kind);
-      const patch = source ? getRenderablePatch(source.diff, `diff-viewed:${kind}`) : null;
-      signaturesByKind.set(
-        kind,
-        new Map(
-          patch?.kind === "files"
-            ? patch.files.map((file) => [resolveFileDiffPath(file), buildDiffViewedSignature(file)])
-            : [],
-        ),
-      );
+  // Signed from Git's patches rather than `renderableFiles`, which the file view
+  // rebuilds client-side; see buildDiffViewedSignatures.
+  const viewedSignatureByPath = useMemo(() => {
+    // Match viewedScopeId: a selected turn (even one still resolving) and the
+    // uncommitted scope sign their own patch.
+    if (selectedTurnId !== null || selectedGitScope === "unstaged") {
+      return buildDiffViewedSignatures(selectedPatch);
     }
-    const branchSignatures = signaturesByKind.get("branch-range")!;
-    const workingTreeSignatures = signaturesByKind.get("working-tree-all")!;
+    const sourceSignatures = (kind: ReviewDiffPreviewSourceKind) =>
+      buildDiffViewedSignatures(
+        branchDiffPreview.data?.sources.find((candidate) => candidate.kind === kind)?.diff,
+      );
+    const branchSignatures = sourceSignatures("branch-range");
+    const workingTreeSignatures = sourceSignatures("working-tree-all");
     const paths = new Set([...branchSignatures.keys(), ...workingTreeSignatures.keys()]);
     return new Map(
       [...paths].map((path) => [
@@ -695,14 +690,15 @@ export default function DiffPanel({
         `${branchSignatures.get(path) ?? ""}:${workingTreeSignatures.get(path) ?? ""}`,
       ]),
     );
-  }, [branchDiffPreview.data?.sources, selectedGitScope, selectedTurnId]);
+  }, [branchDiffPreview.data?.sources, selectedGitScope, selectedPatch, selectedTurnId]);
   const codeViewFiles = useMemo(
     () =>
       renderableFiles.map((fileDiff) => {
         const fileKey = buildFileDiffRenderKey(fileDiff);
         const filePath = resolveFileDiffPath(fileDiff);
+        // Versions the rendered item only; viewed state uses viewedSignatureByPath.
         const signature = buildDiffViewedSignature(fileDiff);
-        const viewedSignature = sharedGitViewedSignatures?.get(filePath) ?? signature;
+        const viewedSignature = viewedSignatureByPath.get(filePath);
         return {
           fileDiff,
           filePath,
@@ -710,29 +706,21 @@ export default function DiffPanel({
           signature,
           // Viewed only counts while the file's content is unchanged since it
           // was marked; an edit clears the mark ("the check is gone").
-          viewed: viewedSignatures[filePath] === viewedSignature,
-          viewedSignature,
+          viewed: viewedSignature !== undefined && viewedSignatures[filePath] === viewedSignature,
           // Files default to collapsed; only explicit expansion opens them.
           collapsed: !expandedDiffFilePaths.has(filePath),
         };
       }),
-    [expandedDiffFilePaths, renderableFiles, sharedGitViewedSignatures, viewedSignatures],
+    [expandedDiffFilePaths, renderableFiles, viewedSignatureByPath, viewedSignatures],
   );
   const viewedFileKeySet = useMemo(
     () => new Set(codeViewFiles.filter((file) => file.viewed).map((file) => file.fileKey)),
     [codeViewFiles],
   );
-  const signatureByFilePath = useMemo(
-    () => new Map(codeViewFiles.map((file) => [file.filePath, file.viewedSignature])),
-    [codeViewFiles],
-  );
-  const currentViewedSignatures = sharedGitViewedSignatures ?? signatureByFilePath;
   useEffect(() => {
     if (!viewedScopeKey || !hasResolvedPatch) return;
-    useDiffViewedStore
-      .getState()
-      .reconcileViewedSignatures(viewedScopeKey, currentViewedSignatures);
-  }, [currentViewedSignatures, hasResolvedPatch, viewedScopeKey]);
+    useDiffViewedStore.getState().reconcileViewedSignatures(viewedScopeKey, viewedSignatureByPath);
+  }, [hasResolvedPatch, viewedScopeKey, viewedSignatureByPath]);
   const focusedFile = useMemo(
     () =>
       focusedFilePath
@@ -853,7 +841,7 @@ export default function DiffPanel({
   const setFileViewed = useCallback(
     (filePath: string, viewed: boolean) => {
       if (!viewedScopeKey) return;
-      const signature = signatureByFilePath.get(filePath);
+      const signature = viewedSignatureByPath.get(filePath);
       if (signature === undefined) return;
       useDiffViewedStore.getState().setFileViewed(viewedScopeKey, filePath, signature, viewed);
       // Collapse a file when it is marked viewed, and expand it when unmarked.
@@ -862,30 +850,18 @@ export default function DiffPanel({
       // review flows file-to-file without hunting the list. Wraps around, and
       // stops (stays put) once everything is viewed.
       if (viewed && onOpenFileDiff) {
-        const order = codeViewFiles.map((file) => file.filePath);
-        const currentIndex = order.indexOf(filePath);
+        const currentIndex = codeViewFiles.findIndex((file) => file.filePath === filePath);
         if (currentIndex >= 0) {
-          const isViewed = (candidate: string) => {
-            if (candidate === filePath) return true;
-            const candidateSignature = signatureByFilePath.get(candidate);
-            return (
-              candidateSignature !== undefined && viewedSignatures[candidate] === candidateSignature
-            );
-          };
-          const rotated = [...order.slice(currentIndex + 1), ...order.slice(0, currentIndex)];
-          const nextFilePath = rotated.find((candidate) => !isViewed(candidate));
-          if (nextFilePath) onOpenFileDiff(nextFilePath);
+          const rotated = [
+            ...codeViewFiles.slice(currentIndex + 1),
+            ...codeViewFiles.slice(0, currentIndex),
+          ];
+          const nextFile = rotated.find((file) => !file.viewed);
+          if (nextFile) onOpenFileDiff(nextFile.filePath);
         }
       }
     },
-    [
-      codeViewFiles,
-      onOpenFileDiff,
-      setDiffFileExpanded,
-      signatureByFilePath,
-      viewedScopeKey,
-      viewedSignatures,
-    ],
+    [codeViewFiles, onOpenFileDiff, setDiffFileExpanded, viewedScopeKey, viewedSignatureByPath],
   );
 
   const selectTurn = (turnId: TurnId) => {

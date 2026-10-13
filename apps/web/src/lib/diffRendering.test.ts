@@ -8,7 +8,6 @@ import {
   getRenderablePatch,
   makeFullContextPatchExpandable,
 } from "./diffRendering";
-import { buildDiffViewedSignature } from "./diffViewedSignature";
 
 describe("buildPatchCacheKey", () => {
   it("returns a stable cache key for identical content", () => {
@@ -59,7 +58,7 @@ describe("getRenderablePatch", () => {
     expect(full.hunks[1]?.collapsedBefore).toBeGreaterThan(0);
   });
 
-  it("preserves viewed identity and line stats across a full-context rebuild", () => {
+  it("preserves Git metadata and line stats across a full-context rebuild", () => {
     const beforeLines = Array.from({ length: 100 }, (_, index) => `line ${index + 1}\n`);
     const afterLines = [...beforeLines];
     afterLines.splice(30, 1);
@@ -85,7 +84,6 @@ describe("getRenderablePatch", () => {
     const rebuilt = makeFullContextPatchExpandable(full);
 
     expect(rebuilt.mode).toBe("100644");
-    expect(buildDiffViewedSignature(rebuilt)).toBe(buildDiffViewedSignature(compact));
     expect(getDiffLineStat([rebuilt])).toEqual(getDiffLineStat([compact]));
     expect(getDiffLineStat([rebuilt])).toEqual({ additions: 2, deletions: 2 });
   });
