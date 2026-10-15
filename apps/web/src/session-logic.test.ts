@@ -12,6 +12,7 @@ import {
   deriveActivePlanState,
   derivePendingApprovals,
   derivePendingUserInputs,
+  deriveDiffShownEntries,
   deriveTimelineEntries,
   deriveWorkLogEntries,
   findLatestProposedPlan,
@@ -1684,5 +1685,34 @@ describe("deriveActiveWorkStartedAt", () => {
         "2026-02-27T21:11:00.000Z",
       ),
     ).toBe("2026-02-27T21:11:00.000Z");
+  });
+});
+
+describe("deriveDiffShownEntries", () => {
+  it("turns show_diff activities into diff timeline rows instead of work rows", () => {
+    const activities = [
+      makeActivity({
+        id: "diff-1",
+        kind: "diff.shown",
+        tone: "info",
+        summary: "Showed diff",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        payload: { scope: "unstaged", paths: ["src/app.ts"] },
+      }),
+      makeActivity({ id: "diff-bad", kind: "diff.shown", payload: { scope: "nope" } }),
+    ];
+
+    expect(deriveWorkLogEntries(activities)).toEqual([]);
+    const diffEntries = deriveDiffShownEntries(activities);
+    expect(diffEntries).toEqual([
+      {
+        id: "diff-1",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        diff: { scope: "unstaged", paths: ["src/app.ts"] },
+      },
+    ]);
+    expect(deriveTimelineEntries([], [], [], diffEntries)).toMatchObject([
+      { id: "diff-1", kind: "diff" },
+    ]);
   });
 });

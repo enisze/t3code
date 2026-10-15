@@ -77,6 +77,7 @@ const T3_MCP_TOOL_LABELS: Record<
   t3_thread_interrupt: ["Interrupt", "Interrupting", "Interrupted", "a T3 thread"],
   t3_worktree_handoff: ["Hand off", "Handing off", "Handed off", "thread to a git worktree"],
   t3_worktree_status: ["Get", "Getting", "Got", "thread worktree status"],
+  show_diff: ["Show", "Showing", "Showed", "the diff in chat"],
   preview_status: ["Get", "Getting", "Got", "preview browser status"],
   preview_open: ["Open", "Opening", "Opened", "a page in the preview browser"],
   preview_navigate: ["Navigate", "Navigating", "Navigated", "the preview browser"],

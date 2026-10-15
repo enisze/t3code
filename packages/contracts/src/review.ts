@@ -59,3 +59,36 @@ export type ReviewDiffPreviewResult = typeof ReviewDiffPreviewResult.Type;
 
 export const ReviewDiffPreviewError = Schema.Union([VcsError, GitCommandError]);
 export type ReviewDiffPreviewError = typeof ReviewDiffPreviewError.Type;
+
+/**
+ * Which changes an inline chat diff shows. Mirrors the diff panel's git
+ * scopes: `all` is every change since the fork point (committed and
+ * uncommitted), `unstaged` the local dirty diff, `branch` the committed range.
+ */
+export const ChatDiffScope = Schema.Literals(["all", "unstaged", "branch"]);
+export type ChatDiffScope = typeof ChatDiffScope.Type;
+
+export const ShowDiffInput = Schema.Struct({
+  scope: Schema.optionalKey(
+    ChatDiffScope.annotate({
+      description:
+        "Which changes to show: 'all' (default) is every change on this branch since it forked, committed and uncommitted; 'unstaged' is only uncommitted local changes; 'branch' is only committed changes.",
+    }),
+  ),
+  paths: Schema.optionalKey(
+    Schema.Array(TrimmedNonEmptyString).annotate({
+      description:
+        "Optional workspace-relative file or directory paths to limit the diff to. Omit to show every changed file.",
+    }),
+  ),
+});
+export type ShowDiffInput = typeof ShowDiffInput.Type;
+
+/** Thread activity kind a client renders as an inline, live diff card. */
+export const DIFF_SHOWN_ACTIVITY_KIND = "diff.shown";
+
+export const DiffShownActivityPayload = Schema.Struct({
+  scope: ChatDiffScope,
+  paths: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+});
+export type DiffShownActivityPayload = typeof DiffShownActivityPayload.Type;

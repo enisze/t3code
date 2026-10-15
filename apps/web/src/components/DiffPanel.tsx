@@ -51,6 +51,7 @@ import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { DiffNavigatorFileList, type DiffNavigatorFile } from "./chat/ChangedFilesTree";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
+import { CHAT_DIFF_SCOPE_LABELS, CHAT_DIFF_SCOPE_SOURCE_KIND } from "./chat/ChatDiffCard.logic";
 import { AnnotatableCodeView } from "./diffs/AnnotatableCodeView";
 import { Button } from "./ui/button";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
@@ -84,20 +85,6 @@ import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices
 type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
-
-// The dropdown's three git scopes. "Working tree" is the combined view (every
-// change since the fork point, committed *and* uncommitted); "Uncommitted
-// changes" is the local dirty diff; "Branch changes" is the committed range.
-const GIT_SCOPE_LABELS: Record<GitScope, string> = {
-  all: "Working tree",
-  unstaged: "Uncommitted changes",
-  branch: "Branch changes",
-};
-const GIT_SCOPE_SOURCE_KIND: Record<GitScope, ReviewDiffPreviewSourceKind> = {
-  all: "working-tree-all",
-  unstaged: "working-tree",
-  branch: "branch-range",
-};
 
 /**
  * Tracks which files the user has explicitly expanded, keyed by file path so
@@ -437,7 +424,7 @@ export default function DiffPanel({
   const latestTurn = orderedTurnDiffSummaries[0];
   const selectedScopeLabel =
     selectedTurnId === null
-      ? GIT_SCOPE_LABELS[selectedGitScope]
+      ? CHAT_DIFF_SCOPE_LABELS[selectedGitScope]
       : turnOwnerThreadRef === null && selectedTurn?.turnId === latestTurn?.turnId
         ? "Latest turn"
         : `Turn ${selectedCheckpointTurnCount ?? "?"}`;
@@ -470,7 +457,7 @@ export default function DiffPanel({
   );
   const reviewSectionTitle = selectedTurn
     ? `Turn ${selectedCheckpointTurnCount ?? "?"}`
-    : GIT_SCOPE_LABELS[selectedGitScope];
+    : CHAT_DIFF_SCOPE_LABELS[selectedGitScope];
   const selectedCheckpointRange = useMemo(
     () =>
       typeof selectedCheckpointTurnCount === "number"
@@ -580,7 +567,7 @@ export default function DiffPanel({
     refreshGitStatus();
   }, [latestCompletedTurnMarker, refreshBranchDiffPreview, refreshGitStatus]);
   const selectedGitSource = branchDiffPreview.data?.sources.find(
-    (source) => source.kind === GIT_SCOPE_SOURCE_KIND[selectedGitScope],
+    (source) => source.kind === CHAT_DIFF_SCOPE_SOURCE_KIND[selectedGitScope],
   );
   const localBranchRefs = useEnvironmentQuery(
     selectedTurnId === null &&
