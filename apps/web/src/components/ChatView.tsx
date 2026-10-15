@@ -14,6 +14,7 @@ import {
   type ScopedThreadRef,
   type ThreadId,
   type TurnId,
+  type ChatDiffScope,
   type KeybindingCommand,
   OrchestrationThreadActivity,
   ProviderInteractionMode,
@@ -76,6 +77,7 @@ import {
   derivePendingApprovals,
   derivePendingUserInputs,
   derivePhase,
+  deriveDiffShownEntries,
   deriveTimelineEntries,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
@@ -2111,6 +2113,10 @@ function ChatViewContent(props: ChatViewProps) {
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
+  const diffShownEntries = useMemo(
+    () => deriveDiffShownEntries(threadActivities),
+    [threadActivities],
+  );
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(threadActivities),
     [threadActivities],
@@ -2447,8 +2453,13 @@ function ChatViewContent(props: ChatViewProps) {
   }, [attachmentPreviewHandoffByMessageId, displayServerMessages, optimisticUserMessages]);
   const timelineEntries = useMemo(
     () =>
-      deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
-    [activeThread?.proposedPlans, timelineMessages, workLogEntries],
+      deriveTimelineEntries(
+        timelineMessages,
+        activeThread?.proposedPlans ?? [],
+        workLogEntries,
+        diffShownEntries,
+      ),
+    [activeThread?.proposedPlans, diffShownEntries, timelineMessages, workLogEntries],
   );
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
@@ -5837,6 +5848,19 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [workspaceThreadRef, activeThreadRef, isServerThread, onDiffPanelOpen, contentTabsWorktreeKey],
   );
+  const onOpenGitDiff = useCallback(
+    (scope: ChatDiffScope, filePath?: string) => {
+      if (!isServerThread || !workspaceThreadRef) return;
+      useDiffPanelStore.getState().selectGitScope(workspaceThreadRef, scope);
+      if (filePath && contentTabsWorktreeKey) {
+        useWorkspaceContentTabsStore.getState().openFileDiff(contentTabsWorktreeKey, filePath);
+      } else {
+        useRightPanelStore.getState().open(workspaceThreadRef, "diff");
+      }
+      onDiffPanelOpen?.();
+    },
+    [workspaceThreadRef, isServerThread, onDiffPanelOpen, contentTabsWorktreeKey],
+  );
   // Both the Map and the revert handler are read from refs at call-time so
   // the callback reference is fully stable and never busts context identity.
   const revertTurnCountRef = useRef(revertTurnCountByUserMessageId);
@@ -6231,6 +6255,7 @@ function ChatViewContent(props: ChatViewProps) {
                 activeThreadEnvironmentId={activeThread.environmentId}
                 routeThreadKey={routeThreadKey}
                 onOpenTurnDiff={onOpenTurnDiff}
+                onOpenGitDiff={onOpenGitDiff}
                 revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
                 onRevertUserMessage={onRevertUserMessage}
                 onStartNewChatFromMessage={onStartNewChatFromMessage}

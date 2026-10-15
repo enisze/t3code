@@ -13,6 +13,8 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import { DiffToolkitHandlersLive } from "./toolkits/diff/handlers.ts";
+import { DiffToolkit } from "./toolkits/diff/tools.ts";
 import {
   PreviewSnapshotToolkitHandlersLive,
   PreviewStandardToolkitHandlersLive,
@@ -222,4 +224,11 @@ const McpTransportLive = McpServer.layerHttp({
   protocols: [McpProtocol.v2025_06_18],
 }).pipe(Layer.provide(McpAuthMiddlewareLive));
 
-export const layer = PreviewToolkitRegistrationLive.pipe(Layer.provideMerge(McpTransportLive));
+const DiffToolkitRegistrationLive = McpServer.toolkit(DiffToolkit).pipe(
+  Layer.provide(DiffToolkitHandlersLive),
+);
+
+export const layer = Layer.mergeAll(
+  PreviewToolkitRegistrationLive,
+  DiffToolkitRegistrationLive,
+).pipe(Layer.provideMerge(McpTransportLive));

@@ -7,7 +7,12 @@ import {
   type WorkLogEntry,
 } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
-import { type MessageId, type OrchestrationLatestTurn, type TurnId } from "@t3tools/contracts";
+import {
+  type DiffShownActivityPayload,
+  type MessageId,
+  type OrchestrationLatestTurn,
+  type TurnId,
+} from "@t3tools/contracts";
 
 import { commandProgramName } from "@t3tools/client-runtime/work-log/command-label";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
@@ -188,6 +193,12 @@ export type MessagesTimelineRow =
       id: string;
       createdAt: string;
       proposedPlan: ProposedPlan;
+    }
+  | {
+      kind: "diff";
+      id: string;
+      createdAt: string;
+      diff: DiffShownActivityPayload;
     }
   | { kind: "working"; id: string; createdAt: string | null };
 
@@ -541,6 +552,16 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    if (timelineEntry.kind === "diff") {
+      nextRows.push({
+        kind: "diff",
+        id: timelineEntry.id,
+        createdAt: timelineEntry.createdAt,
+        diff: timelineEntry.diff,
+      });
+      continue;
+    }
+
     const assistantTurnStillInProgress =
       timelineEntry.message.role === "assistant" &&
       unsettledTurnId !== null &&
@@ -623,6 +644,10 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "proposed-plan":
       return a.proposedPlan === (b as typeof a).proposedPlan;
+
+    // Activities are append-only, so an id never changes what it shows.
+    case "diff":
+      return true;
 
     case "work":
       return Equal.equals(a.groupedEntries, (b as typeof a).groupedEntries);

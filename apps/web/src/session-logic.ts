@@ -1,5 +1,6 @@
 import * as Option from "effect/Option";
 import * as Arr from "effect/Array";
+import * as Schema from "effect/Schema";
 import { shallow } from "zustand/vanilla/shallow";
 import {
   commandDetailRepeatsCommand,
@@ -7,6 +8,8 @@ import {
 } from "@t3tools/client-runtime/work-log/presentation";
 import {
   ApprovalRequestId,
+  DIFF_SHOWN_ACTIVITY_KIND,
+  DiffShownActivityPayload,
   isToolLifecycleItemType,
   type OrchestrationLatestTurn,
   type OrchestrationThreadActivity,
@@ -142,7 +145,34 @@ export type TimelineEntry =
       kind: "work";
       createdAt: string;
       entry: WorkLogEntry;
+    }
+  | {
+      id: string;
+      kind: "diff";
+      createdAt: string;
+      diff: DiffShownActivityPayload;
     };
+
+/** An agent's `show_diff` call, rendered as a live inline diff card. */
+export interface DiffShownEntry {
+  readonly id: string;
+  readonly createdAt: string;
+  readonly diff: DiffShownActivityPayload;
+}
+
+const decodeDiffShownPayload = Schema.decodeUnknownOption(DiffShownActivityPayload);
+
+export function deriveDiffShownEntries(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): DiffShownEntry[] {
+  return activities.flatMap((activity) => {
+    if (activity.kind !== DIFF_SHOWN_ACTIVITY_KIND) return [];
+    const diff = decodeDiffShownPayload(activity.payload);
+    return Option.isSome(diff)
+      ? [{ id: activity.id, createdAt: activity.createdAt, diff: diff.value }]
+      : [];
+  });
+}
 
 export function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
   if (entry.tone === "tool" || entry.tone === "thinking" || entry.tone === "error") {
@@ -638,6 +668,8 @@ export function deriveWorkLogEntries(
     if (activity.kind === "tool.started") continue;
     if (activity.kind === "task.started") continue;
     if (activity.kind === "context-window.updated") continue;
+    // Rendered as its own inline diff card; see deriveDiffShownEntries.
+    if (activity.kind === DIFF_SHOWN_ACTIVITY_KIND) continue;
     if (activity.summary === "Checkpoint captured") continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
     entries.push(toDerivedWorkLogEntry(activity));
@@ -1384,6 +1416,7 @@ export function deriveTimelineEntries(
   messages: ReadonlyArray<ChatMessage>,
   proposedPlans: ReadonlyArray<ProposedPlan>,
   workEntries: ReadonlyArray<WorkLogEntry>,
+  diffEntries: ReadonlyArray<DiffShownEntry> = [],
 ): TimelineEntry[] {
   const messageRows: TimelineEntry[] = messages.map((message) => ({
     id: message.id,
@@ -1403,7 +1436,13 @@ export function deriveTimelineEntries(
     createdAt: entry.createdAt,
     entry,
   }));
-  return [...messageRows, ...proposedPlanRows, ...workRows].toSorted((a, b) =>
+  const diffRows: TimelineEntry[] = diffEntries.map((entry) => ({
+    id: entry.id,
+    kind: "diff",
+    createdAt: entry.createdAt,
+    diff: entry.diff,
+  }));
+  return [...messageRows, ...proposedPlanRows, ...workRows, ...diffRows].toSorted((a, b) =>
     a.createdAt.localeCompare(b.createdAt),
   );
 }

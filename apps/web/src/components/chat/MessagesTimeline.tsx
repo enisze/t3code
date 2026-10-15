@@ -1,4 +1,5 @@
 import {
+  type ChatDiffScope,
   type EnvironmentId,
   type MessageId,
   type ScopedThreadRef,
@@ -59,6 +60,7 @@ import {
 import { Button } from "../ui/button";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
+import { ChatDiffCard } from "./ChatDiffCard";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { shouldAutoExpandChangedFiles } from "./changedFilesPresentation";
 import { MessageCopyButton } from "./MessageCopyButton";
@@ -132,6 +134,7 @@ interface TimelineRowSharedState {
   onStartNewChatFromMessage: (message: TimelineMessage) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onOpenGitDiff: (scope: ChatDiffScope, filePath?: string) => void;
   onToggleTurnFold: (turnId: TurnId) => void;
   onToggleWorkGroup: (groupId: string, anchorElement?: HTMLElement) => void;
 }
@@ -167,6 +170,8 @@ interface MessagesTimelineProps {
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
   routeThreadKey: string;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  /** Opens the diff panel (or a file's diff tab) on a git scope. */
+  onOpenGitDiff: (scope: ChatDiffScope, filePath?: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
   /** Opens a fresh draft seeded with a past user message's text and attachments. */
@@ -201,6 +206,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   turnDiffSummaryByAssistantMessageId,
   routeThreadKey,
   onOpenTurnDiff,
+  onOpenGitDiff,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
   onStartNewChatFromMessage,
@@ -428,6 +434,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onStartNewChatFromMessage,
       onImageExpand,
       onOpenTurnDiff,
+      onOpenGitDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
     }),
@@ -443,6 +450,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onStartNewChatFromMessage,
       onImageExpand,
       onOpenTurnDiff,
+      onOpenGitDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
     ],
@@ -888,6 +896,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
         <AssistantTimelineRow row={row} />
       ) : null}
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
+      {row.kind === "diff" ? <DiffTimelineRow row={row} /> : null}
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
     </div>
   );
@@ -1173,6 +1182,22 @@ function ProposedPlanTimelineRow({
         threadRef={ctx.threadRef ?? undefined}
         cwd={ctx.markdownCwd}
         workspaceRoot={ctx.workspaceRoot}
+      />
+    </div>
+  );
+}
+
+function DiffTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "diff" }> }) {
+  const ctx = use(TimelineRowCtx);
+  if (!ctx.markdownCwd) return null;
+  return (
+    <div className="min-w-0 px-1 py-0.5">
+      <ChatDiffCard
+        environmentId={ctx.activeThreadEnvironmentId}
+        cwd={ctx.markdownCwd}
+        scope={row.diff.scope}
+        paths={row.diff.paths}
+        onOpenGitDiff={ctx.onOpenGitDiff}
       />
     </div>
   );
