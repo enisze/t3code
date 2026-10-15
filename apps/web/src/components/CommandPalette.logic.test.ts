@@ -7,6 +7,7 @@ import {
   buildThreadActionItems,
   enumerateCommandPaletteItems,
   filterCommandPaletteGroups,
+  filterPinnedBrowseEntries,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
 
@@ -292,5 +293,41 @@ describe("buildBrowseGroups", () => {
     finishNavigation?.();
     await action;
     expect(actionSettled).toBe(true);
+  });
+});
+
+describe("filterPinnedBrowseEntries", () => {
+  const entries = [
+    { name: "repo", fullPath: "/projects/repo" },
+    { name: "work", fullPath: "/projects/work" },
+  ];
+
+  it("shows sibling folders without losing an existing pinned destination", () => {
+    expect(
+      filterPinnedBrowseEntries({
+        browseEntries: entries,
+        filterQuery: "repo",
+        pinnedDirectoryName: "repo",
+        caseSensitive: true,
+      }),
+    ).toEqual({ visibleEntries: entries, exactEntry: entries[0] });
+  });
+
+  it("matches an existing pinned destination without Windows casing", () => {
+    const windowsEntries = [
+      { name: "Repo", fullPath: "C:\\projects\\Repo" },
+      { name: "work", fullPath: "C:\\projects\\work" },
+    ];
+    expect(
+      filterPinnedBrowseEntries({
+        browseEntries: windowsEntries,
+        filterQuery: "repo",
+        pinnedDirectoryName: "repo",
+        caseSensitive: false,
+      }),
+    ).toEqual({
+      visibleEntries: windowsEntries,
+      exactEntry: windowsEntries[0],
+    });
   });
 });
