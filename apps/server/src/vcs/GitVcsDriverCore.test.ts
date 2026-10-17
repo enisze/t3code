@@ -222,6 +222,84 @@ it.effect("re-reads origin remote status after cache TTL expiry and bypassed inv
   }).pipe(Effect.provide(TestLayer)),
 );
 
+it.effect("fetches remote branches on a forced ref refresh", () =>
+  Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const cwd = yield* makeTmpDir();
+    const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+    const publisher = yield* makeTmpDir("git-vcs-driver-publisher-");
+    const { initialBranch } = yield* initRepoWithCommit(cwd);
+    yield* git(remote, ["init", "--bare"]);
+    yield* git(cwd, ["remote", "add", "origin", remote]);
+    yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+
+    // A second clone pushes a branch the consumer repo has never fetched.
+    yield* git(publisher, ["clone", remote, "."]);
+    yield* git(publisher, ["push", "origin", "HEAD:refs/heads/claude/pushed-branch"]);
+
+    // No refresh means no fetch, so the pushed branch is invisible.
+    const before = yield* driver.listRefs({ cwd, limit: 100 });
+    assert.isFalse(before.refs.some((ref) => ref.name.endsWith("claude/pushed-branch")));
+
+    // A forced refresh fetches remotes, surfacing it as a remote ref.
+    const after = yield* driver.listRefs({ cwd, refresh: true, limit: 100 });
+    assert.isTrue(
+      after.refs.some((ref) => ref.isRemote && ref.name.endsWith("claude/pushed-branch")),
+    );
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("coalesces remote fetches across forced ref refreshes within the window", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const spawnedArgs = yield* Ref.make<ReadonlyArray<ReadonlyArray<string>>>([]);
+      const countingSpawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (!ChildProcess.isStandardCommand(command)) {
+            return yield* Effect.die("expected a standard Git command");
+          }
+          yield* Ref.update(spawnedArgs, (current) => [...current, command.args]);
+          return yield* delegate.spawn(command);
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, countingSpawner),
+      );
+      const cwd = yield* makeTmpDir();
+      const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+      const runGit = (dir: string, args: ReadonlyArray<string>) =>
+        driver.execute({
+          operation: "GitVcsDriver.test.coalescedFetch",
+          cwd: dir,
+          args,
+          timeoutMs: 10_000,
+        });
+
+      yield* driver.initRepo({ cwd });
+      yield* runGit(cwd, ["config", "user.email", "test@test.com"]);
+      yield* runGit(cwd, ["config", "user.name", "Test"]);
+      yield* writeTextFile(cwd, "README.md", "# test\n");
+      yield* runGit(cwd, ["add", "."]);
+      yield* runGit(cwd, ["commit", "-m", "initial commit"]);
+      const initialBranch = (yield* runGit(cwd, ["branch", "--show-current"])).stdout.trim();
+      yield* runGit(remote, ["init", "--bare"]);
+      yield* runGit(cwd, ["remote", "add", "origin", remote]);
+      yield* runGit(cwd, ["push", "-u", "origin", initialBranch]);
+      yield* Ref.set(spawnedArgs, []);
+
+      // Two forced refreshes inside the coalescing window: only one fetch spawns.
+      yield* driver.listRefs({ cwd, refresh: true, limit: 100 });
+      yield* driver.listRefs({ cwd, refresh: true, limit: 100 });
+
+      const fetchSpawns = (yield* Ref.get(spawnedArgs)).filter(
+        (args) => args.includes("fetch") && args.includes("--all"),
+      );
+      assert.equal(fetchSpawns.length, 1);
+    }),
+  ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
 it.effect("coalesces concurrent ref pages into one repository snapshot", () =>
   Effect.scoped(
     Effect.gen(function* () {
