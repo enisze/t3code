@@ -304,6 +304,17 @@ export function createVcsEnvironmentAtoms<R, E>(
       concurrency: vcsCommandConcurrency,
       onSettled: invalidateRefs,
     }),
+    // Invoked with `{ cwd, refresh: true, limit: 1 }`: the server-side fetch and
+    // snapshot refresh are the point, not the single row it returns. onSettled
+    // bumps the ref cache revision so the visible list atoms re-query and render
+    // branches the fetch pulled in (e.g. an agent's pushed branch).
+    refreshRefs: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:refresh-refs",
+      tag: WS_METHODS.vcsListRefs,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+      onSettled: invalidateRefs,
+    }),
     createWorktree: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:create-worktree",
       tag: WS_METHODS.vcsCreateWorktree,

@@ -83,6 +83,10 @@ const STATUS_DEFAULT_BRANCH_CACHE_TTL = Duration.minutes(5);
 const STATUS_ORIGIN_EXISTS_CACHE_TTL = Duration.minutes(5);
 const LIST_REFS_REFRESH_COALESCE_TTL = Duration.seconds(5);
 const LIST_REFS_REFRESH_FAILURE_COOLDOWN = Duration.seconds(30);
+// A forced ref refresh fetches every remote so branches pushed from elsewhere
+// become visible. Bound the spawn so an unreachable remote cannot hang the
+// refresh; coalescing already keeps this to one fetch per repository per window.
+const LIST_REFS_REFRESH_FETCH_TIMEOUT = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
   GCM_INTERACTIVE: "never",
   GIT_ASKPASS: "",
@@ -1368,6 +1372,43 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ),
       Effect.asVoid,
     );
+  };
+
+  /**
+   * Fetch every remote so the ref snapshot can see branches pushed from another
+   * machine, a cloud agent, or a collaborator. The snapshot reads only local
+   * refs, so without this a pushed branch stays invisible until some unrelated
+   * action happens to fetch it. Best effort throughout: no remotes means no
+   * spawn, and a slow, offline, or unauthenticated remote resolves to void
+   * rather than failing the refresh — listing still returns the local refs.
+   */
+  const fetchAllRemotesForRefs = (gitCommonDir: string): Effect.Effect<void> => {
+    const fetchCwd =
+      path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
+    return Effect.gen(function* () {
+      const remoteNamesResult = yield* executeGit(
+        "GitVcsDriver.fetchAllRemotesForRefs.remoteNames",
+        fetchCwd,
+        ["--git-dir", gitCommonDir, "remote"],
+        { timeoutMs: 5_000, allowNonZeroExit: true },
+      );
+      const remoteNames =
+        remoteNamesResult.exitCode === 0 ? parseRemoteNames(remoteNamesResult.stdout) : [];
+      if (remoteNames.length === 0) {
+        return;
+      }
+      const env = yield* resolveNetworkGitEnv("GitVcsDriver.fetchAllRemotesForRefs", fetchCwd);
+      yield* executeGit(
+        "GitVcsDriver.fetchAllRemotesForRefs",
+        fetchCwd,
+        ["--git-dir", gitCommonDir, "fetch", "--all", "--quiet", "--no-tags"],
+        {
+          env,
+          allowNonZeroExit: true,
+          timeoutMs: Duration.toMillis(LIST_REFS_REFRESH_FETCH_TIMEOUT),
+        },
+      );
+    }).pipe(Effect.ignore);
   };
 
   const resolveRepositoryPathsUncached = Effect.fn("resolveRepositoryPathsUncached")(function* (
@@ -3121,6 +3162,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         Exit.isSuccess(exit) ? LIST_REFS_REFRESH_COALESCE_TTL : LIST_REFS_REFRESH_FAILURE_COOLDOWN,
     },
   );
+  // A forced refresh fetches remotes before re-reading the snapshot so branches
+  // pushed from elsewhere become visible. The fetch is best effort (never fails),
+  // and this cache coalesces it to one per repository per window so repeated
+  // picker opens do not each hit the network. First reads never enter here.
+  const listRefsFetchRemotesCache = yield* Cache.makeWith(
+    (gitCommonDir: string) => fetchAllRemotesForRefs(gitCommonDir),
+    {
+      capacity: LIST_REFS_SNAPSHOT_CACHE_CAPACITY,
+      timeToLive: () => LIST_REFS_REFRESH_COALESCE_TTL,
+    },
+  );
   const resolveListRefsSnapshot = Effect.fn("resolveListRefsSnapshot")(function* (
     gitCommonDir: string,
     refresh: boolean,
@@ -3185,6 +3237,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         };
       }
 
+      if (input.refresh === true) {
+        yield* Cache.get(listRefsFetchRemotesCache, repositoryPaths.gitCommonDir);
+      }
       const snapshot = yield* resolveListRefsSnapshot(
         repositoryPaths.gitCommonDir,
         input.refresh === true,

@@ -39,11 +39,11 @@ export function useSelectedThreadGitState() {
     [selectedThread?.environmentId, selectedThreadProject?.workspaceRoot],
   );
   const selectedThreadBranchState = useBranches(selectedThreadBranchTarget);
+  // Keep remote-only branches: a branch pushed from elsewhere (e.g. a cloud
+  // agent) has no local twin yet, and checkout fetches it on demand. Dedupe only
+  // collapses origin/* that already have a local branch.
   const selectedThreadBranches = useMemo(
-    () =>
-      dedupeRemoteBranchesWithLocalMatches(selectedThreadBranchState.data?.refs ?? []).filter(
-        (branch) => !branch.isRemote,
-      ),
+    () => dedupeRemoteBranchesWithLocalMatches(selectedThreadBranchState.data?.refs ?? []),
     [selectedThreadBranchState.data?.refs],
   );
 

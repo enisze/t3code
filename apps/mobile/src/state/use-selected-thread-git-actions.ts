@@ -31,6 +31,7 @@ export function useSelectedThreadGitActions() {
     reportFailure: false,
   });
   const refreshStatus = useAtomCommand(vcsEnvironment.refreshStatus, { reportFailure: false });
+  const refreshRefs = useAtomCommand(vcsEnvironment.refreshRefs, { reportFailure: false });
   const switchRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
   const createRef = useAtomCommand(vcsEnvironment.createRef, { reportFailure: false });
   const createWorktree = useAtomCommand(vcsEnvironment.createWorktree, { reportFailure: false });
@@ -55,6 +56,17 @@ export function useSelectedThreadGitActions() {
     [selectedThread?.environmentId, selectedThreadGitRootCwd],
   );
   const branchState = useBranches(branchTarget);
+  // Ask the server to fetch remotes before re-reading refs, so branches pushed
+  // from elsewhere (e.g. a cloud agent) show up. Best effort and coalesced
+  // server-side; the branch list re-queries once the snapshot is invalidated.
+  const refreshRefsEnvironmentId = selectedThread?.environmentId ?? null;
+  const triggerRefreshRefs = useCallback(() => {
+    if (refreshRefsEnvironmentId === null || selectedThreadGitRootCwd === null) return;
+    void refreshRefs({
+      environmentId: refreshRefsEnvironmentId,
+      input: { cwd: selectedThreadGitRootCwd, refresh: true, limit: 1 },
+    });
+  }, [refreshRefs, refreshRefsEnvironmentId, selectedThreadGitRootCwd]);
   const updateThreadGitContext = useCallback(
     async (
       thread: NonNullable<typeof selectedThread>,
@@ -165,11 +177,10 @@ export function useSelectedThreadGitActions() {
   );
 
   const refreshSelectedThreadBranches = useCallback(async (): Promise<ReadonlyArray<VcsRef>> => {
+    triggerRefreshRefs();
     branchState.refresh();
-    return dedupeRemoteBranchesWithLocalMatches(branchState.data?.refs ?? []).filter(
-      (branch) => !branch.isRemote,
-    );
-  }, [branchState]);
+    return dedupeRemoteBranchesWithLocalMatches(branchState.data?.refs ?? []);
+  }, [branchState, triggerRefreshRefs]);
 
   const syncSelectedThreadBranchState = useCallback(
     async (input: {
@@ -380,6 +391,7 @@ export function useSelectedThreadGitActions() {
   return {
     refreshSelectedThreadGitStatus,
     refreshSelectedThreadBranches,
+    triggerRefreshRefs,
     onCheckoutSelectedThreadBranch,
     onCreateSelectedThreadBranch,
     onCreateSelectedThreadWorktree,

@@ -127,6 +127,12 @@ export function BranchToolbarBranchSelector({
   const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
     reportFailure: false,
   });
+  // The ref snapshot reads only local refs, so a branch pushed from elsewhere
+  // (e.g. a cloud agent) is invisible until the server fetches. Ask it to on a
+  // forced refresh; server-side coalescing keeps rapid opens cheap.
+  const refreshRefs = useAtomCommand(vcsEnvironment.refreshRefs, {
+    reportFailure: false,
+  });
   // ---------------------------------------------------------------------------
   // Thread / project state (pushed down from parent to colocate with mutation)
   // ---------------------------------------------------------------------------
@@ -388,9 +394,18 @@ export function BranchToolbarBranchSelector({
     [copyBranchName],
   );
 
+  const triggerRefreshRefs = useCallback(() => {
+    if (branchCwd === null) return;
+    void refreshRefs({
+      environmentId,
+      input: { cwd: branchCwd, refresh: true, limit: 1 },
+    });
+  }, [branchCwd, environmentId, refreshRefs]);
+
   const runBranchAction = (action: () => Promise<void>) => {
     startBranchActionTransition(async () => {
       await action();
+      triggerRefreshRefs();
       branchRefState.refresh();
       branchStatusQuery.refresh();
     });
@@ -568,13 +583,18 @@ export function BranchToolbarBranchSelector({
   const branchListScrollElementRef = useRef<HTMLElement | null>(null);
   const highlightedItemValueRef = useRef<string | null>(null);
   const previousBranchListScrollTopRef = useRef<number | null>(null);
-  const handleOpenChange = useCallback((open: boolean) => {
-    previousBranchListScrollTopRef.current = null;
-    setIsBranchMenuOpen(open);
-    if (!open) {
-      setBranchQuery("");
-    }
-  }, []);
+  const handleOpenChange = useCallback(
+    (open: boolean) => {
+      previousBranchListScrollTopRef.current = null;
+      setIsBranchMenuOpen(open);
+      if (open) {
+        triggerRefreshRefs();
+      } else {
+        setBranchQuery("");
+      }
+    },
+    [triggerRefreshRefs],
+  );
 
   const [showTopBranchScrollFade, setShowTopBranchScrollFade] = useState(false);
   const [showBottomBranchScrollFade, setShowBottomBranchScrollFade] = useState(false);
