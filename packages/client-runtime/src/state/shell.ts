@@ -181,7 +181,15 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   const foregroundResubscriptions = Option.match(wakeups, {
     onNone: () => Stream.never,
     onSome: (service) =>
-      service.changes.pipe(Stream.filter(ConnectionWakeups.shouldResubscribeAfterWakeup)),
+      service.changes.pipe(
+        Stream.filterEffect((reason) =>
+          SubscriptionRef.get(state).pipe(
+            Effect.map((current) =>
+              ConnectionWakeups.shouldResubscribeAfterWakeup(reason, Option.isSome(current.error)),
+            ),
+          ),
+        ),
+      ),
   });
 
   yield* setSynchronizing;
@@ -246,6 +254,9 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         };
       }),
       {
+        // A protocol defect parks the stream until the next session; record it
+        // so the shell stops reporting live and a foreground wakeup restarts it.
+        onDefect: (cause) => setStreamError(Cause.squash(cause)),
         onExpectedFailure: (cause) => setStreamError(Cause.squash(cause)),
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,
