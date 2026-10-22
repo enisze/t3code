@@ -35,6 +35,12 @@ client connections and provider-instance rebuilds. Releases are immutable, with 
 selecting the version for new processes. Running processes hold leases on their version. Updates
 and removal must respect those leases instead of replacing executables under a running agent.
 
+Every process a chat session starts carries its thread's
+[process tag](../../apps/server/src/process/threadProcesses.ts), which its children inherit.
+Archiving stops tagged processes that are still running, so a session spawned without the tag
+leaves its dev servers and build workers behind. The tag names the server's environment as well,
+so a server running on copied state never stops another server's processes.
+
 ## Setup must not happen as a health-check side effect
 
 Opening a provider session can start MCP servers, run hooks, or launch a login browser.

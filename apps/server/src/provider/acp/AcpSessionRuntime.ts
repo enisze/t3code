@@ -22,6 +22,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
+import { threadProcessEnv } from "../../process/threadProcesses.ts";
 import {
   collectSessionConfigOptionValues,
   decideToolCallUpdateEmission,
@@ -80,6 +81,8 @@ export interface AcpSpawnInput {
 export interface AcpSessionRuntimeOptions {
   readonly spawn: AcpSpawnInput;
   readonly cwd: string;
+  /** The chat this agent works for; tags its process so archiving stops what it leaves running. */
+  readonly threadId?: string;
   readonly resumeSessionId?: string;
   readonly resumeMethod?: "load" | "resume";
   readonly sessionLoadTimeout?: Duration.Input;
@@ -425,15 +428,19 @@ export const make = (
         ),
       );
 
+    const spawnEnv =
+      options.threadId === undefined
+        ? options.spawn.env
+        : { ...(options.spawn.env ?? process.env), ...threadProcessEnv(options.threadId) };
     const spawnCommand = yield* resolveSpawnCommand(options.spawn.command, options.spawn.args, {
-      ...(options.spawn.env ? { env: options.spawn.env } : {}),
+      ...(spawnEnv ? { env: spawnEnv } : {}),
       extendEnv: options.spawn.extendEnv ?? true,
     });
     const child = yield* spawner
       .spawn(
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
           ...(options.spawn.cwd ? { cwd: options.spawn.cwd } : {}),
-          ...(options.spawn.env ? { env: options.spawn.env } : {}),
+          ...(spawnEnv ? { env: spawnEnv } : {}),
           extendEnv: options.spawn.extendEnv ?? true,
           shell: spawnCommand.shell,
         }),

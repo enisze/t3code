@@ -57,6 +57,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as ServerConfig from "../config.ts";
+import { threadProcessEnv } from "../process/threadProcesses.ts";
 import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
@@ -2197,7 +2198,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             const accountEnv = yield* resolveTerminalAccountEnv(session.cwd, terminalEnv);
             const spawnResult = yield* trySpawn(
               shellCandidates,
-              { ...terminalEnv, ...accountEnv },
+              // The thread tag lets archiving stop what this terminal leaves running.
+              { ...terminalEnv, ...accountEnv, ...threadProcessEnv(session.threadId) },
               session,
             );
             ptyProcess = spawnResult.process;

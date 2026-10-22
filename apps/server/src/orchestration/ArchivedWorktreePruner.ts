@@ -9,6 +9,8 @@ import * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
+import { stopThreadProcesses } from "../process/threadProcesses.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { splitNullSeparatedGitStdoutPaths } from "../vcs/GitVcsDriverCore.ts";
@@ -16,9 +18,11 @@ import * as OrchestrationEngine from "./Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./Services/ProjectionSnapshotQuery.ts";
 
 /**
- * Frees disk space when a thread is archived: the thread's worktree keeps its
- * source and git state (so unarchive still works), but git-ignored dependency
- * and build output that a reinstall or rebuild recreates is deleted.
+ * Cleans up when a thread is archived. Processes the thread left running (dev
+ * servers, build workers, headless browsers) are stopped first, then disk space
+ * is freed: the worktree keeps its source and git state (so unarchive still
+ * works), but git-ignored dependency and build output that a reinstall or
+ * rebuild recreates is deleted.
  */
 export class ArchivedWorktreePruner extends Context.Service<
   ArchivedWorktreePruner,
@@ -101,12 +105,32 @@ export const make = Effect.gen(function* () {
   const engine = yield* OrchestrationEngine.OrchestrationEngineService;
   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const context = yield* Effect.context<
-    FileSystem.FileSystem | Path.Path | GitVcsDriver.GitVcsDriver
+    FileSystem.FileSystem | Path.Path | GitVcsDriver.GitVcsDriver | ProcessRunner.ProcessRunner
   >();
 
   const prune = Effect.fn("ArchivedWorktreePruner.prune")(function* (
     event: Extract<OrchestrationEvent, { type: "thread.archived" }>,
   ) {
+    // Stop processes before deleting what they run from. A shared worktree
+    // keeps its files, but the archived thread's own processes still stop.
+    const stopped = yield* stopThreadProcesses(event.payload.threadId).pipe(
+      Effect.provide(context),
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.failCause(cause)
+          : Effect.logWarning("stopping archived thread processes failed", {
+              threadId: event.payload.threadId,
+              cause: Cause.pretty(cause),
+            }).pipe(Effect.as([] as ReadonlyArray<number>)),
+      ),
+    );
+    if (stopped.length > 0) {
+      yield* Effect.logInfo("stopped processes left running by archived thread", {
+        threadId: event.payload.threadId,
+        pids: stopped,
+      });
+    }
+
     const archived = yield* snapshots.getArchivedShellSnapshot();
     const thread = archived.threads.find((candidate) => candidate.id === event.payload.threadId);
     if (thread?.worktreePath == null) return;
