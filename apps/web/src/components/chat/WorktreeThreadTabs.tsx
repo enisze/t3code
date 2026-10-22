@@ -76,6 +76,22 @@ export function getWorktreeTabAfterClose(
   return tabs[closingIndex + 1] ?? tabs[closingIndex - 1] ?? null;
 }
 
+/**
+ * The unsent chat the strip's "New chat" returns to, so a worktree or project
+ * checkout holds one new chat at a time: the one on screen, otherwise the
+ * newest. A draft whose thread already has a tab was just sent.
+ */
+export function getReusableNewChatDraft<
+  T extends { readonly draftId: string; readonly threadId: ThreadId },
+>(
+  draftTabs: readonly T[],
+  tabs: readonly EnvironmentThreadShell[],
+  activeDraftId: string | null,
+): T | null {
+  const unsent = draftTabs.filter((draft) => !tabs.some((tab) => tab.id === draft.threadId));
+  return unsent.find((draft) => draft.draftId === activeDraftId) ?? unsent.at(-1) ?? null;
+}
+
 export function isWorktreeThreadInProgress(shell: EnvironmentThreadShell): boolean {
   return shell.session?.status === "running" || shell.session?.status === "starting";
 }
@@ -180,6 +196,20 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
       )
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }, [shells, activeEnvironmentId, activeProjectId, worktreePath]);
+
+  const reusableDraftTab = getReusableNewChatDraft(draftTabs, tabs, activeDraftId);
+  const openNewChat = () => {
+    if (reusableDraftTab === null) {
+      onNewChat();
+      return;
+    }
+    onActivateChat?.();
+    if (reusableDraftTab.draftId === activeDraftId) return;
+    void router.navigate({
+      to: "/draft/$draftId",
+      params: buildDraftThreadRouteParams(reusableDraftTab.draftId),
+    });
+  };
 
   const closeTab = useCallback(
     async (shell: EnvironmentThreadShell) => {
@@ -518,7 +548,7 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
                     worktreePath ? "New chat in this worktree" : "New chat in this project"
                   }
                   className="relative order-3 inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                  onClick={onNewChat}
+                  onClick={openNewChat}
                 />
               }
             >

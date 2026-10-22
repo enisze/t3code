@@ -3,6 +3,7 @@ import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  getReusableNewChatDraft,
   getWorktreeTabAfterClose,
   isWorktreeThreadInProgress,
   resolveWorktreeTabStatus,
@@ -85,5 +86,34 @@ describe("resolveWorktreeTabStatus", () => {
 
   it("reports a settled chat as idle", () => {
     expect(resolveWorktreeTabStatus(statusShell({ session: { status: "ready" } }))).toBe("idle");
+  });
+});
+
+describe("getReusableNewChatDraft", () => {
+  const draft = (draftId: string, threadId: string) => ({
+    draftId,
+    threadId: ThreadId.make(threadId),
+  });
+  const drafts = [draft("draft-1", "thread-a"), draft("draft-2", "thread-b")];
+
+  it("starts a new chat when the strip has no unsent draft", () => {
+    expect(getReusableNewChatDraft([], [shell("thread-1")], null)).toBeNull();
+  });
+
+  it("returns to the newest unsent draft", () => {
+    expect(getReusableNewChatDraft(drafts, [], null)?.draftId).toBe("draft-2");
+  });
+
+  it("keeps the draft on screen", () => {
+    expect(getReusableNewChatDraft(drafts, [], "draft-1")?.draftId).toBe("draft-1");
+  });
+
+  it("skips a draft that was just sent", () => {
+    expect(getReusableNewChatDraft(drafts, [shell("thread-b")], "draft-2")?.draftId).toBe(
+      "draft-1",
+    );
+    expect(
+      getReusableNewChatDraft(drafts, [shell("thread-a"), shell("thread-b")], null),
+    ).toBeNull();
   });
 });
