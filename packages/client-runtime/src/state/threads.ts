@@ -685,7 +685,15 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const foregroundResubscriptions = Option.match(wakeups, {
     onNone: () => Stream.never,
     onSome: (service) =>
-      service.changes.pipe(Stream.filter(ConnectionWakeups.shouldResubscribeAfterWakeup)),
+      service.changes.pipe(
+        Stream.filterEffect((reason) =>
+          SubscriptionRef.get(state).pipe(
+            Effect.map((current) =>
+              ConnectionWakeups.shouldResubscribeAfterWakeup(reason, Option.isSome(current.error)),
+            ),
+          ),
+        ),
+      ),
   });
   const resubscriptions = Stream.merge(
     foregroundResubscriptions,

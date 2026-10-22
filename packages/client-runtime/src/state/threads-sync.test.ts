@@ -775,7 +775,7 @@ describe("EnvironmentThreads", () => {
       yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
 
       expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
-      yield* Queue.offer(harness.wakeups, "application-active");
+      yield* Queue.offer(harness.wakeups, "application-active-probe");
       for (let attempt = 0; attempt < 100; attempt += 1) {
         if ((yield* Ref.get(harness.subscriptionCount)) >= 2) break;
         yield* Effect.yieldNow;
@@ -1066,7 +1066,7 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
-  it.effect("resubscribes on app foreground from the latest applied sequence", () =>
+  it.effect("resubscribes after a short mobile resume from the latest applied sequence", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_THREAD, completionMarker: true });
       yield* Queue.offer(
@@ -1082,7 +1082,7 @@ describe("EnvironmentThreads", () => {
           value.data.value.title === "Latest title",
       );
 
-      yield* Queue.offer(harness.wakeups, "application-active");
+      yield* Queue.offer(harness.wakeups, "application-active-probe");
       const synchronizing = yield* awaitThreadState(
         harness.observed,
         (value) => value.status === "synchronizing" && Option.isSome(value.data),
@@ -1105,18 +1105,15 @@ describe("EnvironmentThreads", () => {
       );
       expect(Option.getOrThrow(live.data).title).toBe("Latest title");
 
-      yield* Queue.offer(harness.wakeups, "application-active-probe");
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        if ((yield* Ref.get(harness.subscriptionCount)) >= 3) break;
-        yield* Effect.yieldNow;
-      }
-      expect(yield* Ref.get(harness.subscriptionCount)).toBe(3);
-
+      // A browser or desktop window returning to view keeps the healthy
+      // subscription live, and a long resume waits for its replacement session.
+      yield* Queue.offer(harness.wakeups, "application-active");
       yield* Queue.offer(harness.wakeups, "application-active-reconnect");
       for (let attempt = 0; attempt < 10; attempt += 1) {
         yield* Effect.yieldNow;
       }
-      expect(yield* Ref.get(harness.subscriptionCount)).toBe(3);
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      expect((yield* Ref.get(harness.latest)).status).toBe("live");
     }),
   );
 });
