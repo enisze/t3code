@@ -29,6 +29,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
+import { threadProcessEnv } from "../process/threadProcesses.ts";
 import { isWindowsCommandNotFound } from "../processRunner.ts";
 import { collectStreamAsString } from "./providerSnapshot.ts";
 import * as NetService from "@t3tools/shared/Net";
@@ -221,6 +222,8 @@ export interface OpenCodeRuntimeShape {
     readonly directory: string;
     readonly serverPassword?: string;
     readonly environment?: NodeJS.ProcessEnv;
+    /** The chat this server works for; tags it so archiving stops what it leaves running. */
+    readonly threadId?: string;
     readonly port?: number;
     readonly hostname?: string;
     readonly timeoutMs?: number;
@@ -236,6 +239,7 @@ export interface OpenCodeRuntimeShape {
     readonly serverUrl?: string | null;
     readonly serverPassword?: string;
     readonly environment?: NodeJS.ProcessEnv;
+    readonly threadId?: string;
     readonly port?: number;
     readonly hostname?: string;
     readonly timeoutMs?: number;
@@ -685,6 +689,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
               // relying on inheritance) because `extendEnv` is false whenever
               // `input.environment` is provided.
               OPENCODE_CONFIG_CONTENT: resolveOpenCodeConfigContent(input.environment),
+              ...(input.threadId === undefined ? {} : threadProcessEnv(input.threadId)),
             },
             extendEnv: input.environment === undefined,
           }),
@@ -866,6 +871,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       directory: input.directory,
       ...(input.serverPassword !== undefined ? { serverPassword: input.serverPassword } : {}),
       ...(input.environment !== undefined ? { environment: input.environment } : {}),
+      ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
       ...(input.port !== undefined ? { port: input.port } : {}),
       ...(input.hostname !== undefined ? { hostname: input.hostname } : {}),
       ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),

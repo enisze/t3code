@@ -60,6 +60,18 @@ offline environments and older servers keep their previous values. If connected
 environments disagree, **Apply to all** copies your current settings to those named
 in the warning. Changing a rule does not reopen already settled threads.
 
+## Archive a thread
+
+Archiving removes a thread from the sidebar; restore it from **Settings → Archive**.
+It also stops what the thread left running: its terminals close, and on macOS and
+Linux, dev servers, builds, and headless browsers started by its agent or from its
+terminals stop too.
+
+When no other open thread uses the same worktree, archiving also deletes the
+worktree's dependency and build folders, such as `node_modules`, `.next`, and
+`dist`. Source and `.env` files stay, so after you restore the thread, reinstall
+dependencies to keep working.
+
 ## Link a pull request
 
 The server finds the PR for each unsettled thread's saved branch, even when your
