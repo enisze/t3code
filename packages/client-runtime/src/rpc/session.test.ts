@@ -1084,6 +1084,40 @@ describe("RpcSessionFactory", () => {
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
+  it.effect("keeps the session open while other frames arrive instead of pongs", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const readyFiber = yield* Effect.forkChild(session.ready);
+      const closedFiber = yield* Effect.forkChild(Effect.flip(session.closed));
+      const socket = yield* awaitSocket(sockets);
+
+      socket.open();
+      yield* completeInitialConfig(socket);
+      yield* Fiber.join(readyFiber);
+      const configRequest = yield* awaitRequest(socket);
+
+      // A busy server's pong can queue behind large responses; those frames
+      // still prove the socket is alive.
+      for (let window = 0; window < 6; window += 1) {
+        yield* TestClock.adjust("5 seconds");
+        socket.serverMessage(
+          encodeJson({
+            _tag: "Chunk",
+            requestId: configRequest.id,
+            values: [{ version: 1, type: "snapshot", config: ENCODED_SERVER_CONFIG }],
+          }),
+        );
+      }
+      expect(closedFiber.pollUnsafe()).toBeUndefined();
+
+      // A server that goes fully quiet is still dropped.
+      yield* TestClock.adjust("20 seconds");
+      const error = yield* Fiber.join(closedFiber);
+      expect(error).toMatchObject({ reason: "transport" });
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
   it.effect("reaches ready when a newer server sends unknown config members", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();
