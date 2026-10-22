@@ -43,7 +43,7 @@ import {
 import { buildDiffViewedSignature, buildDiffViewedSignatures } from "../lib/diffViewedSignature";
 import { useDiffThemeName } from "../hooks/useDiffThemeName";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
-import { useProject, useThread, useThreadShell } from "../state/entities";
+import { useProject, useThread, useThreadShell, useThreadStatus } from "../state/entities";
 import { resolveThreadRouteRef } from "../threadRoutes";
 import { useWorkspaceThreadRef } from "../lib/workspaceThreadRef";
 import { useClientSettings } from "../hooks/useSettings";
@@ -98,6 +98,14 @@ interface ExpandedDiffFilesState {
 }
 
 const EMPTY_EXPANDED_DIFF_FILE_PATHS: ReadonlySet<string> = new Set();
+
+/**
+ * The latest-turn and working-tree markers each chat and workspace diff last
+ * refreshed for. Module scope, so opening or switching chats compares against
+ * what the cached diff already reflects instead of reloading it every time:
+ * only a change since then refreshes, and a first sighting just records.
+ */
+const refreshedDiffMarkers = new Map<string, string>();
 
 const DIFF_PANEL_UNSAFE_CSS = `
 [data-diffs-header],
@@ -295,6 +303,7 @@ export default function DiffPanel({
   // its first message promotes it to a server thread.
   const workspaceThreadRef = useWorkspaceThreadRef(currentThreadRef);
   const activeThread = useThread(currentThreadRef);
+  const activeThreadStatus = useThreadStatus(currentThreadRef);
   // The worktree's data source. For a draft the current chat has no server
   // thread yet, so this resolves to the representative sibling that owns the
   // worktree; for an ordinary chat it's the same worktree either way.
@@ -523,6 +532,11 @@ export default function DiffPanel({
   const latestCompletedTurnMarker = latestTurn
     ? `${latestTurn.turnId}:${latestTurn.completedAt}`
     : null;
+  const latestTurnMarkerKey = currentThreadRef
+    ? `turn:${currentThreadRef.environmentId}:${currentThreadRef.threadId}`
+    : null;
+  const workingTreeMarkerKey =
+    workspaceEnvironmentId && activeCwd ? `tree:${workspaceEnvironmentId}:${activeCwd}` : null;
   const refreshBranchDiffPreview = branchDiffPreview.refresh;
   const refreshGitStatus = gitStatusQuery.refresh;
   const workingTreeDiffMarker = gitStatusQuery.data
@@ -536,36 +550,55 @@ export default function DiffPanel({
         ]),
       })
     : null;
-  const workingTreeDiffMarkerRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (selectedTurnId !== null || workingTreeDiffMarker === null) return;
-    if (workingTreeDiffMarkerRef.current === null) {
-      workingTreeDiffMarkerRef.current = workingTreeDiffMarker;
-      return;
-    }
-    if (workingTreeDiffMarkerRef.current === workingTreeDiffMarker) return;
-    workingTreeDiffMarkerRef.current = workingTreeDiffMarker;
-    // VCS status streams exact numstat updates while files are edited. Refresh
-    // the patch snapshot as those stats change so navigator line counters and
-    // viewed signatures do not wait for the current turn to finish.
-    const refreshTimer = setTimeout(refreshBranchDiffPreview, 100);
-    return () => clearTimeout(refreshTimer);
-  }, [refreshBranchDiffPreview, selectedTurnId, workingTreeDiffMarker]);
-  const refreshedTurnMarkerRef = useRef<string | null>(null);
   useEffect(() => {
     if (
-      latestCompletedTurnMarker === null ||
-      refreshedTurnMarkerRef.current === latestCompletedTurnMarker
+      selectedTurnId !== null ||
+      workingTreeMarkerKey === null ||
+      workingTreeDiffMarker === null
     ) {
       return;
     }
-    refreshedTurnMarkerRef.current = latestCompletedTurnMarker;
+    const refreshedFor = refreshedDiffMarkers.get(workingTreeMarkerKey);
+    if (refreshedFor === undefined) {
+      refreshedDiffMarkers.set(workingTreeMarkerKey, workingTreeDiffMarker);
+      return;
+    }
+    if (refreshedFor === workingTreeDiffMarker) return;
+    // VCS status streams exact numstat updates while files are edited. Refresh
+    // the patch snapshot as those stats change so navigator line counters and
+    // viewed signatures do not wait for the current turn to finish. Record the
+    // marker only once the debounced refresh fires.
+    const refreshTimer = setTimeout(() => {
+      refreshedDiffMarkers.set(workingTreeMarkerKey, workingTreeDiffMarker);
+      refreshBranchDiffPreview();
+    }, 100);
+    return () => clearTimeout(refreshTimer);
+  }, [refreshBranchDiffPreview, selectedTurnId, workingTreeDiffMarker, workingTreeMarkerKey]);
+  useEffect(() => {
+    // Cached or still-syncing detail can trail the server, and catching up to
+    // turns the open diff already includes is not a new turn.
+    if (
+      activeThreadStatus !== "live" ||
+      latestTurnMarkerKey === null ||
+      latestCompletedTurnMarker === null
+    ) {
+      return;
+    }
+    const refreshedFor = refreshedDiffMarkers.get(latestTurnMarkerKey);
+    refreshedDiffMarkers.set(latestTurnMarkerKey, latestCompletedTurnMarker);
+    if (refreshedFor === undefined || refreshedFor === latestCompletedTurnMarker) return;
     // The query atom is shared and cached by cwd/base. A completed turn changes
     // the filesystem without changing that key, so explicitly replace the stale
     // branch/working-tree snapshot with one that includes the turn's local work.
     refreshBranchDiffPreview();
     refreshGitStatus();
-  }, [latestCompletedTurnMarker, refreshBranchDiffPreview, refreshGitStatus]);
+  }, [
+    activeThreadStatus,
+    latestCompletedTurnMarker,
+    latestTurnMarkerKey,
+    refreshBranchDiffPreview,
+    refreshGitStatus,
+  ]);
   const selectedGitSource = branchDiffPreview.data?.sources.find(
     (source) => source.kind === CHAT_DIFF_SCOPE_SOURCE_KIND[selectedGitScope],
   );
