@@ -123,7 +123,6 @@ import { useReopenClosedChat } from "../hooks/useReopenClosedChat";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { isPreviewFocused } from "../lib/previewFocus";
-import { requestOlderThreadTurns } from "@t3tools/client-runtime/state/threads";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
@@ -231,7 +230,7 @@ import {
   serverEnvironment,
 } from "../state/server";
 import { terminalEnvironment } from "../state/terminal";
-import { retryThreadDetail, threadEnvironment, useEnvironmentThread } from "../state/threads";
+import { retryThreadDetail, threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
@@ -244,6 +243,7 @@ import {
   useThreadStructure,
   useThreadUpdatedAt,
 } from "../state/entities";
+import { useAtomSelection } from "../state/atomSelection";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
@@ -1737,10 +1737,13 @@ function ChatViewContent(props: ChatViewProps) {
   // The browser preview is shown as a content tab in the chat column (beside the
   // file/diff viewers), not in the right panel.
   const previewTabActive = activeContentTab?.view === "preview";
-  const activeEnvironmentShell = useEnvironmentQuery(
+  // A boolean, not the shell snapshot, so shell updates while a reply streams
+  // do not re-render ChatView.
+  const activeEnvironmentBootstrapComplete = useAtomSelection(
     activeThread ? environmentShell.stateAtom(activeThread.environmentId) : null,
+    (result) => Option.exists(AsyncResult.value(result), (state) => Option.isSome(state.snapshot)),
+    false,
   );
-  const activeEnvironmentBootstrapComplete = activeEnvironmentShell.data?.snapshot._tag === "Some";
   const activeProjectKey = activeProject
     ? `${activeProject.environmentId}:${activeProject.workspaceRoot}`
     : null;
@@ -2774,23 +2777,6 @@ function ChatViewContent(props: ChatViewProps) {
   const [isThreadFindActive, setIsThreadFindActive] = useState(false);
   const openThreadFind = useCallback(() => threadFindControlsRef.current?.open(), []);
   const closeThreadFind = useCallback(() => threadFindControlsRef.current?.close(), []);
-  const activeThreadState = useEnvironmentThread(
-    activeThreadRef?.environmentId ?? null,
-    activeThreadRef?.threadId ?? null,
-  );
-  const threadHistoryPage = Option.getOrNull(activeThreadState.page);
-  const threadHistory = useMemo(
-    () =>
-      activeThreadRef && threadHistoryPage
-        ? {
-            hasMore: threadHistoryPage.hasMore,
-            loading: threadHistoryPage.loadingOlder,
-            loadOlder: () =>
-              requestOlderThreadTurns(activeThreadRef.environmentId, activeThreadRef.threadId),
-          }
-        : null,
-    [activeThreadRef, threadHistoryPage],
-  );
   const scheduleComposerFocus = useCallback(() => {
     window.requestAnimationFrame(() => {
       focusComposer();
@@ -6370,7 +6356,6 @@ function ChatViewContent(props: ChatViewProps) {
                   onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
                   hideEmptyPlaceholder={isDraftHeroState || threadDetailUnavailable}
                   topFadeEnabled={!hasTimelineTopBanner}
-                  history={threadHistory}
                 />
 
                 {/* scroll to end pill — shown when user has scrolled away from the live edge */}
@@ -6782,11 +6767,15 @@ function ChatViewContent(props: ChatViewProps) {
   );
 }
 
-/** Whether a key event comes from inside a `@pierre/diffs` viewer, which has its own find. */
-export default function ChatView(props: ChatViewProps) {
+/**
+ * The chat for one thread or draft. Memoized because its routes re-render on
+ * every shell update while a reply streams, and its props hold still.
+ */
+const ChatView = memo(function ChatView(props: ChatViewProps) {
   return (
     <DiffWorkerPoolProvider>
       <ChatViewContent {...props} />
     </DiffWorkerPoolProvider>
   );
-}
+});
+export default ChatView;
