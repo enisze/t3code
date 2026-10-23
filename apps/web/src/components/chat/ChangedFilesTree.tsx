@@ -1,5 +1,13 @@
 import { type TurnId } from "@t3tools/contracts";
-import { memo, useCallback, useMemo, useState } from "react";
+import {
+  type ReactNode,
+  memo,
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { type TurnDiffFileChange } from "../../types";
 import {
   buildTurnDiffTree,
@@ -22,9 +30,13 @@ import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
+  type ChangedFileRow,
   changedFileName,
+  collectExpandedRows,
   selectChangedFilePreview,
+  shouldVirtualizeChangedFileRows,
   summarizeChangedFileScopes,
+  visibleRowRange,
 } from "./changedFilesPresentation";
 
 const EMPTY_DIRECTORY_OVERRIDES: Record<string, boolean> = {};
@@ -227,6 +239,10 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
     directoryExpansionState.key === expansionStateKey
       ? directoryExpansionState.overrides
       : EMPTY_DIRECTORY_OVERRIDES;
+  const rows = useMemo(
+    () => collectExpandedRows(treeNodes, expandedDirectories, allDirectoriesExpanded),
+    [treeNodes, expandedDirectories, allDirectoriesExpanded],
+  );
 
   const toggleDirectory = useCallback(
     (pathValue: string) => {
@@ -244,54 +260,47 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
     [allDirectoriesExpanded, expansionStateKey],
   );
 
-  const renderTreeNode = (node: TurnDiffTreeNode, depth: number) => {
+  const renderRow = ({ node, depth }: ChangedFileRow) => {
     const leftPadding = 8 + depth * 14;
     if (node.kind === "directory") {
       const isExpanded = expandedDirectories[node.path] ?? allDirectoriesExpanded;
       return (
-        <div key={`dir:${node.path}`}>
-          <button
-            type="button"
-            data-scroll-anchor-ignore
-            className="group flex w-full items-center gap-1.5 rounded-xl py-1 pr-3 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
-            style={{ paddingLeft: `${leftPadding}px` }}
-            onClick={() => toggleDirectory(node.path)}
-          >
-            <ChevronRightIcon
-              aria-hidden="true"
-              className={cn(
-                "size-3.5 shrink-0 text-muted-foreground/70 transition-transform group-hover:text-foreground/80",
-                isExpanded && "rotate-90",
-              )}
-            />
-            {isExpanded ? (
-              <FolderIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
-            ) : (
-              <FolderClosedIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
+        <button
+          type="button"
+          data-scroll-anchor-ignore
+          aria-expanded={isExpanded}
+          className="group flex h-full w-full items-center gap-1.5 rounded-xl pr-3 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+          style={{ paddingLeft: `${leftPadding}px` }}
+          onClick={() => toggleDirectory(node.path)}
+        >
+          <ChevronRightIcon
+            aria-hidden="true"
+            className={cn(
+              "size-3.5 shrink-0 text-muted-foreground/70 transition-transform group-hover:text-foreground/80",
+              isExpanded && "rotate-90",
             )}
-            <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground/90 group-hover:text-foreground/90">
-              {node.name}
-            </span>
-            {hasNonZeroStat(node.stat) && (
-              <span className="shrink-0 pl-2 font-mono text-[10px] tabular-nums">
-                <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
-              </span>
-            )}
-          </button>
-          {isExpanded && (
-            <div className="space-y-0.5">
-              {node.children.map((childNode) => renderTreeNode(childNode, depth + 1))}
-            </div>
+          />
+          {isExpanded ? (
+            <FolderIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
+          ) : (
+            <FolderClosedIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
           )}
-        </div>
+          <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground/90 group-hover:text-foreground/90">
+            {node.name}
+          </span>
+          {hasNonZeroStat(node.stat) && (
+            <span className="shrink-0 pl-2 font-mono text-[10px] tabular-nums">
+              <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
+            </span>
+          )}
+        </button>
       );
     }
 
     return (
       <button
-        key={`file:${node.path}`}
         type="button"
-        className="group flex w-full items-center gap-1.5 rounded-xl py-1 pr-3 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+        className="group flex h-full w-full items-center gap-1.5 rounded-xl pr-3 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
         style={{ paddingLeft: `${leftPadding}px` }}
         onClick={() => onOpenFile(node.path)}
       >
@@ -318,8 +327,136 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
     );
   };
 
-  return <div className="space-y-0.5">{treeNodes.map((node) => renderTreeNode(node, 0))}</div>;
+  return (
+    <ChangedFilesRows
+      rows={rows}
+      renderRow={renderRow}
+      virtualized={shouldVirtualizeChangedFileRows(rows)}
+    />
+  );
 });
+
+// Rows share one height so a virtualized list can place each one by its index.
+const ROW_SLOT_CLASS = "h-[26px] pb-0.5";
+const ROW_OVERSCAN = 8;
+
+function ChangedFilesRows({
+  rows,
+  renderRow,
+  virtualized,
+}: {
+  rows: ReadonlyArray<ChangedFileRow>;
+  renderRow: (row: ChangedFileRow) => ReactNode;
+  virtualized: boolean;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const rowSizeRef = useRef<HTMLDivElement>(null);
+  const [range, setRange] = useState({ start: 0, end: 40, rowHeight: 26 });
+  const [focusedPath, setFocusedPath] = useState<string | null>(null);
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const rowSize = rowSizeRef.current;
+    if (!virtualized || !container || !rowSize) return;
+
+    // The card sits inside a virtualized timeline item, so its own scrollTop is always zero:
+    // the window comes from where the list sits in its scrolling ancestor. Ancestors are
+    // observed too, since streaming text and timeline layout move the card without a scroll.
+    const ancestors: HTMLElement[] = [container, rowSize];
+    let scrollElement: HTMLElement | null = null;
+    for (let parent = container.parentElement; parent; parent = parent.parentElement) {
+      ancestors.push(parent);
+      if (/auto|scroll/.test(getComputedStyle(parent).overflowY)) {
+        scrollElement = parent;
+        break;
+      }
+    }
+
+    const measure = () => {
+      const rowHeight = rowSize.getBoundingClientRect().height;
+      if (rowHeight <= 0) return;
+      const { start, end } = visibleRowRange({
+        listTop: container.getBoundingClientRect().top,
+        viewportTop: scrollElement
+          ? scrollElement.getBoundingClientRect().top + scrollElement.clientTop
+          : 0,
+        viewportHeight: scrollElement?.clientHeight ?? document.documentElement.clientHeight,
+        rowHeight,
+        rowCount: rows.length,
+        overscan: ROW_OVERSCAN,
+      });
+      setRange((current) =>
+        current.start === start && current.end === end && current.rowHeight === rowHeight
+          ? current
+          : { start, end, rowHeight },
+      );
+    };
+    measure();
+    const scrollTarget = scrollElement ?? window;
+    let frame = 0;
+    const onScroll = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        measure();
+      });
+    };
+    scrollTarget.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    const resizeObserver = new ResizeObserver(measure);
+    for (const ancestor of ancestors) resizeObserver.observe(ancestor);
+    return () => {
+      scrollTarget.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+      if (frame) cancelAnimationFrame(frame);
+      resizeObserver.disconnect();
+    };
+  }, [virtualized, rows.length]);
+
+  const focusedIndex =
+    focusedPath === null ? -1 : rows.findIndex((row) => row.node.path === focusedPath);
+  const start = virtualized ? range.start : 0;
+  const end = virtualized ? Math.min(rows.length, range.end) : rows.length;
+  const indices = Array.from({ length: Math.max(0, end - start) }, (_, index) => start + index);
+  // Keep keyboard focus on its row when scrolling moves it outside the mounted window.
+  if (focusedIndex >= 0 && focusedIndex < start) indices.unshift(focusedIndex);
+  if (focusedIndex >= end) indices.push(focusedIndex);
+  return (
+    <div
+      ref={containerRef}
+      className="relative"
+      style={virtualized ? { height: rows.length * range.rowHeight } : undefined}
+      onFocusCapture={(event) => {
+        const row = event.target.closest<HTMLElement>("[data-changed-file-row]");
+        setFocusedPath(row?.dataset.changedFileRow ?? null);
+      }}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setFocusedPath(null);
+      }}
+    >
+      {virtualized ? (
+        <div
+          ref={rowSizeRef}
+          aria-hidden="true"
+          className={cn("pointer-events-none invisible absolute", ROW_SLOT_CLASS)}
+        />
+      ) : null}
+      {indices.map((index) => {
+        const row = rows[index]!;
+        return (
+          <div
+            key={`${row.node.kind}:${row.node.path}`}
+            data-changed-file-row={row.node.path}
+            className={cn(ROW_SLOT_CLASS, virtualized && "absolute inset-x-0")}
+            style={virtualized ? { top: index * range.rowHeight } : undefined}
+          >
+            {renderRow(row)}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 export interface DiffNavigatorFile {
   path: string;
