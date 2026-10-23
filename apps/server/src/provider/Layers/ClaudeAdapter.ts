@@ -23,6 +23,8 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { spawnClaudeProcessGroup } from "./claudeProcessGroup.ts";
 import {
   type ClaudeScopedLimitNames,
   claudeRateLimitEventToUpdate,
@@ -1940,6 +1942,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const managedNativeEventLogger =
     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
 
+  // Windows has no process groups, so there the SDK spawns the CLI itself.
+  const spawnClaudeCodeProcess =
+    (yield* HostProcessPlatform) === "win32" ? undefined : spawnClaudeProcessGroup;
   const createQuery =
     options?.createQuery ??
     ((input: {
@@ -1948,7 +1953,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }) =>
       query({
         prompt: input.prompt,
-        options: input.options,
+        options:
+          spawnClaudeCodeProcess === undefined
+            ? input.options
+            : { ...input.options, spawnClaudeCodeProcess },
       }) as ClaudeQueryRuntime);
 
   const sessions = new Map<ThreadId, ClaudeSessionContext>();
