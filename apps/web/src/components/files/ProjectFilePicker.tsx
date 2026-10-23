@@ -92,20 +92,28 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
         value: `file:${match.path}`,
         searchTerms: [match.name, match.path],
         title: (
-          <HighlightedFuzzyText
-            active={hasMatchedQuery}
-            value={match.name}
-            indices={match.nameMatchIndices}
-          />
+          <span className={match.isIgnored ? "opacity-55" : undefined}>
+            <HighlightedFuzzyText
+              active={hasMatchedQuery}
+              value={match.name}
+              indices={match.nameMatchIndices}
+            />
+          </span>
         ),
         description: (
-          <HighlightedFuzzyText
-            active={hasMatchedQuery}
-            value={match.path}
-            indices={match.pathMatchIndices}
-          />
+          <span className={match.isIgnored ? "opacity-55" : undefined}>
+            <HighlightedFuzzyText
+              active={hasMatchedQuery}
+              value={match.path}
+              indices={match.pathMatchIndices}
+            />
+          </span>
         ),
-        icon: <PierreEntryIcon pathValue={match.path} kind="file" theme={resolvedTheme} />,
+        icon: (
+          <span className={match.isIgnored ? "opacity-55" : undefined}>
+            <PierreEntryIcon pathValue={match.path} kind="file" theme={resolvedTheme} />
+          </span>
+        ),
         run: async () => {
           useRightPanelStore.getState().openFile(target.threadRef, match.path);
         },

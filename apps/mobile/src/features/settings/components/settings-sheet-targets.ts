@@ -2,6 +2,7 @@ export type SettingsSheetTarget =
   | "SettingsEnvironments"
   | "SettingsArchive"
   | "SettingsAppearance"
+  | "SettingsAutomations"
   | "SettingsProjectGrouping"
   | "SettingsClientStorage"
   | "SettingsUsage";

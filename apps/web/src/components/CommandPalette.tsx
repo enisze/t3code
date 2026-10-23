@@ -791,10 +791,14 @@ function OpenCommandPaletteDialog(props: {
     return searchableProjectFiles.map((entry) => ({
       kind: "action",
       value: `file:${entry.path}`,
-      title: entry.path.split("/").at(-1) ?? entry.path,
-      description: entry.path,
+      title: (
+        <span className={entry.isIgnored ? "opacity-55" : undefined}>
+          {entry.path.split("/").at(-1) ?? entry.path}
+        </span>
+      ),
+      description: <span className={entry.isIgnored ? "opacity-55" : undefined}>{entry.path}</span>,
       searchTerms: [entry.path],
-      icon: <FileIcon className={ITEM_ICON_CLASS} />,
+      icon: <FileIcon className={cn(ITEM_ICON_CLASS, entry.isIgnored && "opacity-55")} />,
       run: async () => {
         if (worktreeKey) {
           useWorkspaceContentTabsStore.getState().openFile(worktreeKey, entry.path);

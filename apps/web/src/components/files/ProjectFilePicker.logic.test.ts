@@ -15,6 +15,19 @@ const entries = [
 ] as const;
 
 describe("getProjectFilePickerMatches", () => {
+  it("keeps ignored files selectable and retains their status for search results", () => {
+    const matches = getProjectFilePickerMatches(
+      [
+        { kind: "file", path: ".env.local", isIgnored: true },
+        { kind: "file", path: ".gitignore" },
+      ],
+      ".env",
+    );
+    assert.equal(matches[0]?.path, ".env.local");
+    assert.equal(matches[0]?.isIgnored, true);
+    assert.equal(matches[1]?.isIgnored, undefined);
+  });
+
   it("returns files only and preserves index order for an empty query", () => {
     assert.deepEqual(pathsForQuery(entries, ""), [
       { name: "index.ts", path: "apps/web/src/index.ts" },

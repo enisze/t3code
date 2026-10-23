@@ -1071,6 +1071,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         type: "path",
         path: entry.path,
         pathKind: entry.kind,
+        isIgnored: entry.isIgnored,
         label: basenameOfPath(entry.path),
         description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
       }));

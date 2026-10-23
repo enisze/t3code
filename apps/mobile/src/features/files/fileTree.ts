@@ -2,6 +2,7 @@ import type { ProjectEntry } from "@t3tools/contracts";
 import { normalizeSearchQuery, scoreQueryMatch } from "@t3tools/shared/searchRanking";
 
 export interface FileTreeNode {
+  readonly isIgnored: boolean;
   readonly path: string;
   readonly name: string;
   readonly kind: ProjectEntry["kind"];
@@ -16,6 +17,7 @@ export interface VisibleFileTreeNode {
 }
 
 interface MutableFileTreeNode {
+  isIgnored: boolean;
   path: string;
   name: string;
   kind: ProjectEntry["kind"];
@@ -28,6 +30,7 @@ function createMutableNode(
   kind: ProjectEntry["kind"],
 ): MutableFileTreeNode {
   return {
+    isIgnored: false,
     path,
     name,
     kind,
@@ -65,6 +68,7 @@ function buildNodeSearchTerms(path: string): {
 function freezeNode(node: MutableFileTreeNode): FileTreeNode {
   const searchTerms = buildNodeSearchTerms(node.path);
   return {
+    isIgnored: node.isIgnored,
     path: node.path,
     name: node.name,
     kind: node.kind,
@@ -110,6 +114,7 @@ export function buildFileTree(entries: ReadonlyArray<ProjectEntry>): ReadonlyArr
       } else if (isLeaf) {
         child.kind = entry.kind;
       }
+      if (isLeaf) child.isIgnored = entry.isIgnored === true;
       current = child;
     }
   }

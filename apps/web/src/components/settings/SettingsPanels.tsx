@@ -593,6 +593,9 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Project Grouping"]
         : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
+      ...(settings.mathRenderingEnabled !== DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled
+        ? ["LaTeX rendering"]
+        : []),
       ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
         ? ["Diff whitespace changes"]
         : []),
@@ -646,6 +649,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
       settings.wordWrap,
+      settings.mathRenderingEnabled,
       theme,
     ],
   );
@@ -664,6 +668,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     updateSettings({
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
+      mathRenderingEnabled: DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       diffTheme: DEFAULT_UNIFIED_SETTINGS.diffTheme,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
@@ -1134,6 +1139,28 @@ export function AppearanceSettingsPanel() {
             }
           />
         ) : null}
+
+        <SettingsRow
+          title="LaTeX rendering"
+          description="Typeset mathematical formulas in Markdown. Turn off to read the TeX source."
+          control={
+            <Switch
+              checked={settings.mathRenderingEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ mathRenderingEnabled: Boolean(checked) })
+              }
+              aria-label="Render LaTeX formulas"
+            />
+          }
+          resetAction={
+            settings.mathRenderingEnabled ? (
+              <SettingResetButton
+                label="LaTeX rendering"
+                onClick={() => updateSettings({ mathRenderingEnabled: false })}
+              />
+            ) : null
+          }
+        />
 
         <SettingsRow
           title="Word wrap"

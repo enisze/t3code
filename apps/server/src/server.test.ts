@@ -392,7 +392,7 @@ const browserOtlpTracingLayer = Layer.mergeAll(
 
 const makeAuthTestLayer = () =>
   EnvironmentAuth.layer.pipe(
-    Layer.provide(SqlitePersistenceMemory),
+    Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provide(ServerSecretStore.layer),
     Layer.provide(
       Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({
@@ -5299,6 +5299,61 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(record.resourceAttributes["service.name"], "t3-web");
         assert.equal(record.status?.code, String(span.status.code));
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("manages persistent automations through authenticated websocket rpc", () =>
+    Effect.gen(function* () {
+      const dispatched: Array<OrchestrationCommand> = [];
+      yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getThreadShellById: () =>
+              Effect.succeed(Option.some(makeDefaultOrchestrationThreadShell())),
+          },
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatched.push(command);
+                return { sequence: dispatched.length };
+              }),
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const saved = yield* client[WS_METHODS.scheduledTasksSave]({
+              name: "Review changes",
+              threadId: defaultThreadId,
+              prompt: "Review the diff",
+              enabled: true,
+              schedule: { type: "webhook" },
+            });
+            assert.equal(typeof saved.webhookPath, "string");
+            const listed = yield* client[WS_METHODS.scheduledTasksList]({});
+            assert.equal(listed.length, 1);
+            assert.equal(listed[0]?.id, saved.task.id);
+            assert.equal(Object.hasOwn(listed[0]!, "webhookPath"), false);
+            yield* client[WS_METHODS.scheduledTasksSetEnabled]({
+              id: saved.task.id,
+              enabled: false,
+            });
+            const run = yield* client[WS_METHODS.scheduledTasksRunNow]({ id: saved.task.id });
+            assert.equal(run.status, "started");
+            assert.equal(dispatched.length, 1);
+            const history = yield* client[WS_METHODS.scheduledTasksHistory]({ id: saved.task.id });
+            assert.equal(history[0]?.id, run.id);
+            const rotated = yield* client[WS_METHODS.scheduledTasksRotateWebhook]({
+              id: saved.task.id,
+            });
+            assert.notEqual(rotated.webhookPath, saved.webhookPath);
+            yield* client[WS_METHODS.scheduledTasksDelete]({ id: saved.task.id });
+            assert.deepEqual(yield* client[WS_METHODS.scheduledTasksList]({}), []);
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("routes websocket rpc server.upsertKeybinding", () =>

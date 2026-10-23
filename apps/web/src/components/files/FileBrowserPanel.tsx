@@ -39,6 +39,7 @@ const TREE_UNSAFE_CSS = `
     --trees-font-size-override: 12px;
   }
   button[data-type='item'] { border-radius: 5px; }
+  [data-item-git-status='ignored'] { opacity: 0.55; }
 `;
 
 function treePath(entry: ProjectEntry): string {
@@ -133,6 +134,16 @@ export default function FileBrowserPanel({
   );
   const entryKindsRef = useRef<ReadonlyMap<string, ProjectEntry["kind"]>>(entryKinds);
   const treePaths = useMemo(() => entries.map(treePath), [entries]);
+  const ignoredStatuses = useMemo(
+    () =>
+      entries
+        .filter((entry) => entry.isIgnored)
+        .map((entry) => ({
+          path: treePath(entry),
+          status: "ignored" as const,
+        })),
+    [entries],
+  );
   const previousTreePathsRef = useRef<readonly string[]>([]);
 
   // The tree renders rows in shadow DOM and its anchor rect is unreliable, so
@@ -255,6 +266,7 @@ export default function FileBrowserPanel({
     unsafeCSS: TREE_UNSAFE_CSS,
   });
   const search = useFileTreeSearch(model);
+  useEffect(() => model.setGitStatus(ignoredStatuses), [model, ignoredStatuses]);
   const handleSearchValueChange = (value: string) => {
     if (value.trim().length === 0) {
       search.close();

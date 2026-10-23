@@ -10,6 +10,7 @@ import {
   Link2Icon,
   PaletteIcon,
   Settings2Icon,
+  TimerIcon,
 } from "lucide-react";
 import { useCanGoBack, useNavigate } from "@tanstack/react-router";
 
@@ -28,6 +29,7 @@ import { useProjects } from "../../state/entities";
 
 export type SettingsSectionPath =
   | "/settings/general"
+  | "/settings/automations"
   | "/settings/appearance"
   | "/settings/keybindings"
   | "/settings/providers"
@@ -42,6 +44,7 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   icon: ComponentType<{ className?: string }>;
 }> = [
   { label: "General", to: "/settings/general", icon: Settings2Icon },
+  { label: "Automations", to: "/settings/automations", icon: TimerIcon },
   { label: "Appearance", to: "/settings/appearance", icon: PaletteIcon },
   { label: "Keybindings", to: "/settings/keybindings", icon: KeyboardIcon },
   { label: "Providers", to: "/settings/providers", icon: BotIcon },

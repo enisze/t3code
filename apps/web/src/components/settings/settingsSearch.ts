@@ -4,6 +4,7 @@ import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/uti
 export type SettingsPath =
   | "/settings/projects"
   | "/settings/general"
+  | "/settings/automations"
   | "/settings/appearance"
   | "/settings/keybindings"
   | "/settings/providers"
@@ -49,6 +50,7 @@ export interface SettingsSearchAvailability {
  */
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/general": "General",
+  "/settings/automations": "Automations",
   "/settings/appearance": "Appearance",
   "/settings/projects": "Projects",
   "/settings/keybindings": "Keybindings",
@@ -65,6 +67,13 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
  * that may not be mounted point at their nearest stable section instead.
  */
 export const SETTINGS_SEARCH_ITEMS = [
+  {
+    id: "automations",
+    title: "Automations",
+    to: "/settings/automations",
+    targetId: "automations",
+    searchTerms: ["scheduled tasks recurring timer interval daily weekdays webhook automation"],
+  },
   {
     id: "project-defaults",
     title: "Project defaults and overrides",
@@ -153,6 +162,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Word wrap",
     to: "/settings/appearance",
     searchTerms: ["long lines code blocks tables diffs file previews"],
+  },
+  {
+    id: "latex-rendering",
+    title: "LaTeX rendering",
+    to: "/settings/appearance",
+    searchTerms: ["math formulas equations tex katex markdown"],
   },
   {
     id: "project-grouping",

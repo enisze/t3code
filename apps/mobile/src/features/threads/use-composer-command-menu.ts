@@ -390,6 +390,7 @@ export function useComposerCommandMenu({
           type: "path" as const,
           path: entry.path,
           kind: entry.kind,
+          isIgnored: entry.isIgnored,
           label: parts[parts.length - 1] ?? entry.path,
           description: parts.length > 1 ? parts.slice(0, -1).join("/") : "",
         };

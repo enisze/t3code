@@ -150,7 +150,10 @@ function BreadcrumbMenuContent(props: {
                 key={entry.path}
                 closeOnClick={entry.kind === "file"}
                 aria-current={isCurrentFile ? "page" : undefined}
-                className={cn(isCurrentFile && "bg-foreground/[0.08]")}
+                className={cn(
+                  isCurrentFile && "bg-foreground/[0.08]",
+                  entry.isIgnored && "opacity-55",
+                )}
                 onClick={() => {
                   if (entry.kind === "directory") {
                     props.onDirectoryChange(entry.path);

@@ -70,4 +70,19 @@ describe("RPC authorization scopes", () => {
       );
     }
   });
+
+  it("keeps automation reads separate from actions that start turns or reveal webhook credentials", () => {
+    for (const method of [WS_METHODS.scheduledTasksList, WS_METHODS.scheduledTasksHistory]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+    for (const method of [
+      WS_METHODS.scheduledTasksSave,
+      WS_METHODS.scheduledTasksDelete,
+      WS_METHODS.scheduledTasksSetEnabled,
+      WS_METHODS.scheduledTasksRunNow,
+      WS_METHODS.scheduledTasksRotateWebhook,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    }
+  });
 });

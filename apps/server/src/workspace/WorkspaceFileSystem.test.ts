@@ -58,6 +58,17 @@ const writeTextFile = Effect.fn("writeTextFile")(function* (
 
 it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (it) => {
   describe("readFile", () => {
+    it.effect("opens dotenv files as ordinary UTF-8 text", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, ".env.local", "EXAMPLE=value\n");
+        const result = yield* workspaceFileSystem.readFile({ cwd, relativePath: ".env.local" });
+        expect(result.contents).toBe("EXAMPLE=value\n");
+        expect(result.truncated).toBe(false);
+      }),
+    );
+
     it.effect("reads UTF-8 files relative to the workspace root", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;

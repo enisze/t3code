@@ -4,6 +4,8 @@ import {
   CheckIcon,
   ChevronRightIcon,
   CopyIcon,
+  CodeIcon,
+  WorkflowIcon,
   GlobeIcon,
   Maximize2Icon,
   Minimize2Icon,
@@ -23,6 +25,7 @@ import React, {
   type ClipboardEvent as ReactClipboardEvent,
   type MouseEvent as ReactMouseEvent,
   isValidElement,
+  lazy,
   use,
   useCallback,
   memo,
@@ -63,7 +66,7 @@ import { fnv1a32 } from "../lib/diffRendering";
 import { useDiffThemeName } from "../hooks/useDiffThemeName";
 import { LRUCache } from "../lib/lruCache";
 import { useTheme } from "../hooks/useTheme";
-import { getClientSettings } from "../hooks/useSettings";
+import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import {
   chatMarkdownClipboardPayload,
   serializeTableElementToCsv,
@@ -108,6 +111,20 @@ import {
   openUrlInPreview,
   BrowserPreviewUnavailableError,
 } from "../browser/openFileInPreview";
+import { mathKind } from "@t3tools/shared/markdownMath";
+import remarkMath from "remark-math";
+import { MarkdownMath } from "./chat/MarkdownMath";
+import { RenderErrorBoundary } from "./RenderErrorBoundary";
+
+const MermaidDiagram = lazy(() =>
+  import("./chat/MermaidDiagram").then((module) => ({
+    default: module.MermaidDiagram,
+  })),
+);
+
+const CHAT_MATH_REMARK_PLUGINS = [
+  [remarkMath, { singleDollarTextMath: true }],
+] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 
 const CHAT_MARKDOWN_MEDIA_MAX_WIDTH_CLASS_NAME = "max-w-[min(100%,30rem)]";
 
@@ -200,7 +217,14 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   attributes: {
     ...defaultSchema.attributes,
     "*": (defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
-    code: [...(defaultSchema.attributes?.code ?? []), "dataCodeMeta", "dataInlineCode"],
+    code: [
+      ...(defaultSchema.attributes?.code ?? []).filter(
+        (attribute) => !Array.isArray(attribute) || attribute[0] !== "className",
+      ),
+      ["className", /^language-./, "math-inline", "math-display"],
+      "dataCodeMeta",
+      "dataInlineCode",
+    ],
   },
   protocols: {
     // Image sources are classified before rendering; host paths become signed URLs.
@@ -622,14 +646,21 @@ function MarkdownCodeBlock({
   fenceTitle,
   theme,
   children,
+  isStreaming,
+  onExpand,
 }: {
   code: string;
   language: string;
   fenceTitle: string | null;
   theme: "light" | "dark";
   children: ReactNode;
+  isStreaming: boolean;
+  onExpand: (url: string) => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [showSource, setShowSource] = useState(false);
+  const isMermaid = language === "mermaid";
+  const showDiagram = isMermaid && !showSource && !isStreaming && code.trim().length > 0;
   const [wrapped, setWrapped] = useState(readInitialWordWrapSetting);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrapLabel = wrapped ? "Disable line wrap" : "Wrap lines";
@@ -688,6 +719,25 @@ function MarkdownCodeBlock({
           />
         </span>
         <span className="flex items-center gap-0.5">
+          {isMermaid && !isStreaming ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="chat-markdown-chrome-action"
+                    aria-label={showSource ? "Show diagram" : "Show code"}
+                    onClick={() => setShowSource((value) => !value)}
+                  />
+                }
+              >
+                {showSource ? <WorkflowIcon className="size-3" /> : <CodeIcon className="size-3" />}
+              </TooltipTrigger>
+              <TooltipPopup side="top">{showSource ? "Show diagram" : "Show code"}</TooltipPopup>
+            </Tooltip>
+          ) : null}
           <Tooltip>
             <TooltipTrigger
               render={
@@ -725,7 +775,15 @@ function MarkdownCodeBlock({
           </Tooltip>
         </span>
       </div>
-      {children}
+      {showDiagram ? (
+        <RenderErrorBoundary resetKeys={[code, theme]} fallback={children}>
+          <Suspense fallback={children}>
+            <MermaidDiagram source={code} onExpand={onExpand} />
+          </Suspense>
+        </RenderErrorBoundary>
+      ) : (
+        children
+      )}
     </div>
   );
 }
@@ -1349,12 +1407,14 @@ function ChatMarkdown({
   environmentId: explicitEnvironmentId,
   extraRemarkPlugins,
 }: ChatMarkdownProps) {
+  const mathEnabled = useClientSettings((settings) => settings.mathRenderingEnabled);
   const remarkPlugins = useMemo(() => {
     const base = lineBreaks
       ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS
       : CHAT_MARKDOWN_REMARK_PLUGINS;
-    return extraRemarkPlugins ? [...base, ...extraRemarkPlugins] : base;
-  }, [lineBreaks, extraRemarkPlugins]);
+    const plugins = mathEnabled ? [...base, ...CHAT_MATH_REMARK_PLUGINS] : base;
+    return extraRemarkPlugins ? [...plugins, ...extraRemarkPlugins] : plugins;
+  }, [lineBreaks, extraRemarkPlugins, mathEnabled]);
   const { resolvedTheme } = useTheme();
   const [imagePreview, setImagePreview] = useState<ExpandedImagePreview | null>(null);
   const mediaEnvironmentId = threadRef?.environmentId ?? explicitEnvironmentId;
@@ -1698,6 +1758,10 @@ function ChatMarkdown({
         );
       },
       code({ node, children, className, ...props }) {
+        const math = mathEnabled ? mathKind(className) : null;
+        if (math === "inline") {
+          return <MarkdownMath tex={nodeToPlainText(children)} display={false} />;
+        }
         if (node?.properties?.dataInlineCode != null) {
           const codeText = nodeToPlainText(children);
           const fileLinkMeta =
@@ -1726,6 +1790,13 @@ function ChatMarkdown({
         }
 
         const language = extractFenceLanguage(codeBlock.className);
+        if (
+          mathEnabled &&
+          language === "math" &&
+          (!isStreaming || mathKind(codeBlock.className) === "display")
+        ) {
+          return <MarkdownMath tex={codeBlock.code} display />;
+        }
         const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
         return (
           <MarkdownCodeBlock
@@ -1733,6 +1804,10 @@ function ChatMarkdown({
             language={language}
             fenceTitle={fenceTitle}
             theme={resolvedTheme}
+            isStreaming={isStreaming}
+            onExpand={(url) =>
+              setImagePreview({ images: [{ src: url, name: "Diagram.svg" }], index: 0 })
+            }
           >
             <CodeHighlightErrorBoundary fallback={<pre {...props}>{children}</pre>}>
               <Suspense fallback={<pre {...props}>{children}</pre>}>
@@ -1756,6 +1831,7 @@ function ChatMarkdown({
     fileLinkParentSuffixByPath,
     inlineCodeFileLinkMetaByText,
     isStreaming,
+    mathEnabled,
     markdownFileLinkMetaByHref,
     onTaskListChange,
     openInPreferredEditor,

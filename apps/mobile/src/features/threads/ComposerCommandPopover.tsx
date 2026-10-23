@@ -11,12 +11,14 @@ import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { GlassSurface } from "../../components/GlassSurface";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
+import { cn } from "../../lib/cn";
 export type ComposerCommandItem =
   | {
       readonly id: string;
       readonly type: "path";
       readonly path: string;
       readonly kind: "file" | "directory";
+      readonly isIgnored?: boolean | undefined;
       readonly label: string;
       readonly description: string;
     }
@@ -128,8 +130,14 @@ const CommandRow = memo(function CommandRow(props: {
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityHint={
+        props.item.type === "path" && props.item.isIgnored ? "Ignored by Git" : undefined
+      }
       onPress={props.onPress}
-      className="flex-row items-center gap-2.5 border-border px-3.5 py-2.5 active:opacity-60"
+      className={cn(
+        "flex-row items-center gap-2.5 border-border px-3.5 py-2.5 active:opacity-60",
+        props.item.type === "path" && props.item.isIgnored && "opacity-55",
+      )}
       style={{ borderBottomWidth: props.isLast ? 0 : StyleSheet.hairlineWidth }}
     >
       {props.item.type === "path" ? (
