@@ -18,6 +18,8 @@ import type {
   EnvironmentProject,
   EnvironmentThread,
   EnvironmentThreadShell,
+  ThreadShellStructure as EnvironmentThreadShellStructure,
+  ThreadStructure as EnvironmentThreadStructure,
 } from "@t3tools/client-runtime/state/shell";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
@@ -54,6 +56,11 @@ export interface ChatMessage extends Omit<OrchestrationMessage, "attachments"> {
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
 }
 
+/** A ChatMessage of a {@link ThreadStructure}: assistant messages carry no streamed text. */
+export type ChatMessageStructure =
+  | (Omit<ChatMessage, "role" | "text" | "updatedAt"> & { readonly role: "assistant" })
+  | (ChatMessage & { readonly role: Exclude<ChatMessage["role"], "assistant"> });
+
 export type ProposedPlan = OrchestrationProposedPlan;
 export type TurnDiffFileChange = OrchestrationCheckpointFile;
 export type TurnDiffSummary = OrchestrationCheckpointSummary;
@@ -61,6 +68,8 @@ export type TurnDiffSummary = OrchestrationCheckpointSummary;
 export type Project = EnvironmentProject;
 export type Thread = EnvironmentThread;
 export type ThreadShell = EnvironmentThreadShell;
+export type ThreadStructure = EnvironmentThreadStructure;
+export type ThreadShellStructure = EnvironmentThreadShellStructure;
 
 export interface ThreadTurnState {
   latestTurn: OrchestrationLatestTurn | null;

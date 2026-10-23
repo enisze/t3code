@@ -83,7 +83,7 @@ import {
   useVcsInitAction,
   useVcsPullAction,
 } from "~/lib/sourceControlActions";
-import { useThread } from "~/state/entities";
+import { useThreadStructure } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
 import { sourceControlEnvironment } from "~/state/sourceControl";
@@ -1020,7 +1020,7 @@ export default function GitActionsControl({
         ? store.getDraftThreadByRef(activeThreadRef)
         : null,
   );
-  const activeServerThread = useThread(activeThreadRef, {
+  const activeServerThread = useThreadStructure(activeThreadRef, {
     waitForShell: activeDraftThread !== null,
   });
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);

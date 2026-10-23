@@ -311,7 +311,7 @@ export function canSettle(
 export type ChangeRequestStateLike = "open" | "closed" | "merged";
 
 export function effectiveSettled(
-  shell: OrchestrationThreadShell,
+  shell: Omit<OrchestrationThreadShell, "updatedAt">,
   options: {
     readonly now: string;
     readonly autoSettleAfterDays: number | null;
@@ -358,7 +358,9 @@ export function effectiveSettled(
   );
 }
 
-export function threadLastActivityAt(shell: OrchestrationThreadShell): string | null {
+export function threadLastActivityAt(
+  shell: Pick<OrchestrationThreadShell, "latestUserMessageAt" | "latestTurn">,
+): string | null {
   const candidates = [
     shell.latestUserMessageAt,
     shell.latestTurn?.requestedAt,

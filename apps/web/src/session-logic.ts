@@ -127,12 +127,12 @@ export interface LatestProposedPlanState {
   implementationThreadId: ThreadId | null;
 }
 
-export type TimelineEntry =
+export type TimelineEntry<Message = ChatMessage> =
   | {
       id: string;
       kind: "message";
       createdAt: string;
-      message: ChatMessage;
+      message: Message;
     }
   | {
       id: string;
@@ -1412,31 +1412,33 @@ function compareActivityLifecycleRank(kind: string): number {
   return 1;
 }
 
-export function deriveTimelineEntries(
-  messages: ReadonlyArray<ChatMessage>,
+export function deriveTimelineEntries<
+  Message extends Pick<ChatMessage, "id" | "createdAt"> = ChatMessage,
+>(
+  messages: ReadonlyArray<Message>,
   proposedPlans: ReadonlyArray<ProposedPlan>,
   workEntries: ReadonlyArray<WorkLogEntry>,
   diffEntries: ReadonlyArray<DiffShownEntry> = [],
-): TimelineEntry[] {
-  const messageRows: TimelineEntry[] = messages.map((message) => ({
+): TimelineEntry<Message>[] {
+  const messageRows: TimelineEntry<Message>[] = messages.map((message) => ({
     id: message.id,
     kind: "message",
     createdAt: message.createdAt,
     message,
   }));
-  const proposedPlanRows: TimelineEntry[] = proposedPlans.map((proposedPlan) => ({
+  const proposedPlanRows: TimelineEntry<Message>[] = proposedPlans.map((proposedPlan) => ({
     id: proposedPlan.id,
     kind: "proposed-plan",
     createdAt: proposedPlan.createdAt,
     proposedPlan,
   }));
-  const workRows: TimelineEntry[] = workEntries.map((entry) => ({
+  const workRows: TimelineEntry<Message>[] = workEntries.map((entry) => ({
     id: entry.id,
     kind: "work",
     createdAt: entry.createdAt,
     entry,
   }));
-  const diffRows: TimelineEntry[] = diffEntries.map((entry) => ({
+  const diffRows: TimelineEntry<Message>[] = diffEntries.map((entry) => ({
     id: entry.id,
     kind: "diff",
     createdAt: entry.createdAt,
