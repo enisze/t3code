@@ -25,6 +25,8 @@ export const MarkdownMath = memo(function MarkdownMath(props: {
           : "inline-block max-w-full align-middle whitespace-nowrap wrap-normal break-normal in-[.chat-markdown-table-container]:max-w-none in-[.chat-markdown-table-container]:overflow-visible"
       }
       data-markdown-math={props.display ? "display" : "inline"}
+      // Thread find does not search rendered math.
+      data-thread-find-ignore=""
       data-markdown-copy={props.display ? `${source}\n\n` : source}
       role={props.focusable === false ? undefined : "group"}
       aria-label={

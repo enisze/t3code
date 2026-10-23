@@ -42,6 +42,7 @@ import {
   OrchestrationGenerateContinuationSummaryError,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
+  OrchestrationSearchThreadError,
   OrchestrationSearchThreadsError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
@@ -80,6 +81,7 @@ import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/uns
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
+import * as ThreadFind from "./orchestration/ThreadFind.ts";
 import * as ServerConfig from "./config.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -557,6 +559,7 @@ const makeWsRpcLayer = (
         }
       };
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+      const threadFind = yield* ThreadFind.ThreadFind;
       const keybindings = yield* Keybindings.Keybindings;
       const environmentTheme = yield* EnvironmentTheme.EnvironmentThemeService;
       const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
@@ -1387,6 +1390,7 @@ const makeWsRpcLayer = (
                   shellRevealInFileManager: true,
                   shellRevealInFileManagerKind: fileManagerRevealKind,
                 }),
+            threadFind: true,
             threadResumeCompletionMarker: true,
             threadSnapshotPagination: true,
           };
@@ -1536,6 +1540,20 @@ const makeWsRpcLayer = (
                 (cause) =>
                   new OrchestrationSearchThreadsError({
                     message: "Failed to search threads",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.searchThread]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.searchThread,
+            threadFind.search(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationSearchThreadError({
+                    message: "Could not search this thread",
                     cause,
                   }),
               ),

@@ -1,4 +1,4 @@
-import { memo, useState, useId } from "react";
+import { memo, use, useCallback, useState, useId } from "react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -13,6 +13,7 @@ import {
   stripDisplayedPlanMarkdown,
 } from "../../proposedPlan";
 import ChatMarkdown from "../ChatMarkdown";
+import { MarkdownFindContext, useFindRevealRef } from "./markdownFindContext";
 import { EllipsisIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -73,6 +74,12 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   const collapsedPreview = canCollapse
     ? buildCollapsedProposedPlanPreviewMarkdown(planMarkdown, { maxLines: 10 })
     : null;
+  const isCollapsed = canCollapse && !expanded;
+  // While finding, the full plan stays mounted but clipped, so a match past the
+  // preview can be counted and then opened only once it is selected.
+  const showPreview = isCollapsed && !use(MarkdownFindContext);
+  const revealForFind = useCallback(() => setExpanded(true), []);
+  const findRevealRef = useFindRevealRef(revealForFind);
   const downloadFilename = buildProposedPlanMarkdownFilename(planMarkdown);
   const saveContents = normalizePlanMarkdownForExport(planMarkdown);
 
@@ -150,7 +157,9 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <Badge variant="secondary">Plan</Badge>
-          <p className="truncate text-sm font-medium text-foreground">{title}</p>
+          <p data-thread-find-text="true" className="truncate text-sm font-medium text-foreground">
+            {title}
+          </p>
         </div>
         <Menu>
           <MenuTrigger
@@ -170,8 +179,13 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
         </Menu>
       </div>
       <div className="mt-4">
-        <div className={cn("relative", canCollapse && !expanded && "max-h-104 overflow-hidden")}>
-          {canCollapse && !expanded ? (
+        <div
+          ref={findRevealRef}
+          className={cn("relative", isCollapsed && "max-h-104 overflow-hidden")}
+          data-thread-find-text="true"
+          data-thread-find-fold={isCollapsed ? "" : undefined}
+        >
+          {showPreview ? (
             <ChatMarkdown
               text={collapsedPreview ?? ""}
               cwd={cwd}
@@ -186,7 +200,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               isStreaming={false}
             />
           )}
-          {canCollapse && !expanded ? (
+          {isCollapsed ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />
           ) : null}
         </div>

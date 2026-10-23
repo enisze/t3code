@@ -126,6 +126,8 @@ export function MediaVideoPlayer({
       {failed ? (
         <span
           role="alert"
+          // Thread find indexes no media text, so it must not highlight this either.
+          data-thread-find-ignore=""
           className={cn(
             // Same 16:9 slot as the loading and playing states, so a failed or
             // retried video does not move the rows below it.

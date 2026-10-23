@@ -29,6 +29,14 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       staleTimeMs: 30_000,
       idleTtlMs: 60_000,
     }),
+    // Find in one thread. Results follow live content, so the client refreshes
+    // them as the thread changes rather than trusting a cache.
+    threadFind: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:thread-find",
+      tag: ORCHESTRATION_WS_METHODS.searchThread,
+      staleTimeMs: 0,
+      idleTtlMs: 30_000,
+    }),
     archivedShellSnapshot: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:archived-shell-snapshot",
       tag: ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot,

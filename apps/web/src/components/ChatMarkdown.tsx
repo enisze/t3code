@@ -42,10 +42,20 @@ import { defaultUrlTransform } from "react-markdown";
 import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-images";
 import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
-import rehypeRaw from "rehype-raw";
-import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
-import remarkBreaks from "remark-breaks";
-import remarkGfm from "remark-gfm";
+import { MarkdownFindContext, useFindRevealRef } from "./chat/markdownFindContext";
+import {
+  CHAT_MARKDOWN_REHYPE_PLUGINS,
+  CHAT_MARKDOWN_REMARK_PLUGINS,
+  CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+  CHAT_MATH_REMARK_PLUGINS,
+} from "@t3tools/shared/chatMarkdownPipeline";
+import {
+  buildFileLinkParentSuffixByPath,
+  extractChatMarkdownLinkHrefs,
+  extractInlineCodeSpans,
+  fileLinkLabel,
+  normalizeMarkdownLinkHrefKey,
+} from "@t3tools/shared/markdownLinks";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import { CHAT_FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
@@ -72,9 +82,7 @@ import {
   serializeTableElementToCsv,
   serializeTableElementToMarkdown,
 } from "../markdown-clipboard";
-import { remarkNormalizeListItemIndentation } from "../markdown-list-indentation";
 import {
-  normalizeMarkdownLinkDestination,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   rewriteMarkdownFileUriHref,
@@ -112,7 +120,6 @@ import {
   BrowserPreviewUnavailableError,
 } from "../browser/openFileInPreview";
 import { mathKind } from "@t3tools/shared/markdownMath";
-import remarkMath from "remark-math";
 import { MarkdownMath } from "./chat/MarkdownMath";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 
@@ -121,10 +128,6 @@ const MermaidDiagram = lazy(() =>
     default: module.MermaidDiagram,
   })),
 );
-
-const CHAT_MATH_REMARK_PLUGINS = [
-  [remarkMath, { singleDollarTextMath: true }],
-] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 
 const CHAT_MARKDOWN_MEDIA_MAX_WIDTH_CLASS_NAME = "max-w-[min(100%,30rem)]";
 
@@ -212,49 +215,6 @@ function findTaskListMarkerOffset(markdown: string, listItemStart: number): numb
   if (!match?.[1]) return null;
   return listItemStart + firstLine.indexOf(match[1]);
 }
-const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
-  ...defaultSchema,
-  attributes: {
-    ...defaultSchema.attributes,
-    "*": (defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
-    code: [
-      ...(defaultSchema.attributes?.code ?? []).filter(
-        (attribute) => !Array.isArray(attribute) || attribute[0] !== "className",
-      ),
-      ["className", /^language-./, "math-inline", "math-display"],
-      "dataCodeMeta",
-      "dataInlineCode",
-    ],
-  },
-  protocols: {
-    // Image sources are classified before rendering; host paths become signed URLs.
-    ...Object.fromEntries(
-      Object.entries(defaultSchema.protocols ?? {}).filter(([property]) => property !== "src"),
-    ),
-    href: [...(defaultSchema.protocols?.href ?? []), "file"],
-  },
-} satisfies Parameters<typeof rehypeSanitize>[0];
-
-const CHAT_MARKDOWN_REMARK_PLUGINS = [
-  remarkGfm,
-  remarkNormalizeListItemIndentation,
-  remarkPreserveCodeMeta,
-  remarkTagInlineCode,
-] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
-
-const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
-  remarkGfm,
-  remarkNormalizeListItemIndentation,
-  remarkBreaks,
-  remarkPreserveCodeMeta,
-  remarkTagInlineCode,
-] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
-
-const CHAT_MARKDOWN_REHYPE_PLUGINS = [
-  rehypeRaw,
-  [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
-] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
-
 function extractFenceLanguage(className: string | undefined): string {
   const match = className?.match(CODE_FENCE_LANGUAGE_REGEX);
   const raw = match?.[1] ?? "text";
@@ -290,61 +250,6 @@ function extractPreCodeMeta(node: unknown): string | undefined {
   const codeNode = children?.find((child) => child?.type === "element" && child.tagName === "code");
   const meta = codeNode?.properties?.dataCodeMeta ?? codeNode?.data?.meta;
   return typeof meta === "string" && meta.trim().length > 0 ? meta.trim() : undefined;
-}
-
-type MarkdownAstNode = {
-  type?: string;
-  meta?: unknown;
-  data?: {
-    hProperties?: Record<string, unknown>;
-  };
-  children?: MarkdownAstNode[];
-};
-
-function remarkPreserveCodeMeta() {
-  return (tree: MarkdownAstNode) => {
-    const visit = (node: MarkdownAstNode) => {
-      if (node.type === "code" && typeof node.meta === "string" && node.meta.trim().length > 0) {
-        node.data = {
-          ...node.data,
-          hProperties: {
-            ...node.data?.hProperties,
-            dataCodeMeta: node.meta.trim(),
-          },
-        };
-      }
-      node.children?.forEach(visit);
-    };
-
-    visit(tree);
-  };
-}
-
-/**
- * Fenced code also lands on the `code` component, and inline vs block is no
- * longer distinguishable there once both render `<code>` — so inline spans are
- * tagged on the mdast, where the distinction still exists. Code inside a link
- * label stays untagged: linkifying it would nest an anchor inside the link's
- * anchor and steal its clicks.
- */
-function remarkTagInlineCode() {
-  return (tree: MarkdownAstNode) => {
-    const visit = (node: MarkdownAstNode, insideLink: boolean) => {
-      if (node.type === "inlineCode" && !insideLink) {
-        node.data = {
-          ...node.data,
-          hProperties: {
-            ...node.data?.hProperties,
-            dataInlineCode: "",
-          },
-        };
-      }
-      const childInsideLink = insideLink || node.type === "link" || node.type === "linkReference";
-      node.children?.forEach((child) => visit(child, childInsideLink));
-    };
-
-    visit(tree, false);
-  };
 }
 
 function nodeToPlainText(node: ReactNode): string {
@@ -561,6 +466,11 @@ function MarkdownDetails({
   open = false,
 }: Pick<React.ComponentProps<"details">, "children" | "open">) {
   const [isOpen, setIsOpen] = useState(open);
+  const searching = use(MarkdownFindContext);
+  const revealForFind = useCallback(() => setIsOpen(true), []);
+  // Base UI only listens for `beforematch` on a panel mounted at its first
+  // render; a closed panel mounts later, when find starts, so listen here.
+  const findRevealRef = useFindRevealRef(revealForFind);
   const childNodes = Children.toArray(children);
   const summaryIndex = childNodes.findIndex(
     (child) => isValidElement(child) && child.type === "summary",
@@ -574,7 +484,7 @@ function MarkdownDetails({
 
   return (
     <Collapsible
-      defaultOpen={open}
+      open={isOpen}
       onOpenChange={setIsOpen}
       className="chat-markdown-details my-2 border-y border-border/60"
       data-markdown-details=""
@@ -590,7 +500,8 @@ function MarkdownDetails({
         />
         <span>{summary}</span>
       </CollapsibleTrigger>
-      <CollapsiblePanel>
+      {/* While find is open, closed content stays mounted and hidden so it can be searched. */}
+      <CollapsiblePanel ref={findRevealRef} hiddenUntilFound={searching}>
         <div className="pb-3 ps-6 text-foreground/80" data-markdown-details-content="">
           {content}
         </div>
@@ -707,10 +618,13 @@ function MarkdownCodeBlock({
   return (
     <div
       className="chat-markdown-codeblock leading-snug"
+      // Thread find does not search diagrams, whether drawn or shown as source.
+      {...(isMermaid ? { "data-thread-find-ignore": "" } : {})}
       data-language={language}
       data-wrap={wrapped ? "true" : "false"}
     >
-      <div className="chat-markdown-codeblock-header select-none">
+      {/* Find does not count the header, so it must not highlight it either. */}
+      <div className="chat-markdown-codeblock-header select-none" data-thread-find-ignore="">
         <span className="chat-markdown-codeblock-title">
           <MarkdownCodeBlockTitleContent
             fenceTitle={fenceTitle}
@@ -886,99 +800,8 @@ interface MarkdownFileLinkProps {
   className?: string | undefined;
 }
 
-const MARKDOWN_LINK_HREF_PATTERN = /\[[^\]]*]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
 const MARKDOWN_FILE_LINK_CLASS_NAME =
   "chat-markdown-file-link cursor-pointer transition-colors hover:bg-accent/70";
-
-function pathParentSegments(path: string): string[] {
-  const normalized = path.replaceAll("\\", "/");
-  const segments = normalized.split("/").filter((segment) => segment.length > 0);
-  return segments.slice(0, -1);
-}
-
-function buildFileLinkParentSuffixByPath(filePaths: ReadonlyArray<string>): Map<string, string> {
-  const groups = new Map<string, Set<string>>();
-  for (const filePath of filePaths) {
-    const pathSegments = filePath
-      .replaceAll("\\", "/")
-      .split("/")
-      .filter((segment) => segment.length > 0);
-    const basename = pathSegments[pathSegments.length - 1];
-    if (!basename) continue;
-    const group = groups.get(basename) ?? new Set<string>();
-    group.add(filePath);
-    groups.set(basename, group);
-  }
-
-  const suffixByPath = new Map<string, string>();
-  for (const group of groups.values()) {
-    const uniquePaths = [...group];
-    if (uniquePaths.length < 2) continue;
-
-    const parentSegmentsByPath = new Map(
-      uniquePaths.map((filePath) => [filePath, pathParentSegments(filePath)]),
-    );
-    const minUniqueDepthByPath = new Map<string, number>();
-
-    for (const filePath of uniquePaths) {
-      const segments = parentSegmentsByPath.get(filePath) ?? [];
-      let resolvedDepth = segments.length;
-      for (let depth = 1; depth <= segments.length; depth += 1) {
-        const candidate = segments.slice(-depth).join("/");
-        const collision = uniquePaths.some((otherPath) => {
-          if (otherPath === filePath) return false;
-          const otherSegments = parentSegmentsByPath.get(otherPath) ?? [];
-          return otherSegments.slice(-depth).join("/") === candidate;
-        });
-        if (!collision) {
-          resolvedDepth = depth;
-          break;
-        }
-      }
-      minUniqueDepthByPath.set(filePath, resolvedDepth);
-    }
-
-    for (const filePath of uniquePaths) {
-      const segments = parentSegmentsByPath.get(filePath) ?? [];
-      if (segments.length === 0) continue;
-      const minUniqueDepth = minUniqueDepthByPath.get(filePath) ?? 1;
-      const suffixDepth = Math.min(segments.length, Math.max(minUniqueDepth, 2));
-      suffixByPath.set(filePath, segments.slice(-suffixDepth).join("/"));
-    }
-  }
-
-  return suffixByPath;
-}
-
-const FENCED_CODE_SEGMENT_PATTERN = /(```[\s\S]*?(?:```|$))/;
-const INLINE_CODE_SPAN_PATTERN = /`([^`\n]+)`/g;
-
-function extractInlineCodeSpans(text: string): string[] {
-  const spans: string[] = [];
-  const segments = text.split(FENCED_CODE_SEGMENT_PATTERN);
-  for (let index = 0; index < segments.length; index += 2) {
-    for (const match of (segments[index] ?? "").matchAll(INLINE_CODE_SPAN_PATTERN)) {
-      const span = match[1]?.trim();
-      if (span) spans.push(span);
-    }
-  }
-  return spans;
-}
-
-function extractMarkdownLinkHrefs(text: string): string[] {
-  const hrefs: string[] = [];
-  for (const match of text.matchAll(MARKDOWN_LINK_HREF_PATTERN)) {
-    const href = match[1]?.trim();
-    if (!href) continue;
-    hrefs.push(href);
-  }
-  return hrefs;
-}
-
-function normalizeMarkdownLinkHrefKey(href: string): string {
-  const normalizedHref = normalizeMarkdownLinkDestination(href);
-  return rewriteMarkdownFileUriHref(normalizedHref) ?? normalizedHref;
-}
 
 const MARKDOWN_LINK_FAVICON_CLASS_NAME = "block size-full shrink-0 select-none";
 
@@ -1442,7 +1265,7 @@ function ChatMarkdown({
       string,
       NonNullable<ReturnType<typeof resolveMarkdownFileLinkMeta>>
     >();
-    for (const href of extractMarkdownLinkHrefs(text)) {
+    for (const href of extractChatMarkdownLinkHrefs(text)) {
       const normalizedHref = normalizeMarkdownLinkHrefKey(href);
       if (metaByHref.has(normalizedHref)) continue;
       const meta = resolveMarkdownFileLinkMeta(normalizedHref, cwd, imageBaseDir ?? cwd);
@@ -1538,17 +1361,6 @@ function ChatMarkdown({
       copyMarkdown: string,
       className?: string,
     ) => {
-      const parentSuffix = fileLinkParentSuffixByPath.get(fileLinkMeta.filePath);
-      const labelParts = [fileLinkMeta.basename];
-      if (typeof parentSuffix === "string" && parentSuffix.length > 0) {
-        labelParts.push(parentSuffix);
-      }
-      if (fileLinkMeta.line) {
-        labelParts.push(
-          `L${fileLinkMeta.line}${fileLinkMeta.column ? `:C${fileLinkMeta.column}` : ""}`,
-        );
-      }
-
       return (
         <MarkdownFileLink
           href={fileLinkMeta.targetPath}
@@ -1557,7 +1369,14 @@ function ChatMarkdown({
           displayPath={fileLinkMeta.displayPath}
           workspaceRelativePath={fileLinkMeta.workspaceRelativePath}
           line={fileLinkMeta.line}
-          label={labelParts.join(" · ")}
+          label={fileLinkLabel(
+            {
+              path: fileLinkMeta.filePath,
+              ...(fileLinkMeta.line !== undefined ? { line: fileLinkMeta.line } : {}),
+              ...(fileLinkMeta.column !== undefined ? { column: fileLinkMeta.column } : {}),
+            },
+            fileLinkParentSuffixByPath,
+          )}
           copyMarkdown={copyMarkdown}
           theme={resolvedTheme}
           threadRef={threadRef}
@@ -2239,7 +2058,8 @@ function ChatMarkdownMediaUnavailableLabel(props: {
 }) {
   const label = props.kind === "video" ? "Video unavailable" : "Image unavailable";
   return (
-    <span className="inline-flex items-center gap-1.5">
+    // Find indexes no image text, so this fallback must not highlight either.
+    <span data-thread-find-ignore="" className="inline-flex items-center gap-1.5">
       <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
       {props.alt.length > 0 ? `${label} · ${props.alt}` : label}
     </span>

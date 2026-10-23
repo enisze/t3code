@@ -65,6 +65,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
@@ -121,6 +122,8 @@ import { useTheme } from "../hooks/useTheme";
 import { useReopenClosedChat } from "../hooks/useReopenClosedChat";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
+import { isPreviewFocused } from "../lib/previewFocus";
+import { requestOlderThreadTurns } from "@t3tools/client-runtime/state/threads";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
@@ -228,7 +231,7 @@ import {
   serverEnvironment,
 } from "../state/server";
 import { terminalEnvironment } from "../state/terminal";
-import { retryThreadDetail, threadEnvironment } from "../state/threads";
+import { retryThreadDetail, threadEnvironment, useEnvironmentThread } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
@@ -248,6 +251,7 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { FileViewModeToggle } from "./FileViewModeToggle";
 import { ThreadTimeline } from "./chat/ThreadTimeline";
+import { ThreadFind, ThreadFindProvider, type ThreadFindControls } from "./chat/ThreadFindProvider";
 import { ChatHeader } from "./chat/ChatHeader";
 import { WorktreeThreadTabs } from "./chat/WorktreeThreadTabs";
 import { PanelLayoutControls } from "./chat/PanelLayoutControls";
@@ -2763,6 +2767,30 @@ function ChatViewContent(props: ChatViewProps) {
   const focusComposer = useCallback(() => {
     composerRef.current?.focusAtEnd();
   }, [composerRef]);
+  // Find searches the server's copy of the whole thread. Drafts have none, and a
+  // server without thread find leaves Mod+F to the browser.
+  const threadFindEnabled = isServerThread && serverConfig?.threadFind === true;
+  const threadFindControlsRef = useRef<ThreadFindControls | null>(null);
+  const [isThreadFindActive, setIsThreadFindActive] = useState(false);
+  const openThreadFind = useCallback(() => threadFindControlsRef.current?.open(), []);
+  const closeThreadFind = useCallback(() => threadFindControlsRef.current?.close(), []);
+  const activeThreadState = useEnvironmentThread(
+    activeThreadRef?.environmentId ?? null,
+    activeThreadRef?.threadId ?? null,
+  );
+  const threadHistoryPage = Option.getOrNull(activeThreadState.page);
+  const threadHistory = useMemo(
+    () =>
+      activeThreadRef && threadHistoryPage
+        ? {
+            hasMore: threadHistoryPage.hasMore,
+            loading: threadHistoryPage.loadingOlder,
+            loadOlder: () =>
+              requestOlderThreadTurns(activeThreadRef.environmentId, activeThreadRef.threadId),
+          }
+        : null,
+    [activeThreadRef, threadHistoryPage],
+  );
   const scheduleComposerFocus = useCallback(() => {
     window.requestAnimationFrame(() => {
       focusComposer();
@@ -4448,6 +4476,8 @@ function ChatViewContent(props: ChatViewProps) {
       if (!activeThreadId || isCommandPaletteOpen()) {
         return;
       }
+      // Let contextual controls claim Escape before the bubbling find handler.
+      if (isThreadFindActive && event.key === "Escape") return;
       const terminalFocusOwner = getTerminalFocusOwner();
       if (event.defaultPrevented && terminalFocusOwner === null) {
         return;
@@ -4455,6 +4485,7 @@ function ChatViewContent(props: ChatViewProps) {
       const shortcutContext = {
         terminalFocus: terminalFocusOwner !== null,
         terminalOpen: Boolean(terminalUiState.terminalOpen),
+        previewFocus: isPreviewFocused(),
         modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
       };
 
@@ -4572,10 +4603,57 @@ function ChatViewContent(props: ChatViewProps) {
       event.stopPropagation();
       void runProjectScript(script);
     };
+    // Thread find listens while the key bubbles, so a diff viewer that finds within
+    // itself claims mod+f (and Escape) first by preventing the default.
+    const handleFindKey = (event: globalThis.KeyboardEvent) => {
+      if (
+        !activeThreadId ||
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.keyCode === 229 ||
+        isCommandPaletteOpen()
+      )
+        return;
+      const shortcutContext = {
+        terminalFocus: getTerminalFocusOwner() !== null,
+        terminalOpen: Boolean(terminalUiState.terminalOpen),
+        previewFocus: isPreviewFocused(),
+        modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
+      };
+      if (event.key === "Escape") {
+        if (
+          !isThreadFindActive ||
+          shortcutContext.terminalFocus ||
+          shortcutContext.previewFocus ||
+          shortcutContext.modelPickerOpen
+        )
+          return;
+        event.preventDefault();
+        closeThreadFind();
+        focusComposer();
+        return;
+      }
+      if (
+        !threadFindEnabled ||
+        resolveShortcutCommand(event, keybindings, { context: shortcutContext }) !== "chat.find"
+      )
+        return;
+      event.preventDefault();
+      openThreadFind();
+    };
     window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
+    window.addEventListener("keydown", handleFindKey);
+    return () => {
+      window.removeEventListener("keydown", handler, true);
+      window.removeEventListener("keydown", handleFindKey);
+    };
   }, [
     activeProject,
+    threadFindEnabled,
+    isThreadFindActive,
+    openThreadFind,
+    closeThreadFind,
+    focusComposer,
     activeRightPanelSurface,
     addTerminalSurface,
     terminalUiState.terminalOpen,
@@ -6244,66 +6322,76 @@ function ChatViewContent(props: ChatViewProps) {
               />
             </div>
             {/* Messages Wrapper */}
-            <div
-              className="relative flex min-h-0 flex-1 flex-col"
-              style={{ paddingBottom: timelineComposerLayout.viewportPaddingBottom }}
+            <ThreadFindProvider
+              thread={activeThreadRef}
+              enabled={threadFindEnabled}
+              skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
+              controlsRef={threadFindControlsRef}
+              onOpenChange={setIsThreadFindActive}
             >
-              {/* Messages — LegendList handles virtualization and scrolling internally */}
-              <ThreadTimeline
-                key={activeThread.id}
-                liveMessagesRef={serverThread !== null ? routeThreadRef : null}
-                onRenderedEntriesChange={followTimelineEnd}
-                isWorking={isWorking}
-                activeTurnInProgress={isWorking || !latestTurnSettled}
-                activeTurnStartedAt={activeWorkStartedAt}
-                listRef={legendListRef}
-                timelineEntries={timelineEntries}
-                latestTurn={activeLatestTurn}
-                runningTurnId={
-                  activeThread.session?.status === "running"
-                    ? activeThread.session.activeTurnId
-                    : null
-                }
-                turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
-                activeThreadEnvironmentId={activeThread.environmentId}
-                routeThreadKey={routeThreadKey}
-                onOpenTurnDiff={onOpenTurnDiff}
-                onOpenGitDiff={onOpenGitDiff}
-                revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
-                onRevertUserMessage={onRevertUserMessage}
-                onStartNewChatFromMessage={onStartNewChatFromMessage}
-                isRevertingCheckpoint={isRevertingCheckpoint}
-                onImageExpand={onExpandTimelineImage}
-                markdownCwd={gitCwd ?? undefined}
-                resolvedTheme={resolvedTheme}
-                timestampFormat={timestampFormat}
-                workspaceRoot={activeWorkspaceRoot}
-                skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
-                contentInsetEndAdjustment={timelineComposerLayout.contentInsetEndAdjustment}
-                onIsAtEndChange={onIsAtEndChange}
-                onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
-                hideEmptyPlaceholder={isDraftHeroState || threadDetailUnavailable}
-                topFadeEnabled={!hasTimelineTopBanner}
-              />
+              <div
+                className="relative flex min-h-0 flex-1 flex-col"
+                style={{ paddingBottom: timelineComposerLayout.viewportPaddingBottom }}
+              >
+                <ThreadFind onClose={focusComposer} />
+                {/* Messages — LegendList handles virtualization and scrolling internally */}
+                <ThreadTimeline
+                  key={activeThread.id}
+                  liveMessagesRef={serverThread !== null ? routeThreadRef : null}
+                  onRenderedEntriesChange={followTimelineEnd}
+                  isWorking={isWorking}
+                  activeTurnInProgress={isWorking || !latestTurnSettled}
+                  activeTurnStartedAt={activeWorkStartedAt}
+                  listRef={legendListRef}
+                  timelineEntries={timelineEntries}
+                  latestTurn={activeLatestTurn}
+                  runningTurnId={
+                    activeThread.session?.status === "running"
+                      ? activeThread.session.activeTurnId
+                      : null
+                  }
+                  turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
+                  activeThreadEnvironmentId={activeThread.environmentId}
+                  routeThreadKey={routeThreadKey}
+                  onOpenTurnDiff={onOpenTurnDiff}
+                  onOpenGitDiff={onOpenGitDiff}
+                  revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
+                  onRevertUserMessage={onRevertUserMessage}
+                  onStartNewChatFromMessage={onStartNewChatFromMessage}
+                  isRevertingCheckpoint={isRevertingCheckpoint}
+                  onImageExpand={onExpandTimelineImage}
+                  markdownCwd={gitCwd ?? undefined}
+                  resolvedTheme={resolvedTheme}
+                  timestampFormat={timestampFormat}
+                  workspaceRoot={activeWorkspaceRoot}
+                  skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
+                  contentInsetEndAdjustment={timelineComposerLayout.contentInsetEndAdjustment}
+                  onIsAtEndChange={onIsAtEndChange}
+                  onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
+                  hideEmptyPlaceholder={isDraftHeroState || threadDetailUnavailable}
+                  topFadeEnabled={!hasTimelineTopBanner}
+                  history={threadHistory}
+                />
 
-              {/* scroll to end pill — shown when user has scrolled away from the live edge */}
-              {showScrollToBottom && (
-                <div
-                  className="pointer-events-none absolute left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5"
-                  style={{ bottom: composerOverlayHeight + 4 }}
-                >
-                  <button
-                    type="button"
-                    aria-label="Scroll to end"
-                    onClick={() => scrollToEnd(true)}
-                    className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/60 bg-card px-3 py-1 text-muted-foreground text-xs shadow-sm transition-colors hover:border-border hover:text-foreground hover:cursor-pointer"
+                {/* scroll to end pill — shown when user has scrolled away from the live edge */}
+                {showScrollToBottom && !isThreadFindActive && (
+                  <div
+                    className="pointer-events-none absolute left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5"
+                    style={{ bottom: composerOverlayHeight + 4 }}
                   >
-                    <ChevronDownIcon className="size-3.5" />
-                    Scroll to end
-                  </button>
-                </div>
-              )}
-            </div>
+                    <button
+                      type="button"
+                      aria-label="Scroll to end"
+                      onClick={() => scrollToEnd(true)}
+                      className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/60 bg-card px-3 py-1 text-muted-foreground text-xs shadow-sm transition-colors hover:border-border hover:text-foreground hover:cursor-pointer"
+                    >
+                      <ChevronDownIcon className="size-3.5" />
+                      Scroll to end
+                    </button>
+                  </div>
+                )}
+              </div>
+            </ThreadFindProvider>
 
             {/* File content tab: fills the messages area while keeping the
                 composer docked below (still connected to the current chat).
@@ -6694,6 +6782,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
 }
 
+/** Whether a key event comes from inside a `@pierre/diffs` viewer, which has its own find. */
 export default function ChatView(props: ChatViewProps) {
   return (
     <DiffWorkerPoolProvider>

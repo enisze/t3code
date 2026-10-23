@@ -286,6 +286,42 @@
     "./markdownMath": {
       "types": "./src/markdownMath.ts",
       "import": "./src/markdownMath.ts"
+    },
+    "./markdownLinks": {
+      "types": "./src/markdownLinks.ts",
+      "import": "./src/markdownLinks.ts"
+    },
+    "./markdownListIndentation": {
+      "types": "./src/markdownListIndentation.ts",
+      "import": "./src/markdownListIndentation.ts"
+    },
+    "./chatMarkdownPipeline": {
+      "types": "./src/chatMarkdownPipeline.ts",
+      "import": "./src/chatMarkdownPipeline.ts"
+    },
+    "./inlineSkills": {
+      "types": "./src/inlineSkills.ts",
+      "import": "./src/inlineSkills.ts"
+    },
+    "./proposedPlanText": {
+      "types": "./src/proposedPlanText.ts",
+      "import": "./src/proposedPlanText.ts"
+    },
+    "./userMessageContexts": {
+      "types": "./src/userMessageContexts.ts",
+      "import": "./src/userMessageContexts.ts"
+    },
+    "./reviewCommentMessage": {
+      "types": "./src/reviewCommentMessage.ts",
+      "import": "./src/reviewCommentMessage.ts"
+    },
+    "./threadSearch": {
+      "types": "./src/threadSearch.ts",
+      "import": "./src/threadSearch.ts"
+    },
+    "./threadFindText": {
+      "types": "./src/threadFindText.ts",
+      "import": "./src/threadFindText.ts"
     }
   },
   "scripts": {
@@ -299,9 +335,13 @@
     "effect": "catalog:",
     "jose": "catalog:",
     "mdast-util-to-hast": "13.2.1",
+    "rehype-raw": "7.0.0",
+    "rehype-sanitize": "6.0.0",
+    "remark-breaks": "4.0.0",
     "remark-gfm": "4.0.1",
     "remark-math": "6.0.0",
     "remark-parse": "11.0.0",
+    "remark-rehype": "11.1.2",
     "unified": "11.0.5",
     "yaml": "catalog:"
   },
