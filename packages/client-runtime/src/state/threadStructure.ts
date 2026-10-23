@@ -170,7 +170,7 @@ export function createThreadShellStructureSelector(): (
   };
 }
 
-interface ThreadReadOptions {
+export interface ThreadReadOptions {
   /**
    * Client-reserved draft thread ids do not exist on the server until the
    * first send, so the detail is not subscribed until the shell appears.
