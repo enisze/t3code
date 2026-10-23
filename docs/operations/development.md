@@ -60,9 +60,10 @@ The workarounds live in the [web entry](../../apps/web/src/bootstrap.ts) and
 changed files, `knip:check` when code or a manifest changes, typecheck of the affected packages
 and their dependents, and the test files beside the changed files, each package's from its own
 directory. A dependency or patch change also gets an install check that catches unused patches
-before Release Smoke does. Knip findings fail the run only in files the branch changed, because
-`main` still has findings of its own; the rest are counted. A removed last import can leave an
-unused export in a file you did not touch, which only raises that count. It maps files to packages with
+before Release Smoke does. Knip findings fail the run only when the branch introduced them, in a
+file it added or on a line it added or changed, because `main` still has findings of its own; the
+rest are counted. A removed last import can leave an unused export on a line you did not touch,
+which only raises that count. It maps files to packages with
 [ci-changes.cjs](../../.github/scripts/ci-changes.cjs) and compares against the merge base with
 `origin/main`, or with a ref you pass. CI still runs every job, so a local pass does not promise
 a green CI run.

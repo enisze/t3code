@@ -179,10 +179,10 @@ const knipPasses = knipCheck.split(" && ").map((command, index, all) => {
   };
 });
 
-// main still has knip findings of its own, so a pass fails only on findings in
-// the files this branch changed and counts the rest. A removed last import can
-// leave an unused export in a file the branch did not touch; that only shows
-// as a higher count.
+// main still has knip findings of its own, so a pass fails only on findings the
+// branch introduced, in a file it added or on a line it added or changed, and
+// counts the rest. A removed last import can leave an unused export on a line
+// the branch did not touch; that only shows as a higher count.
 function judgeKnip(stdout: string, stderr: string) {
   let entries: Array<{ readonly file: string } & Record<string, unknown>>;
   try {
@@ -191,39 +191,92 @@ function judgeKnip(stdout: string, stderr: string) {
     // Not a report: knip itself failed.
     return { ok: false, output: `${stdout}${stderr}` };
   }
-  const changed = new Set(files);
+  const changedLines = branchChangedLines();
   const mine: Array<string> = [];
   let elsewhere = 0;
   for (const { file, ...categories } of entries) {
+    const lines = changedLines.get(file);
     for (const [category, value] of Object.entries(categories)) {
-      const names = knipFindingNames(value);
-      if (names.length === 0) continue;
-      if (changed.has(file)) mine.push(`${file}  ${category}: ${names.join(", ")}`);
-      else elsewhere += names.length;
+      const findings = knipFindings(value);
+      const introduced = findings.filter(
+        (finding) => lines === "all" || finding.lines.some((line) => lines?.has(line) === true),
+      );
+      if (introduced.length > 0) {
+        mine.push(`${file}  ${category}: ${introduced.map((finding) => finding.name).join(", ")}`);
+      }
+      elsewhere += findings.length - introduced.length;
     }
   }
-  const lines =
+  const report =
     elsewhere > 0
-      ? [
-          ...mine,
-          `${elsewhere} findings in files this branch did not change (knip:check lists them)`,
-        ]
+      ? [...mine, `${elsewhere} findings this branch did not introduce (knip:check lists them)`]
       : mine;
-  return { ok: mine.length === 0, output: lines.map((line) => `${line}\n`).join("") };
+  return { ok: mine.length === 0, output: report.map((line) => `${line}\n`).join("") };
 }
 
-// Findings are `{ name }` items or, for duplicate exports, groups of them.
-// Anything else nests findings under an owner name.
-function knipFindingNames(value: unknown): Array<string> {
+// The lines the branch added or changed in each file, from the diff against
+// the merge base, or "all" for a file it added. Untracked files count as added.
+function branchChangedLines() {
+  const result = new Map<string, Set<number> | "all">(untracked.map((file) => [file, "all"]));
+  for (const file of git("diff", "--name-only", "--no-renames", "--diff-filter=A", base, "--")) {
+    result.set(file, "all");
+  }
+  const diff = git(
+    "diff",
+    "--unified=0",
+    "--no-renames",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--src-prefix=a/",
+    "--dst-prefix=b/",
+    base,
+  );
+  let file: string | undefined;
+  // Only header lines name the file: an added line can also start with `+++ `.
+  let inHeader = false;
+  for (const line of diff) {
+    if (line.startsWith("diff --git ")) {
+      inHeader = true;
+      file = undefined;
+    } else if (inHeader && line.startsWith("+++ ")) {
+      file = line.startsWith("+++ b/") ? line.slice(6) : undefined;
+    } else if (line.startsWith("@@ ")) {
+      inHeader = false;
+      const hunk = /^@@ -\S+ \+(\d+)(?:,(\d+))? @@/.exec(line);
+      const lines = file === undefined ? undefined : (result.get(file) ?? new Set<number>());
+      if (hunk === null || file === undefined || lines === undefined || lines === "all") continue;
+      const start = Number(hunk[1]);
+      const count = hunk[2] === undefined ? 1 : Number(hunk[2]);
+      for (let number = start; number < start + count; number += 1) lines.add(number);
+      result.set(file, lines);
+    }
+  }
+  return result;
+}
+
+// Findings are `{ name, line }` items or, for duplicate exports, groups of
+// them; anything else nests findings under an owner name. A finding without a
+// line, such as an unused file, counts only in a file the branch added.
+function knipFindings(value: unknown): Array<{ name: string; lines: Array<number> }> {
   if (Array.isArray(value)) {
-    return value.flatMap((item) =>
-      Array.isArray(item) ? [knipFindingNames(item).join(" = ")] : knipFindingNames(item),
-    );
+    return value.flatMap((item) => {
+      if (!Array.isArray(item)) return knipFindings(item);
+      const members = knipFindings(item);
+      return [
+        {
+          name: members.map((member) => member.name).join(" = "),
+          lines: members.flatMap((member) => member.lines),
+        },
+      ];
+    });
   }
   if (value === null || typeof value !== "object") return [];
-  if ("name" in value) return [String(value.name)];
+  if ("name" in value) {
+    const lines = "line" in value && typeof value.line === "number" ? [value.line] : [];
+    return [{ name: String(value.name), lines }];
+  }
   return Object.entries(value).flatMap(([owner, members]) =>
-    knipFindingNames(members).map((name) => `${owner}.${name}`),
+    knipFindings(members).map((finding) => ({ ...finding, name: `${owner}.${finding.name}` })),
   );
 }
 
