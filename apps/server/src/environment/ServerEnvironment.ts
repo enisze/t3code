@@ -220,6 +220,7 @@ export const make = Effect.gen(function* () {
       threadSettlement: true,
       threadAutoSettlement: true,
       scheduledTasks: true,
+      scheduledTaskWebhookRules: true,
       threadRestartContinuation: true,
       threadSnooze: true,
       environmentThemes: true,

@@ -95,6 +95,10 @@
       "types": "./src/state/auth.ts",
       "default": "./src/state/auth.ts"
     },
+    "./scheduled-task-webhook": {
+      "types": "./src/scheduledTaskWebhook.ts",
+      "default": "./src/scheduledTaskWebhook.ts"
+    },
     "./state/scheduled-tasks": {
       "types": "./src/state/scheduledTasks.ts",
       "default": "./src/state/scheduledTasks.ts"

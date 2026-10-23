@@ -12,6 +12,18 @@ import {
   type AtomCommandResult,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import {
+  DEFAULT_WEBHOOK_COALESCE_SECONDS,
+  EMPTY_WEBHOOK_FILTER_DRAFT,
+  MAX_WEBHOOK_FILTERS,
+  WEBHOOK_FILTER_OPS,
+  parseWebhookCoalesceDraft,
+  parseWebhookFilterDrafts,
+  webhookCoalesceDraft,
+  webhookFilterDrafts,
+  webhookScheduleInput,
+  type WebhookFilterDraft,
+} from "@t3tools/client-runtime/scheduled-task-webhook";
 
 import {
   useEnvironments,
@@ -96,6 +108,8 @@ function EnvironmentAutomations({ environment }: { environment: EnvironmentPrese
     environment.connection.phase === "connected" &&
     session.data?.scopes?.includes(AuthOrchestrationOperateScope) === true;
   const httpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
+  const rulesSupported =
+    environment.serverConfig?.environment.capabilities.scheduledTaskWebhookRules === true;
   const allThreads = useThreadShells();
   const threads = allThreads.filter(
     (thread) => thread.environmentId === environmentId && thread.archivedAt === null,
@@ -196,6 +210,7 @@ function EnvironmentAutomations({ environment }: { environment: EnvironmentPrese
           task={editor === "new" ? null : editor}
           threads={threads}
           busy={busy}
+          rulesSupported={rulesSupported}
           onCancel={() => setEditor(null)}
           onSave={(input) => {
             void perform(
@@ -313,6 +328,9 @@ function RunStatus({ run }: { run: ScheduledTaskRun }) {
   return (
     <p className="text-xs text-muted-foreground">
       {new Date(run.createdAt).toLocaleString()} · {run.trigger} · {run.status}
+      {run.dueAt
+        ? ` · collecting deliveries until ${new Date(run.dueAt).toLocaleTimeString()}`
+        : ""}
       {run.error ? ` — ${run.error}` : ""}
     </p>
   );
@@ -341,12 +359,14 @@ function AutomationEditor({
   task,
   threads,
   busy,
+  rulesSupported,
   onCancel,
   onSave,
 }: {
   task: ScheduledTask | null;
   threads: ReadonlyArray<{ id: ThreadId; title: string }>;
   busy: boolean;
+  rulesSupported: boolean;
   onCancel: () => void;
   onSave: (input: ScheduledTaskInput) => void;
 }) {
@@ -370,23 +390,42 @@ function AutomationEditor({
   const [days, setDays] = useState<ReadonlyArray<number>>(
     task?.schedule.type === "fixed_time" ? task.schedule.weekdays : [],
   );
+  const [filters, setFilters] = useState<ReadonlyArray<WebhookFilterDraft>>(() =>
+    webhookFilterDrafts(task),
+  );
+  const [coalesce, setCoalesce] = useState(() => webhookCoalesceDraft(task));
+  const [formError, setFormError] = useState<string | null>(null);
+  const webhookSchedule = (): ScheduledTaskInput["schedule"] | string => {
+    if (!rulesSupported) return { type: "webhook" };
+    const parsedFilters = parseWebhookFilterDrafts(filters);
+    if (!parsedFilters.ok) return parsedFilters.error;
+    const parsedCoalesce = parseWebhookCoalesceDraft(coalesce);
+    if (!parsedCoalesce.ok) return parsedCoalesce.error;
+    return webhookScheduleInput(task, parsedFilters.value, parsedCoalesce.value);
+  };
   return (
     <form
-      className="space-y-3 rounded-lg border p-4"
+      className="min-w-0 space-y-3 rounded-lg border p-4"
       onSubmit={(event) => {
         event.preventDefault();
+        const schedule =
+          kind === "interval"
+            ? { type: "interval" as const, everyMs: Number(minutes) * 60_000 }
+            : kind === "webhook"
+              ? webhookSchedule()
+              : { type: "fixed_time" as const, timeOfDay: time, timeZone: zone, weekdays: days };
+        if (typeof schedule === "string") {
+          setFormError(schedule);
+          return;
+        }
+        setFormError(null);
         onSave({
           ...(task === null ? {} : { id: task.id }),
           name,
           threadId: ThreadId.make(threadId),
           prompt,
           enabled: task?.enabled ?? true,
-          schedule:
-            kind === "interval"
-              ? { type: "interval", everyMs: Number(minutes) * 60_000 }
-              : kind === "webhook"
-                ? { type: "webhook" }
-                : { type: "fixed_time", timeOfDay: time, timeZone: zone, weekdays: days },
+          schedule,
         });
       }}
     >
@@ -498,8 +537,121 @@ function AutomationEditor({
       {kind === "webhook" && (
         <p className="text-xs text-muted-foreground">
           Send JSON to the secret URL generated on save. Use {"{{payload}}"} in the prompt to place
-          the payload; otherwise it is appended. Set X-Webhook-Id or X-GitHub-Delivery to
+          the payload
+          {rulesSupported
+            ? ", or fields such as {{body.action}}, {{headers.x-github-event}}, and {{query.source}}"
+            : ""}
+          ; without placeholders it is appended. Set X-Webhook-Id or X-GitHub-Delivery to
           deduplicate retries against the last 50 runs.
+        </p>
+      )}
+      {kind === "webhook" && rulesSupported && (
+        <>
+          <fieldset className="min-w-0 space-y-2">
+            <legend className="text-sm">Filters</legend>
+            <p className="text-xs text-muted-foreground">
+              Run only when every filter matches. Other deliveries are answered and ignored.
+            </p>
+            {filters.map((filter, index) => {
+              const update = (patch: Partial<WebhookFilterDraft>) =>
+                setFilters(
+                  filters.map((item, itemIndex) =>
+                    itemIndex === index ? { ...item, ...patch } : item,
+                  ),
+                );
+              return (
+                // oxlint-disable-next-line react/no-array-index-key -- Rows have no identity beyond their position.
+                <div key={index} className="flex min-w-0 flex-wrap items-center gap-2">
+                  <Input
+                    aria-label={`Filter ${index + 1} path`}
+                    className="min-w-0 flex-[4_1_12rem]"
+                    placeholder="body.action"
+                    maxLength={256}
+                    value={filter.path}
+                    onChange={(event) => update({ path: event.target.value })}
+                  />
+                  <select
+                    aria-label={`Filter ${index + 1} test`}
+                    className={`${selectClass} flex-[0_0_10rem]`}
+                    value={filter.op}
+                    onChange={(event) =>
+                      update({ op: event.target.value as WebhookFilterDraft["op"] })
+                    }
+                  >
+                    {WEBHOOK_FILTER_OPS.map(({ op, label }) => (
+                      <option key={op} value={op}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                  {filter.op !== "exists" && (
+                    <Input
+                      aria-label={`Filter ${index + 1} value`}
+                      className="min-w-0 flex-[3_1_9rem]"
+                      placeholder={filter.op === "in" ? "opened, reopened" : "opened"}
+                      maxLength={filter.op === "in" ? 8_000 : 1_000}
+                      value={filter.value}
+                      onChange={(event) => update({ value: event.target.value })}
+                    />
+                  )}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() =>
+                      setFilters(filters.filter((_, itemIndex) => itemIndex !== index))
+                    }
+                  >
+                    Remove
+                  </Button>
+                </div>
+              );
+            })}
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={filters.length >= MAX_WEBHOOK_FILTERS}
+              onClick={() => setFilters([...filters, EMPTY_WEBHOOK_FILTER_DRAFT])}
+            >
+              Add filter
+            </Button>
+          </fieldset>
+          <fieldset className="min-w-0 space-y-2">
+            <legend className="text-sm">Combine bursts</legend>
+            <p className="text-xs text-muted-foreground">
+              Deliveries with the same key start one run when the window closes, using the latest
+              payload. Leave the key empty to run every delivery.
+            </p>
+            <div className="flex min-w-0 flex-wrap gap-2">
+              <Input
+                aria-label="Combine key"
+                className="min-w-0 flex-[3_1_14rem]"
+                placeholder="{{body.pull_request.number}}"
+                maxLength={256}
+                value={coalesce.key}
+                onChange={(event) => setCoalesce({ ...coalesce, key: event.target.value })}
+              />
+              <Input
+                aria-label="Window in seconds"
+                className="min-w-0 flex-[1_1_8rem]"
+                type="number"
+                min={10}
+                max={3600}
+                step={1}
+                placeholder={`${DEFAULT_WEBHOOK_COALESCE_SECONDS} seconds`}
+                value={coalesce.windowSeconds}
+                onChange={(event) =>
+                  setCoalesce({ ...coalesce, windowSeconds: event.target.value })
+                }
+              />
+            </div>
+          </fieldset>
+        </>
+      )}
+      {formError && (
+        <p role="alert" className="text-sm text-destructive">
+          {formError}
         </p>
       )}
       <div className="flex gap-2">
