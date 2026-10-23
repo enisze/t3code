@@ -58,9 +58,19 @@ Combine keys with `!` for not, `&&` for and, `||` for or, and parentheses:
   { "key": "mod+n", "command": "chat.new", "when": "!terminalFocus" },
   { "key": "mod+shift+o", "command": "chat.new", "when": "!terminalFocus" },
   { "key": "mod+shift+n", "command": "chat.newLocal", "when": "!terminalFocus" },
+  { "key": "mod+f", "command": "chat.find", "when": "!terminalFocus && !previewFocus" },
   { "key": "mod+o", "command": "editor.openFavorite" }
 ]
 ```
+
+## Find in the current thread
+
+`chat.find` searches the messages and proposed plans of the active thread, including older turns
+that are not loaded yet. Moving to a match in one of them loads it. It defaults to `mod+f` outside
+terminals and the in-app browser. Press **Enter** or **Shift+Enter** to move between matches, and
+**Escape** to close find. Attached context, such as terminal output and review comment cards, is
+not searched. Find needs an up-to-date server; with an older one, `mod+f` falls back to the
+browser's own find.
 
 ## Precedence
 
@@ -105,6 +115,7 @@ Keep that condition when remapping them if you want the same behavior.
 - `file.open`: search the active project or worktree and open the selected file
 - `chat.new`: create a new chat thread preserving the active thread's branch/worktree state
 - `chat.newLocal`: create a new chat thread for the active project in a new environment (local/worktree determined by app settings (default `local`))
+- `chat.find`: find text in the active thread's messages and plans
 - `editor.openFavorite`: open current project/worktree in the last-used editor
 - `script.{id}.run`: run a project script by id (for example `script.test.run`)
 

@@ -32,6 +32,7 @@ export const ORCHESTRATION_WS_METHODS = {
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   searchThreads: "orchestration.searchThreads",
+  searchThread: "orchestration.searchThread",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   generateContinuationSummary: "orchestration.generateContinuationSummary",
   subscribeShell: "orchestration.subscribeShell",
@@ -1985,6 +1986,58 @@ export const OrchestrationSearchThreadsResult = Schema.Struct({
 });
 export type OrchestrationSearchThreadsResult = typeof OrchestrationSearchThreadsResult.Type;
 
+// Find in one thread. The server counts matches in the text the timeline shows
+// for its messages and plans, including turns a client has not loaded yet.
+export const OrchestrationSearchThreadInput = Schema.Struct({
+  threadId: ThreadId,
+  query: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+  /** The skills whose `$name` tokens this client shows as chips with these labels. */
+  skills: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        name: Schema.String.check(Schema.isMaxLength(200)),
+        displayName: Schema.optional(Schema.String.check(Schema.isMaxLength(200))),
+      }),
+    ).check(Schema.isMaxLength(1_000)),
+  ),
+  /** Whether this client renders math. Rendered math is not searched. */
+  math: Schema.optionalKey(Schema.Boolean),
+  /** Selects relative to a match's entry, so updates before it do not shift the selection. */
+  start: Schema.optionalKey(
+    Schema.Struct({ entryId: TrimmedNonEmptyString, occurrence: NonNegativeInt }),
+  ),
+  /** Matches to step from `start`, wrapping around. */
+  offset: Schema.optionalKey(Schema.Int),
+});
+export type OrchestrationSearchThreadInput = typeof OrchestrationSearchThreadInput.Type;
+
+/** A message or plan with matches. Its matches are `startIndex` up to `startIndex + count`. */
+export const OrchestrationThreadFindEntry = Schema.Struct({
+  entryId: TrimmedNonEmptyString,
+  /** The turn to unfold when the entry is folded away. */
+  turnId: Schema.NullOr(TurnId),
+  startIndex: NonNegativeInt,
+  count: NonNegativeInt,
+});
+export type OrchestrationThreadFindEntry = typeof OrchestrationThreadFindEntry.Type;
+
+export const OrchestrationThreadFindMatch = Schema.Struct({
+  entryId: TrimmedNonEmptyString,
+  turnId: Schema.NullOr(TurnId),
+  /** The match's position among the matches in its entry. */
+  occurrence: NonNegativeInt,
+});
+export type OrchestrationThreadFindMatch = typeof OrchestrationThreadFindMatch.Type;
+
+export const OrchestrationSearchThreadResult = Schema.Struct({
+  totalMatches: NonNegativeInt,
+  activeIndex: NonNegativeInt,
+  match: Schema.NullOr(OrchestrationThreadFindMatch),
+  /** The entries around the selection, so a client steps through them without asking again. */
+  navigation: Schema.Array(OrchestrationThreadFindEntry).check(Schema.isMaxLength(17)),
+});
+export type OrchestrationSearchThreadResult = typeof OrchestrationSearchThreadResult.Type;
+
 export const OrchestrationGetWorkflowScriptInput = Schema.Struct({
   threadId: ThreadId,
   /** Absolute path from the workflow's runHandles.scriptPath. The server
@@ -2068,6 +2121,10 @@ export const OrchestrationRpcSchemas = {
     input: OrchestrationSearchThreadsInput,
     output: OrchestrationSearchThreadsResult,
   },
+  searchThread: {
+    input: OrchestrationSearchThreadInput,
+    output: OrchestrationSearchThreadResult,
+  },
   getArchivedShellSnapshot: {
     input: Schema.Struct({}),
     output: OrchestrationShellSnapshot,
@@ -2122,6 +2179,14 @@ export class OrchestrationGetFullThreadDiffError extends Schema.TaggedErrorClass
 
 export class OrchestrationSearchThreadsError extends Schema.TaggedErrorClass<OrchestrationSearchThreadsError>()(
   "OrchestrationSearchThreadsError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+export class OrchestrationSearchThreadError extends Schema.TaggedErrorClass<OrchestrationSearchThreadError>()(
+  "OrchestrationSearchThreadError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
