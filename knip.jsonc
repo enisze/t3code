@@ -15,6 +15,9 @@
     "scripts": {
       // Knip loads its preprocessor through a CLI option, not a source import.
       "entry": ["knip-schemas.ts"],
+      // knip-schemas.test.ts writes a throwaway project to .knip-test-*, which a
+      // knip run beside it in check:changed must not report.
+      "ignore": [".knip-test-*/**"],
     },
     "apps/server": {
       // Vite+ pack entries and the launcher used by installed background services.
