@@ -997,6 +997,8 @@ export const ServerSettings = Schema.Struct({
    * overrides this.
    */
   worktreeBranchPrefix: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /** Appended to the prompt for new and regenerated thread titles. */
+  threadTitleInstructions: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
@@ -1245,6 +1247,7 @@ export const ServerSettingsPatch = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   worktreeBranchPrefix: Schema.optionalKey(TrimmedString),
+  threadTitleInstructions: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   sourceControlWritingStyle: Schema.optionalKey(
     Schema.Struct({

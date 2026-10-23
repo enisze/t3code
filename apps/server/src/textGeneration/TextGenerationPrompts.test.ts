@@ -213,6 +213,23 @@ describe("buildThreadTitlePrompt", () => {
     );
     expect(result.prompt.match(/\[Earlier content truncated\]/g)).toHaveLength(1);
   });
+
+  it("adds the user's title instructions to new and regenerated titles", () => {
+    const instructions = "Write titles in German. Lead with the ticket key.";
+    const initial = buildThreadTitlePrompt({ message: "Fix the login redirect", instructions });
+    const regenerated = buildThreadTitlePrompt({
+      message: "USER:\nFix the login redirect",
+      previousTitle: "Login redirect",
+      instructions,
+    });
+
+    for (const { prompt } of [initial, regenerated]) {
+      expect(prompt.endsWith(`\n\nAdditional instructions:\n${instructions}`)).toBe(true);
+    }
+    expect(
+      buildThreadTitlePrompt({ message: "Fix the login redirect", instructions: "  " }).prompt,
+    ).not.toContain("Additional instructions:");
+  });
 });
 
 describe("sanitizeThreadTitle", () => {

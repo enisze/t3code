@@ -20,6 +20,15 @@ on Windows and Linux to start a new thread and immediately open another draft. T
 next draft keeps the workspace mode and base branch you selected. With **New
 worktree**, each background submission creates its own worktree.
 
+## Thread titles
+
+T3 Code names each thread from its first message. To name it again from the whole
+conversation, choose **Regenerate title** from the thread's menu.
+
+To change how titles are written, add **Thread title instructions** in **Settings → General**,
+such as a length limit, a language, or a ticket key to put first. They apply to new and
+regenerated titles.
+
 ## Pin and reorder threads
 
 Pin a thread from its menu to keep it above your active work. Drag pinned threads

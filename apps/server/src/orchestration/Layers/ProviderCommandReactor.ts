@@ -1067,7 +1067,7 @@ const make = Effect.gen(function* () {
     }) {
       const attachments = input.attachments ?? [];
       yield* Effect.gen(function* () {
-        const { textGenerationModelSelection: modelSelection } =
+        const { textGenerationModelSelection: modelSelection, threadTitleInstructions } =
           yield* serverSettingsService.getSettings;
 
         const generated = yield* textGeneration
@@ -1075,6 +1075,7 @@ const make = Effect.gen(function* () {
             cwd: input.cwd,
             message: input.messageText,
             ...(attachments.length > 0 ? { attachments } : {}),
+            instructions: threadTitleInstructions,
             modelSelection,
           })
           .pipe(
@@ -1137,13 +1138,14 @@ const make = Effect.gen(function* () {
         thread,
         projects: project ? [project] : [],
       }) ?? process.cwd();
-    const { textGenerationModelSelection: modelSelection } =
+    const { textGenerationModelSelection: modelSelection, threadTitleInstructions } =
       yield* serverSettingsService.getSettings;
     const generated = yield* textGeneration.generateThreadTitle({
       cwd,
       message,
       previousTitle,
       ...(attachments.length > 0 ? { attachments } : {}),
+      instructions: threadTitleInstructions,
       modelSelection,
     });
     if (generated.title === DEFAULT_THREAD_TITLE || generated.title === previousTitle) {

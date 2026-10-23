@@ -65,6 +65,8 @@ export interface ThreadTitleGenerationInput {
   /** Present when replacing an existing title from the current thread history. */
   previousTitle?: string | undefined;
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  /** The user's thread title instructions from settings. */
+  instructions?: string | undefined;
   /** What model and provider to use for generation. */
   modelSelection: ModelSelection;
 }

@@ -396,6 +396,7 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
           message: input.message,
           previousTitle: input.previousTitle,
           attachments: input.attachments,
+          instructions: input.instructions,
         }),
         modelSelection: input.modelSelection,
       });
