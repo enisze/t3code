@@ -1,19 +1,14 @@
 import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentProject,
-  EnvironmentThread,
   EnvironmentThreadShell,
   ThreadShellStructure,
   ThreadStructure,
 } from "@t3tools/client-runtime/state/shell";
-import {
-  type EnvironmentThreadStatus,
-  mergeEnvironmentThread,
-} from "@t3tools/client-runtime/state/threads";
+import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
 import type { ScopedProjectRef, ScopedThreadRef, ServerConfig } from "@t3tools/contracts";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
-import { useMemo } from "react";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom } from "./server";
@@ -41,9 +36,6 @@ const EMPTY_THREAD_REFS_ATOM = Atom.make(EMPTY_THREAD_REFS).pipe(
 );
 const EMPTY_THREAD_SHELL_ATOM = Atom.make<EnvironmentThreadShell | null>(null).pipe(
   Atom.withLabel("web-thread-shell:empty"),
-);
-const EMPTY_THREAD_DETAIL_ATOM = Atom.make<EnvironmentThread | null>(null).pipe(
-  Atom.withLabel("web-thread-detail:empty"),
 );
 const EMPTY_THREAD_MESSAGES_ATOM = Atom.make(EMPTY_MESSAGES).pipe(
   Atom.withLabel("web-thread-messages:empty"),
@@ -127,12 +119,6 @@ export function useThreadShell(ref: ScopedThreadRef | null): EnvironmentThreadSh
   );
 }
 
-export function useThreadDetail(ref: ScopedThreadRef | null): EnvironmentThread | null {
-  return useAtomValue(
-    ref === null ? EMPTY_THREAD_DETAIL_ATOM : environmentThreadDetails.detailAtom(ref),
-  );
-}
-
 export function useThreadStatus(ref: ScopedThreadRef | null): EnvironmentThreadStatus {
   return useAtomValue(
     ref === null ? EMPTY_THREAD_STATUS_ATOM : environmentThreadDetails.statusAtom(ref),
@@ -150,41 +136,11 @@ export function useThreadError(ref: ScopedThreadRef | null): string | null {
   );
 }
 
-export function resolveThreadDetailRef(
-  ref: ScopedThreadRef | null,
-  options: {
-    shellExists: boolean;
-    waitForShell: boolean;
-  },
-): ScopedThreadRef | null {
-  return ref !== null && (!options.waitForShell || options.shellExists) ? ref : null;
-}
-
-/** Detail collections composed with shell-authoritative thread/workspace metadata. */
-export function useThread(
-  ref: ScopedThreadRef | null,
-  options?: {
-    /**
-     * Client-reserved draft thread ids do not exist on the server until the
-     * first send. Waiting for the shell index avoids polling the detail
-     * endpoint for an intentionally missing thread during that window.
-     */
-    waitForShell?: boolean;
-  },
-): EnvironmentThread | null {
-  const shell = useThreadShell(ref);
-  const detail = useThreadDetail(
-    resolveThreadDetailRef(ref, {
-      shellExists: shell !== null,
-      waitForShell: options?.waitForShell === true,
-    }),
-  );
-  return useMemo(() => mergeEnvironmentThread(detail, shell), [detail, shell]);
-}
-
 /**
- * `useThread` for views that must not re-render while a reply streams: the
- * thread without assistant text and `updatedAt` (see `ThreadStructure`).
+ * A thread's detail merged with its shell's metadata, without assistant text
+ * and `updatedAt` (see `ThreadStructure`), so its readers do not re-render
+ * while a reply streams. `waitForShell` leaves a reserved draft thread's
+ * detail unsubscribed until the thread enters the shell index.
  */
 export function useThreadStructure(
   ref: ScopedThreadRef | null,
@@ -215,7 +171,7 @@ export function useThreadShellStructure(ref: ScopedThreadRef | null): ThreadShel
   );
 }
 
-/** The `updatedAt` of `useThread`'s thread. It changes with every thread event. */
+/** The `updatedAt` of the thread `useThreadStructure` reads. It changes with every thread event. */
 export function useThreadUpdatedAt(
   ref: ScopedThreadRef | null,
   options?: { waitForShell?: boolean },
