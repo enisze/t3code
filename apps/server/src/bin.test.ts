@@ -19,6 +19,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
@@ -86,6 +87,26 @@ const captureStdout = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       "";
     return { result, output };
   }).pipe(Effect.provide(Layer.mergeAll(CliRuntimeLayer, TestConsole.layer)));
+
+// The parts of `t3 thread --json` output the tests read.
+const decodeThreadRef = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Struct({ threadId: Schema.String })),
+);
+const decodeThreadList = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Array(
+      Schema.Struct({ threadId: Schema.String, title: Schema.String, status: Schema.String }),
+    ),
+  ),
+);
+const decodeThreadShow = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      thread: Schema.Struct({ threadId: Schema.String, provider: Schema.String }),
+      messages: Schema.Array(Schema.Struct({ role: Schema.String, text: Schema.String })),
+    }),
+  ),
+);
 
 const makeCliTestServerConfig = (baseDir: string) =>
   Effect.gen(function* () {
@@ -821,6 +842,104 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
           assert.isTrue(addedProject !== undefined);
           assert.equal(addedProject?.title, "Live Project");
         }),
+      );
+    }),
+  );
+
+  it.effect("starts, lists, messages, and shows threads through a running server", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-cli-thread-live-test-"),
+      );
+      const workspaceRoot = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-cli-thread-live-workspace-"),
+      );
+
+      yield* withLiveProjectCliServer(baseDir, () =>
+        Effect.gen(function* () {
+          yield* runCliWithRuntime(["project", "add", workspaceRoot, "--base-dir", baseDir]);
+          const started = yield* captureStdout(
+            runCli([
+              "thread",
+              "start",
+              workspaceRoot,
+              "Investigate the flaky login test\nIt only fails on CI.",
+              "--json",
+              "--base-dir",
+              baseDir,
+            ]),
+          );
+          const { threadId } = decodeThreadRef(started.output);
+
+          const listed = yield* captureStdout(
+            runCli(["thread", "list", "--project", workspaceRoot, "--json", "--base-dir", baseDir]),
+          );
+          const threads = decodeThreadList(listed.output);
+          assert.deepEqual(
+            threads.map(({ threadId, title, status }) => ({ threadId, title, status })),
+            [{ threadId, title: "Investigate the flaky login test", status: "idle" }],
+          );
+
+          const sent = yield* captureStdout(
+            runCli([
+              "thread",
+              "send",
+              threadId,
+              "Check the retry logic too.",
+              "--json",
+              "--base-dir",
+              baseDir,
+            ]),
+          );
+          assert.equal(decodeThreadRef(sent.output).threadId, threadId);
+
+          const shown = yield* captureStdout(
+            runCli(["thread", "show", threadId, "--json", "--base-dir", baseDir]),
+          );
+          const { thread, messages } = decodeThreadShow(shown.output);
+          // The test clock gives both messages the same time, so compare them unordered.
+          const sentTexts = [
+            "Check the retry logic too.",
+            "Investigate the flaky login test\nIt only fails on CI.",
+          ];
+          assert.equal(thread.threadId, threadId);
+          assert.equal(thread.provider, "codex");
+          assert.deepEqual(
+            messages.map(({ role, text }) => `${role}: ${text}`).toSorted(),
+            sentTexts.map((text) => `user: ${text}`),
+          );
+
+          const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+          const readModel = yield* projectionSnapshotQuery.getSnapshot();
+          const stored = readModel.threads.find((candidate) => candidate.id === threadId);
+          assert.deepEqual(stored?.messages.map((message) => message.text).toSorted(), sentTexts);
+        }),
+      ).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            NodeFS.rmSync(baseDir, { recursive: true, force: true });
+            NodeFS.rmSync(workspaceRoot, { recursive: true, force: true });
+          }),
+        ),
+      );
+    }),
+  );
+
+  it.effect("says when no server is running instead of failing to connect", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-cli-thread-idle-test-"),
+      );
+      const error = yield* runCliWithRuntime(["thread", "list", "--base-dir", baseDir]).pipe(
+        Effect.flip,
+        Effect.ensuring(
+          Effect.sync(() => NodeFS.rmSync(baseDir, { recursive: true, force: true })),
+        ),
+      );
+
+      assert.equal(
+        (error as Error).message,
+        `No running T3 Code server uses ${baseDir}. Start T3 Code, then retry.`,
       );
     }),
   );

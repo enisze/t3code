@@ -110,3 +110,26 @@ On web and desktop, use **Agents** to follow work delegated to subagents.
 Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it
 finishes; the call's own result shows its status.
+
+## Script threads from the terminal
+
+On the machine that runs T3 Code, `t3 thread` starts, messages, and reads threads
+while the server runs:
+
+```sh
+id=$(t3 thread start . "Find why the tests are slow")
+t3 thread send "$id" "Now fix it" --wait
+t3 thread show "$id"
+t3 thread list
+```
+
+`.` means the project that contains the current folder; a project id also works.
+A new thread runs in the project folder with the project's default model, or the
+server's, unless you pass `--provider` and `--model`. `send` never interrupts: if
+the agent is working, it waits for that turn to finish and sends your message as
+the next turn. If that turn is waiting for your answer, `send` exits 2 without
+sending. Pass `-` as the message to read it from stdin.
+
+`--wait` prints the agent's reply. It exits 1 when the turn fails or stops, and 2
+when the agent waits for an answer you give in the app. Add `--json` for a result
+that always includes the thread id.
