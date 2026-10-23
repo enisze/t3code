@@ -139,7 +139,6 @@ export function ProjectScriptDialog({
     setPreviewUrl(initialDraft?.previewUrl ?? "");
     setAutoOpenPreview(initialDraft?.autoOpenPreview ?? false);
     // initialDraft/initialError are only consumed on open; excluded from deps on purpose.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, editingScriptId]);
 
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {

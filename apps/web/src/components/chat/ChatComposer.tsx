@@ -3314,13 +3314,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       onStop={dictation.stop}
                     />
                     {dictation.state.phase === "error" && dictation.state.error ? (
-                      <span
-                        data-composer-dictation-error="true"
-                        className="min-w-0 shrink truncate text-xs text-destructive"
-                        title={dictation.state.error}
-                      >
-                        {dictation.state.error}
-                      </span>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <span
+                              data-composer-dictation-error="true"
+                              className="min-w-0 shrink truncate text-xs text-destructive"
+                            >
+                              {dictation.state.error}
+                            </span>
+                          }
+                        />
+                        <TooltipPopup side="top">{dictation.state.error}</TooltipPopup>
+                      </Tooltip>
                     ) : null}
                   </>
                 ) : null}
