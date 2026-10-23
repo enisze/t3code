@@ -261,7 +261,7 @@ export function formatFilePathPosition(position: FilePathPosition): string {
   return `${position.path}:${position.line}${position.column ? `:${position.column}` : ""}`;
 }
 
-export function isRelativeFilePath(path: string): boolean {
+function isRelativeFilePath(path: string): boolean {
   return (
     RELATIVE_PATH_PREFIX_PATTERN.test(path) ||
     (!path.startsWith("/") && !isWindowsAbsolutePath(path))

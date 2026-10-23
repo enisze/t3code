@@ -1,7 +1,6 @@
 import {
   fileBasename,
   inlineCodeFilePathCandidate,
-  normalizeMarkdownLinkDestination,
   resolveMarkdownFileLinkTarget,
   rewriteMarkdownFileUriHref,
   safeDecodeURIComponent,
@@ -12,11 +11,7 @@ import {
 import { formatWorkspaceRelativePath } from "./filePathDisplay";
 import { isTerminalLinkActivation } from "./terminal-links";
 
-export {
-  normalizeMarkdownLinkDestination,
-  resolveMarkdownFileLinkTarget,
-  rewriteMarkdownFileUriHref,
-};
+export { resolveMarkdownFileLinkTarget, rewriteMarkdownFileUriHref };
 
 const MARKDOWN_LINK_HREF_PATTERN =
   /\[[^\]]*]\(\s*(?:<([^>\n]+)>|([^\s)]+))(?:\s+["'][^"']*["'])?\s*\)/g;
