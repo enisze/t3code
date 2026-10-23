@@ -41,3 +41,19 @@ export function isFileDiffCollapsed(
   const foldedByDefault = foldOverride === "folded";
   return toggledFileKeys.has(fileKey) ? !foldedByDefault : foldedByDefault;
 }
+
+/**
+ * The reader's fold choices with one file opened, for find revealing a match inside it. An open
+ * file comes back unchanged, so asking again before the first answer lands cannot fold it.
+ */
+export function unfoldFileDiff(
+  fileKey: string,
+  foldOverride: DiffFoldOverride,
+  toggledFileKeys: ReadonlySet<string>,
+): ReadonlySet<string> {
+  if (!isFileDiffCollapsed(fileKey, foldOverride, toggledFileKeys)) return toggledFileKeys;
+  const next = new Set(toggledFileKeys);
+  if (next.has(fileKey)) next.delete(fileKey);
+  else next.add(fileKey);
+  return next;
+}

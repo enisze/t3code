@@ -74,6 +74,13 @@ a shortcut.
 `chat.newLocal` skips that chooser. Both use your
 [new-thread defaults](./thread-sidebar.md#start-a-thread).
 
+## Find in a diff
+
+Click into the Diff panel, then press `mod+f` to search every file it shows,
+including collapsed files and unchanged lines hidden between changes. Enter and
+`Shift+Enter` move between matches and open whatever hides the current one.
+Escape closes the search. This shortcut is not configurable.
+
 ## Reserved shortcuts
 
 In the desktop app, `mod+w` closes the focused terminal or the active right-panel

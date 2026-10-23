@@ -1,7 +1,7 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
-import { isFileDiffCollapsed, isLineInFileDiff } from "./pullRequestDiff.logic";
+import { isFileDiffCollapsed, isLineInFileDiff, unfoldFileDiff } from "./pullRequestDiff.logic";
 
 /** Only the hunk ranges matter here; the viewer fills the rest in when it renders. */
 function fileWithHunks(
@@ -77,5 +77,19 @@ describe("isFileDiffCollapsed", () => {
   it("still answers to a toggle after either toolbar press", () => {
     expect(isFileDiffCollapsed("a.ts", "expanded", new Set(["a.ts"]))).toBe(true);
     expect(isFileDiffCollapsed("a.ts", "folded", new Set(["a.ts"]))).toBe(false);
+  });
+});
+
+describe("unfoldFileDiff", () => {
+  it("opens a file the reader folded, and one the toolbar folded", () => {
+    expect(unfoldFileDiff("a.ts", null, new Set(["a.ts"]))).toEqual(new Set());
+    expect(unfoldFileDiff("a.ts", "folded", new Set())).toEqual(new Set(["a.ts"]));
+  });
+
+  it("leaves an open file alone, so a repeated request never folds it back", () => {
+    const toggled = new Set(["b.ts"]);
+    expect(unfoldFileDiff("a.ts", null, toggled)).toBe(toggled);
+    const opened = unfoldFileDiff("a.ts", "folded", new Set());
+    expect(unfoldFileDiff("a.ts", "folded", opened)).toBe(opened);
   });
 });

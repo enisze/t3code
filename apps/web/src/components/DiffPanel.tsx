@@ -1390,6 +1390,10 @@ export default function DiffPanel({
                     sectionTitle={reviewSectionTitle}
                     composerDraftTarget={composerDraftTarget}
                     viewedFileKeys={viewedFileKeySet}
+                    // Find can ask again before the unfolded file arrives, so this only ever unfolds.
+                    onRevealSearchMatch={(fileDiff) =>
+                      setDiffFileExpanded(resolveFileDiffPath(fileDiff), true)
+                    }
                     renderHeaderPrefix={(fileDiff, fileKey, collapsed) => {
                       const filePath = resolveFileDiffPath(fileDiff);
                       const viewed = viewedFileKeySet.has(fileKey);

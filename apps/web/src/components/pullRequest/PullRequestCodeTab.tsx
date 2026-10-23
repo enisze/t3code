@@ -79,6 +79,7 @@ import { PullRequestReviewBar } from "./PullRequestReviewBar";
 import {
   isFileDiffCollapsed,
   isLineInFileDiff,
+  unfoldFileDiff,
   type DiffFoldOverride,
 } from "./pullRequestDiff.logic";
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
@@ -1399,6 +1400,10 @@ function PullRequestCodeTab({
             renderHeaderPrefix={renderHeaderPrefix}
             renderHeaderMetadata={renderHeaderMetadata}
             renderAnnotation={renderAnnotation}
+            // Find can ask again before the unfolded file arrives, so this unfolds and never folds.
+            onRevealSearchMatch={(item) =>
+              setToggledFiles((current) => unfoldFileDiff(item.id, foldOverride, current))
+            }
             unsafeCSSExtra={REPLACE_FILE_COUNTS_CSS}
           />
           {reviewOverlay}

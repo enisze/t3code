@@ -95,6 +95,8 @@ interface AnnotatableCodeViewProps {
     fileKey: string,
     collapsed: boolean,
   ) => ReactNode;
+  /** Find asks to unfold a folded file so it can show a match inside it. */
+  onRevealSearchMatch: (fileDiff: FileDiffMetadata) => void;
 }
 
 const EMPTY_VIEWED_FILE_KEYS: ReadonlySet<string> = new Set();
@@ -113,6 +115,7 @@ export function AnnotatableCodeView({
   className,
   viewedFileKeys = EMPTY_VIEWED_FILE_KEYS,
   renderHeaderPrefix,
+  onRevealSearchMatch,
 }: AnnotatableCodeViewProps) {
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
@@ -259,6 +262,9 @@ export function AnnotatableCodeView({
           ? renderHeaderPrefix(item.fileDiff, item.id, item.collapsed === true)
           : null
       }
+      onRevealSearchMatch={(item) => {
+        if (item.type === "diff") onRevealSearchMatch(item.fileDiff);
+      }}
       renderAnnotation={(annotation) => (
         <div className="py-1">
           {annotation.metadata.entries.map((entry) => (
