@@ -76,6 +76,8 @@ export type ServerSelfUpdateCapability = typeof ServerSelfUpdateCapability.Type;
 
 export const ExecutionEnvironmentCapabilities = Schema.Struct({
   scheduledTasks: Schema.optionalKey(Schema.Boolean),
+  /** Webhook automations accept filters, field placeholders, and coalescing. Missing on older servers, which drop those fields on save. */
+  scheduledTaskWebhookRules: Schema.optionalKey(Schema.Boolean),
   repositoryIdentity: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   connectionProbe: Schema.optionalKey(Schema.Boolean),
   /** Missing on older servers, which still accept inline image attachments. */

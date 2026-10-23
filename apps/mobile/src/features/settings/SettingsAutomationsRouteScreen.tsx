@@ -14,6 +14,18 @@ import {
   type AtomCommandResult,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import {
+  DEFAULT_WEBHOOK_COALESCE_SECONDS,
+  EMPTY_WEBHOOK_FILTER_DRAFT,
+  MAX_WEBHOOK_FILTERS,
+  WEBHOOK_FILTER_OPS,
+  parseWebhookCoalesceDraft,
+  parseWebhookFilterDrafts,
+  webhookCoalesceDraft,
+  webhookFilterDrafts,
+  webhookScheduleInput,
+  type WebhookFilterDraft,
+} from "@t3tools/client-runtime/scheduled-task-webhook";
 
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
@@ -111,6 +123,8 @@ function EnvironmentAutomations({ environment }: { environment: EnvironmentPrese
   const threads = useThreadShells().filter(
     (thread) => thread.environmentId === environmentId && thread.archivedAt === null,
   );
+  const rulesSupported =
+    environment.serverConfig?.environment.capabilities.scheduledTaskWebhookRules === true;
   const [editor, setEditor] = useState<ScheduledTask | "new" | null>(null);
   const [historyId, setHistoryId] = useState<string | null>(null);
   const [webhookPath, setWebhookPath] = useState<string | null>(null);
@@ -193,6 +207,7 @@ function EnvironmentAutomations({ environment }: { environment: EnvironmentPrese
           task={editor === "new" ? null : editor}
           threads={threads}
           busy={busy}
+          rulesSupported={rulesSupported}
           onCancel={() => setEditor(null)}
           onSave={(input) => {
             void perform(
@@ -285,6 +300,9 @@ function RunStatus({ run }: { run: ScheduledTaskRun }) {
   return (
     <Text className="text-xs text-foreground-muted">
       {new Date(run.createdAt).toLocaleString()} · {run.trigger} · {run.status}
+      {run.dueAt
+        ? ` · collecting deliveries until ${new Date(run.dueAt).toLocaleTimeString()}`
+        : ""}
       {run.error ? ` — ${run.error}` : ""}
     </Text>
   );
@@ -316,12 +334,14 @@ function AutomationEditor({
   task,
   threads,
   busy,
+  rulesSupported,
   onSave,
   onCancel,
 }: {
   task: ScheduledTask | null;
   threads: ReadonlyArray<{ id: ThreadId; title: string }>;
   busy: boolean;
+  rulesSupported: boolean;
   onSave: (input: ScheduledTaskInput) => void;
   onCancel: () => void;
 }) {
@@ -346,6 +366,11 @@ function AutomationEditor({
   const [days, setDays] = useState<ReadonlyArray<number>>(
     task?.schedule.type === "fixed_time" ? task.schedule.weekdays : [],
   );
+  const [filters, setFilters] = useState<ReadonlyArray<WebhookFilterDraft>>(() =>
+    webhookFilterDrafts(task),
+  );
+  const [coalesce, setCoalesce] = useState(() => webhookCoalesceDraft(task));
+  const [formError, setFormError] = useState<string | null>(null);
   const fieldClass = "rounded-lg border border-border bg-input px-3 py-2 text-base text-foreground";
   const matches = threads
     .filter((thread) => thread.title.toLowerCase().includes(search.toLowerCase()))
@@ -450,8 +475,102 @@ function AutomationEditor({
         {kind === "webhook" && (
           <Text className="text-xs text-foreground-muted">
             Send JSON to the secret URL generated on save. {"{{payload}}"} inserts the body in your
-            prompt; otherwise it is appended. X-Webhook-Id or X-GitHub-Delivery deduplicates retries
-            against the last 50 runs.
+            prompt
+            {rulesSupported
+              ? ", and fields such as {{body.action}} or {{headers.x-github-event}}"
+              : ""}
+            ; without placeholders it is appended. X-Webhook-Id or X-GitHub-Delivery deduplicates
+            retries against the last 50 runs.
+          </Text>
+        )}
+        {kind === "webhook" && rulesSupported && (
+          <>
+            <Text className="text-sm text-foreground">Filters</Text>
+            <Text className="text-xs text-foreground-muted">
+              Run only when every filter matches. Other deliveries are answered and ignored.
+            </Text>
+            {filters.map((filter, index) => {
+              const update = (patch: Partial<WebhookFilterDraft>) =>
+                setFilters(
+                  filters.map((item, itemIndex) =>
+                    itemIndex === index ? { ...item, ...patch } : item,
+                  ),
+                );
+              return (
+                // oxlint-disable-next-line react/no-array-index-key -- Rows have no identity beyond their position.
+                <View key={index} className="gap-2 rounded-lg border border-border p-3">
+                  <TextInput
+                    accessibilityLabel={`Filter ${index + 1} path`}
+                    placeholder="body.action"
+                    className={fieldClass}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    maxLength={256}
+                    value={filter.path}
+                    onChangeText={(path) => update({ path })}
+                  />
+                  <View className="flex-row flex-wrap gap-2">
+                    {WEBHOOK_FILTER_OPS.map(({ op, label }) => (
+                      <Action
+                        key={op}
+                        label={`${op === filter.op ? "✓ " : ""}${label}`}
+                        onPress={() => update({ op })}
+                      />
+                    ))}
+                  </View>
+                  {filter.op !== "exists" && (
+                    <TextInput
+                      accessibilityLabel={`Filter ${index + 1} value`}
+                      placeholder={filter.op === "in" ? "opened, reopened" : "opened"}
+                      className={fieldClass}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      value={filter.value}
+                      onChangeText={(value) => update({ value })}
+                    />
+                  )}
+                  <Action
+                    label="Remove filter"
+                    onPress={() =>
+                      setFilters(filters.filter((_, itemIndex) => itemIndex !== index))
+                    }
+                  />
+                </View>
+              );
+            })}
+            <Action
+              label="Add filter"
+              disabled={filters.length >= MAX_WEBHOOK_FILTERS}
+              onPress={() => setFilters([...filters, EMPTY_WEBHOOK_FILTER_DRAFT])}
+            />
+            <Text className="text-sm text-foreground">Combine bursts</Text>
+            <Text className="text-xs text-foreground-muted">
+              Deliveries with the same key start one run when the window closes, using the latest
+              payload. Leave the key empty to run every delivery.
+            </Text>
+            <TextInput
+              accessibilityLabel="Combine key"
+              placeholder="{{body.pull_request.number}}"
+              className={fieldClass}
+              autoCapitalize="none"
+              autoCorrect={false}
+              maxLength={256}
+              value={coalesce.key}
+              onChangeText={(key) => setCoalesce({ ...coalesce, key })}
+            />
+            <TextInput
+              accessibilityLabel="Window in seconds"
+              placeholder={`${DEFAULT_WEBHOOK_COALESCE_SECONDS} seconds`}
+              className={fieldClass}
+              keyboardType="number-pad"
+              value={coalesce.windowSeconds}
+              onChangeText={(windowSeconds) => setCoalesce({ ...coalesce, windowSeconds })}
+            />
+          </>
+        )}
+        {formError && (
+          <Text accessibilityRole="alert" className="text-sm text-destructive">
+            {formError}
           </Text>
         )}
         <Text className="text-xs text-foreground-muted">
@@ -461,21 +580,37 @@ function AutomationEditor({
           <Action
             label="Save automation"
             disabled={busy || !name.trim() || !prompt.trim() || !threadId}
-            onPress={() =>
+            onPress={() => {
+              let schedule: ScheduledTaskInput["schedule"];
+              if (kind === "interval") {
+                schedule = { type: "interval", everyMs: Number(minutes) * 60_000 };
+              } else if (kind === "fixed_time") {
+                schedule = { type: "fixed_time", timeOfDay: time, timeZone: zone, weekdays: days };
+              } else if (!rulesSupported) {
+                schedule = { type: "webhook" };
+              } else {
+                const parsedFilters = parseWebhookFilterDrafts(filters);
+                if (!parsedFilters.ok) {
+                  setFormError(parsedFilters.error);
+                  return;
+                }
+                const parsedCoalesce = parseWebhookCoalesceDraft(coalesce);
+                if (!parsedCoalesce.ok) {
+                  setFormError(parsedCoalesce.error);
+                  return;
+                }
+                schedule = webhookScheduleInput(task, parsedFilters.value, parsedCoalesce.value);
+              }
+              setFormError(null);
               onSave({
                 ...(task === null ? {} : { id: task.id }),
                 name,
                 prompt,
                 threadId: ThreadId.make(threadId),
                 enabled: task?.enabled ?? true,
-                schedule:
-                  kind === "interval"
-                    ? { type: "interval", everyMs: Number(minutes) * 60_000 }
-                    : kind === "webhook"
-                      ? { type: "webhook" }
-                      : { type: "fixed_time", timeOfDay: time, timeZone: zone, weekdays: days },
-              })
-            }
+                schedule,
+              });
+            }}
           />
           <Action label="Cancel" disabled={busy} onPress={onCancel} />
         </View>

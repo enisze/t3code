@@ -3,7 +3,7 @@ import * as DateTime from "effect/DateTime";
 import { ScheduledTaskInput, ThreadId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-import { isSameSchedule, nextScheduledRunAt, webhookPrompt } from "./Schedule.ts";
+import { isSameSchedule, mergeWebhookSchedule, nextScheduledRunAt } from "./Schedule.ts";
 
 describe("automation schedules", () => {
   it("advances intervals by elapsed time across daylight saving", () => {
@@ -56,12 +56,22 @@ describe("automation schedules", () => {
   it("gives webhooks no timer", () => {
     expect(nextScheduledRunAt({ type: "webhook" }, DateTime.makeUnsafe(0))).toBeNull();
   });
-  it("substitutes JSON literally and bounds expanded prompts", () => {
-    expect(webhookPrompt("Review {{payload}}", { text: "$& {{payload}}" })).toBe(
-      'Review {\n  "text": "$& {{payload}}"\n}',
-    );
-    expect(webhookPrompt("Review this", {})).toBe("Review this\n\nWebhook payload:\n{}");
-    expect(() => webhookPrompt("{{payload}}".repeat(100), "x".repeat(10_000))).toThrow(/128 KiB/);
+  it("keeps stored webhook rules when a save omits them, and clears them with [] or null", () => {
+    const stored = {
+      type: "webhook",
+      filters: [{ path: "body.action", op: "equals", value: "opened" }],
+      coalesce: { key: "{{body.number}}", windowSeconds: 30 },
+    } as const;
+    expect(mergeWebhookSchedule({ type: "webhook" }, stored)).toEqual(stored);
+    expect(mergeWebhookSchedule({ type: "webhook", filters: [], coalesce: null }, stored)).toEqual({
+      type: "webhook",
+    });
+    expect(
+      mergeWebhookSchedule({ type: "webhook", coalesce: { key: "{{body.id}}" } }, stored),
+    ).toEqual({ type: "webhook", filters: stored.filters, coalesce: { key: "{{body.id}}" } });
+    expect(
+      mergeWebhookSchedule({ type: "webhook" }, { type: "interval", everyMs: 60_000 }),
+    ).toEqual({ type: "webhook" });
   });
   it("rejects short intervals and invalid wall-clock times at the wire boundary", () => {
     const input = {

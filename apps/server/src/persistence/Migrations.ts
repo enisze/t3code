@@ -68,6 +68,7 @@ import Migration0053 from "./Migrations/053_ProjectionProjectsWorktreeCopyFiles.
 import Migration0054 from "./Migrations/054_ProjectionThreadBranchPullRequest.ts";
 import Migration0055 from "./Migrations/055_ProjectionThreadsReady.ts";
 import Migration0056 from "./Migrations/056_ScheduledTasks.ts";
+import Migration0057 from "./Migrations/057_ScheduledTaskWebhookWindows.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -136,6 +137,7 @@ export const migrationEntries = [
   [54, "ProjectionThreadBranchPullRequest", Migration0054],
   [55, "ProjectionThreadsReady", Migration0055],
   [56, "ScheduledTasks", Migration0056],
+  [57, "ScheduledTaskWebhookWindows", Migration0057],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

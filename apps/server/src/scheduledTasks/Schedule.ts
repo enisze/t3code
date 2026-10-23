@@ -47,13 +47,22 @@ export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedul
   );
 }
 
-export function webhookPrompt(prompt: string, payload: unknown): string {
-  const body = JSON.stringify(payload, null, 2);
-  const count = prompt.split("{{payload}}").length - 1;
-  if (Buffer.byteLength(prompt) + Buffer.byteLength(body) * Math.max(1, count) > 131_072) {
-    throw new Error("The expanded webhook prompt exceeds 128 KiB.");
-  }
-  return prompt.includes("{{payload}}")
-    ? prompt.replaceAll("{{payload}}", () => body)
-    : `${prompt}\n\nWebhook payload:\n${body}`;
+type WebhookSchedule = Extract<ScheduledTaskSchedule, { type: "webhook" }>;
+
+/**
+ * The webhook rules to store. An omitted field keeps the stored rules, so a
+ * client that predates them cannot clear them; [] or null clears them.
+ */
+export function mergeWebhookSchedule(
+  next: WebhookSchedule,
+  previous: ScheduledTaskSchedule | null,
+): WebhookSchedule {
+  const stored = previous?.type === "webhook" ? previous : undefined;
+  const filters = next.filters ?? stored?.filters ?? [];
+  const coalesce = next.coalesce === undefined ? stored?.coalesce : next.coalesce;
+  return {
+    type: "webhook",
+    ...(filters.length > 0 ? { filters } : {}),
+    ...(coalesce ? { coalesce } : {}),
+  };
 }

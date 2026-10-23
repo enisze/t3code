@@ -4,6 +4,84 @@ import { IsoDateTime, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const MIN_SCHEDULED_TASK_INTERVAL_MS = 60_000;
 export const ScheduledTaskId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
+
+export const MAX_WEBHOOK_FILTERS = 16;
+export const MIN_WEBHOOK_COALESCE_SECONDS = 10;
+export const MAX_WEBHOOK_COALESCE_SECONDS = 3600;
+export const DEFAULT_WEBHOOK_COALESCE_SECONDS = 120;
+
+/**
+ * A request value in placeholder syntax without braces: `body`, `body.action`,
+ * `headers.x-github-event`, or `query.source`. Segments exclude dots, so
+ * matching stays linear on malformed input.
+ */
+const WEBHOOK_PATH = /^(?:body(?:\.[^{}.\s]+)*|(?:headers|query)(?:\.[^{}.\s]+)+)$/;
+const WEBHOOK_PLACEHOLDER =
+  /\{\{\s*(?:body(?:\.[^{}.\s]+)*|(?:headers|query)(?:\.[^{}.\s]+)+)\s*\}\}/g;
+
+export const isWebhookPath = (path: string): boolean => WEBHOOK_PATH.test(path);
+
+/** A key template needs a request placeholder and no other braces. */
+export function isWebhookKeyTemplate(template: string): boolean {
+  const matches = template.match(WEBHOOK_PLACEHOLDER);
+  const remainder = template.replace(WEBHOOK_PLACEHOLDER, "");
+  return matches !== null && !remainder.includes("{{") && !remainder.includes("}}");
+}
+
+const WebhookFilterPath = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(256),
+  Schema.makeFilter(isWebhookPath),
+);
+
+/**
+ * Forms edit an `in` list as comma-separated text, so a value without commas or
+ * surrounding whitespace survives that round trip unchanged.
+ */
+const WebhookFilterListValue = Schema.String.check(
+  Schema.isMaxLength(1_000),
+  Schema.isPattern(/^[^,\s](?:[^,]*[^,\s])?$/),
+);
+
+/**
+ * Scalars compare as strings. Objects and arrays only satisfy `exists`, and a
+ * missing or null value fails every op, including `notEquals`.
+ */
+export const ScheduledTaskWebhookFilter = Schema.Union([
+  Schema.Struct({
+    path: WebhookFilterPath,
+    op: Schema.Literals(["equals", "notEquals", "startsWith"]),
+    value: Schema.String.check(Schema.isMaxLength(1_000)),
+  }),
+  Schema.Struct({
+    path: WebhookFilterPath,
+    op: Schema.Literal("in"),
+    value: Schema.Array(WebhookFilterListValue).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(64),
+    ),
+  }),
+  Schema.Struct({ path: WebhookFilterPath, op: Schema.Literal("exists") }),
+]);
+export type ScheduledTaskWebhookFilter = typeof ScheduledTaskWebhookFilter.Type;
+export type ScheduledTaskWebhookFilterOp = ScheduledTaskWebhookFilter["op"];
+
+/** Deliveries whose key renders the same within the window start one run. */
+export const ScheduledTaskWebhookCoalesce = Schema.Struct({
+  key: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(256),
+    Schema.makeFilter(isWebhookKeyTemplate),
+  ),
+  windowSeconds: Schema.optional(
+    Schema.Int.check(
+      Schema.isBetween({
+        minimum: MIN_WEBHOOK_COALESCE_SECONDS,
+        maximum: MAX_WEBHOOK_COALESCE_SECONDS,
+      }),
+    ),
+  ),
+});
+export type ScheduledTaskWebhookCoalesce = typeof ScheduledTaskWebhookCoalesce.Type;
+
 export const ScheduledTaskSchedule = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("interval"),
@@ -19,7 +97,14 @@ export const ScheduledTaskSchedule = Schema.Union([
       Schema.isMaxLength(7),
     ),
   }),
-  Schema.Struct({ type: Schema.Literal("webhook") }),
+  Schema.Struct({
+    type: Schema.Literal("webhook"),
+    // On save, an omitted field keeps the stored rules; [] or null clears them.
+    filters: Schema.optional(
+      Schema.Array(ScheduledTaskWebhookFilter).check(Schema.isMaxLength(MAX_WEBHOOK_FILTERS)),
+    ),
+    coalesce: Schema.optional(Schema.NullOr(ScheduledTaskWebhookCoalesce)),
+  }),
 ]);
 export type ScheduledTaskSchedule = typeof ScheduledTaskSchedule.Type;
 
@@ -41,6 +126,8 @@ export const ScheduledTaskRun = Schema.Struct({
   createdAt: IsoDateTime,
   finishedAt: Schema.NullOr(IsoDateTime),
   error: Schema.NullOr(Schema.String),
+  /** Set while a pending run waits for its webhook window to close. */
+  dueAt: Schema.optional(IsoDateTime),
 });
 export type ScheduledTaskRun = typeof ScheduledTaskRun.Type;
 

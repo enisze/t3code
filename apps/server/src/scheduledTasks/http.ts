@@ -46,14 +46,20 @@ export const handleWebhook = Effect.gen(function* () {
       () => new ScheduledTaskError({ reason: "invalid", message: "Send a JSON webhook payload." }),
     ),
   );
-  const run = yield* tasks.triggerWebhook(
+  const delivery = yield* tasks.triggerWebhook(
     match[1]!,
     match[2]!,
-    payload,
+    { body: payload, headers: request.headers, query: url.value.search.replace(/^\?/, "") },
     request.headers["x-webhook-id"] ?? request.headers["x-github-delivery"],
   );
   return yield* HttpServerResponse.json(
-    { runId: run.id, status: run.status },
+    delivery.outcome === "filtered"
+      ? { status: "filtered", reason: delivery.reason }
+      : {
+          runId: delivery.run.id,
+          status: delivery.outcome === "coalesced" ? "coalesced" : delivery.run.status,
+          ...(delivery.run.dueAt === undefined ? {} : { dueAt: delivery.run.dueAt }),
+        },
     {
       status: 202,
       headers: { "cache-control": "no-store" },

@@ -20,7 +20,7 @@ import { OrchestrationEngineService } from "../orchestration/Services/Orchestrat
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { OrchestrationCommandInvariantError } from "../orchestration/Errors.ts";
-import { make, ScheduledTasks } from "./ScheduledTasks.ts";
+import { make, ScheduledTasks, type WebhookDelivery } from "./ScheduledTasks.ts";
 import { webhookRouteLayer } from "./http.ts";
 
 const NOW = "2026-10-23T08:00:00.000Z";
@@ -98,6 +98,14 @@ const fixture = Effect.gen(function* () {
   };
 });
 
+const runOf = (delivery: WebhookDelivery) => {
+  if (delivery.outcome === "filtered") throw new Error(`Unexpectedly filtered: ${delivery.reason}`);
+  return delivery.run;
+};
+const tokenOf = (saved: { readonly webhookPath?: string }) => saved.webhookPath!.split("/").at(-1)!;
+const texts = (commands: ReadonlyArray<OrchestrationCommand>) =>
+  commands.map((command) => (command.type === "thread.turn.start" ? command.message.text : null));
+
 const test = it.layer(SqlitePersistenceMemory);
 test("persistent automations", (it) => {
   it.effect("persists schedules across service restarts and coalesces missed intervals", () =>
@@ -157,22 +165,24 @@ test("persistent automations", (it) => {
           prompt: "Review {{payload}}",
         });
         const token = saved.webhookPath!.split("/").at(-1)!;
-        const invalid = yield* Effect.result(tasks.triggerWebhook(saved.task.id, "wrong", {}));
+        const invalid = yield* Effect.result(
+          tasks.triggerWebhook(saved.task.id, "wrong", { body: {} }),
+        );
         assert.strictEqual(invalid._tag, "Failure");
         const first = yield* tasks.triggerWebhook(
           saved.task.id,
           token,
-          { ref: "main" },
+          { body: { ref: "main" } },
           "delivery-1",
         );
         const recovered = yield* restart;
         const repeated = yield* recovered.triggerWebhook(
           saved.task.id,
           token,
-          { ref: "other" },
+          { body: { ref: "other" } },
           "delivery-1",
         );
-        assert.strictEqual(first.id, repeated.id);
+        assert.strictEqual(runOf(first).id, runOf(repeated).id);
         yield* recovered.tick;
         assert.strictEqual(commands.length, 1);
         if (commands[0]?.type !== "thread.turn.start") throw new Error("Missing turn");
@@ -187,14 +197,18 @@ test("persistent automations", (it) => {
         expect(stored[0]?.webhook_token_hash).not.toContain(token);
         const rotated = yield* recovered.rotateWebhook(saved.task.id);
         assert.strictEqual(
-          (yield* Effect.result(recovered.triggerWebhook(saved.task.id, token, {})))._tag,
+          (yield* Effect.result(recovered.triggerWebhook(saved.task.id, token, { body: {} })))._tag,
           "Failure",
         );
-        yield* recovered.triggerWebhook(saved.task.id, rotated.webhookPath.split("/").at(-1)!, {});
+        yield* recovered.triggerWebhook(saved.task.id, rotated.webhookPath.split("/").at(-1)!, {
+          body: {},
+        });
         yield* recovered.setEnabled(saved.task.id, false);
         assert.strictEqual(
           (yield* Effect.result(
-            recovered.triggerWebhook(saved.task.id, rotated.webhookPath.split("/").at(-1)!, {}),
+            recovered.triggerWebhook(saved.task.id, rotated.webhookPath.split("/").at(-1)!, {
+              body: {},
+            }),
           ))._tag,
           "Failure",
         );
@@ -228,7 +242,7 @@ test("persistent automations", (it) => {
         const { tasks, commands } = yield* fixture;
         const saved = yield* tasks.save({ ...baseInput, schedule: { type: "webhook" } });
         const token = saved.webhookPath!.split("/").at(-1)!;
-        yield* tasks.triggerWebhook(saved.task.id, token, {}, "delivery");
+        yield* tasks.triggerWebhook(saved.task.id, token, { body: {} }, "delivery");
         yield* tasks.setEnabled(saved.task.id, false);
         yield* tasks.tick;
         assert.strictEqual(commands.length, 0);
@@ -339,12 +353,305 @@ test("persistent automations", (it) => {
       const hook = yield* tasks.save({ ...baseInput, schedule: { type: "webhook" } });
       const token = hook.webhookPath!.split("/").at(-1)!;
       for (let index = 0; index < 10; index += 1)
-        yield* tasks.triggerWebhook(hook.task.id, token, {}, `delivery-${index}`);
+        yield* tasks.triggerWebhook(hook.task.id, token, { body: {} }, `delivery-${index}`);
       const limited = yield* Effect.result(
-        tasks.triggerWebhook(hook.task.id, token, {}, "over-limit"),
+        tasks.triggerWebhook(hook.task.id, token, { body: {} }, "over-limit"),
       );
       assert.strictEqual(limited._tag, "Failure");
       if (limited._tag === "Failure") assert.strictEqual(limited.failure.reason, "rate_limited");
+    }),
+  );
+});
+
+test("webhook rules", (it) => {
+  it.effect("filters deliveries before dedupe and rate limits, writing nothing for them", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const { tasks, commands } = yield* fixture;
+      const saved = yield* tasks.save({
+        ...baseInput,
+        prompt: "Triage {{body.action}} {{headers.x-github-event}}",
+        schedule: {
+          type: "webhook",
+          filters: [
+            { path: "headers.x-github-event", op: "equals", value: "pull_request" },
+            { path: "body.action", op: "in", value: ["opened", "reopened"] },
+          ],
+        },
+      });
+      const token = tokenOf(saved);
+      const pullRequest = { "x-github-event": "pull_request" };
+      expect(
+        yield* tasks.triggerWebhook(
+          saved.task.id,
+          token,
+          { body: { action: "opened" }, headers: { "x-github-event": "push" } },
+          "delivery",
+        ),
+      ).toEqual({
+        outcome: "filtered",
+        reason: "Filter 1 (headers.x-github-event) did not match.",
+      });
+      for (let index = 0; index < 20; index += 1) {
+        expect(
+          yield* tasks.triggerWebhook(
+            saved.task.id,
+            token,
+            { body: { action: "closed" }, headers: pullRequest },
+            `closed-${index}`,
+          ),
+        ).toEqual({ outcome: "filtered", reason: "Filter 2 (body.action) did not match." });
+      }
+      expect(yield* tasks.history(saved.task.id)).toEqual([]);
+      // The filtered delivery left no record, so its ID still starts a run once it matches.
+      const run = runOf(
+        yield* tasks.triggerWebhook(
+          saved.task.id,
+          token,
+          { body: { action: "opened" }, headers: pullRequest },
+          "delivery",
+        ),
+      );
+      assert.strictEqual(run.status, "pending");
+      yield* tasks.tick;
+      expect(texts(commands)).toEqual(["Triage opened pull_request"]);
+    }),
+  );
+
+  it.effect("keeps stored rules when a save omits them and clears them with [] or null", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const { tasks } = yield* fixture;
+      const saved = yield* tasks.save({
+        ...baseInput,
+        schedule: {
+          type: "webhook",
+          filters: [{ path: "body.action", op: "exists" }],
+          coalesce: { key: "{{body.number}}", windowSeconds: 30 },
+        },
+      });
+      const renamed = yield* tasks.save({
+        ...baseInput,
+        id: saved.task.id,
+        name: "Renamed",
+        schedule: { type: "webhook" },
+      });
+      expect(renamed.task.schedule).toEqual(saved.task.schedule);
+      const cleared = yield* tasks.save({
+        ...baseInput,
+        id: saved.task.id,
+        schedule: { type: "webhook", filters: [], coalesce: null },
+      });
+      expect(cleared.task.schedule).toEqual({ type: "webhook" });
+    }),
+  );
+
+  it.effect("coalesces a burst into one run with the latest payload when the window closes", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const { tasks, commands } = yield* fixture;
+      const saved = yield* tasks.save({
+        ...baseInput,
+        prompt: "Review PR {{body.number}} at {{body.sha}}",
+        schedule: { type: "webhook", coalesce: { key: "pr-{{body.number}}", windowSeconds: 60 } },
+      });
+      const id = saved.task.id;
+      const token = tokenOf(saved);
+      const opened = runOf(
+        yield* tasks.triggerWebhook(id, token, { body: { number: 7, sha: "a" } }, "a"),
+      );
+      expect(opened).toMatchObject({ status: "pending", dueAt: "2026-10-23T08:01:00.000Z" });
+      yield* TestClock.adjust("30 seconds");
+      expect(
+        yield* tasks.triggerWebhook(id, token, { body: { number: 7, sha: "b" } }, "b"),
+      ).toEqual({ outcome: "coalesced", run: opened });
+      const other = runOf(
+        yield* tasks.triggerWebhook(id, token, { body: { number: 8, sha: "c" } }, "c"),
+      );
+      assert.notStrictEqual(other.id, opened.id);
+      // Without a key the delivery runs at once.
+      const immediate = runOf(yield* tasks.triggerWebhook(id, token, { body: { sha: "d" } }, "d"));
+      assert.strictEqual(immediate.dueAt, undefined);
+      yield* tasks.tick;
+      expect(texts(commands)).toEqual(["Review PR  at d"]);
+      // The deadline counts from the first delivery, not the latest one.
+      yield* TestClock.adjust("30 seconds");
+      yield* tasks.tick;
+      expect(texts(commands)).toEqual(["Review PR  at d", "Review PR 7 at b"]);
+      const history = yield* tasks.history(id);
+      expect(history.find((run) => run.id === opened.id)).toMatchObject({ status: "started" });
+      expect(history.find((run) => run.id === opened.id)).not.toHaveProperty("dueAt");
+      expect(history.find((run) => run.id === other.id)).toMatchObject({
+        status: "pending",
+        dueAt: "2026-10-23T08:01:30.000Z",
+      });
+      // A delivery after the deadline opens a new window instead of joining the closed one.
+      const reopened = runOf(
+        yield* tasks.triggerWebhook(id, token, { body: { number: 7, sha: "e" } }, "e"),
+      );
+      assert.notStrictEqual(reopened.id, opened.id);
+      assert.strictEqual(reopened.dueAt, "2026-10-23T08:02:00.000Z");
+    }),
+  );
+
+  it.effect("keeps open windows across restarts and treats retried deliveries as duplicates", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const { tasks, restart, commands } = yield* fixture;
+      const saved = yield* tasks.save({
+        ...baseInput,
+        prompt: "Deploy {{body.sha}}",
+        schedule: { type: "webhook", coalesce: { key: "{{body.env}}", windowSeconds: 60 } },
+      });
+      const id = saved.task.id;
+      const token = tokenOf(saved);
+      const opened = runOf(
+        yield* tasks.triggerWebhook(id, token, { body: { env: "prod", sha: "a" } }, "first"),
+      );
+      yield* tasks.triggerWebhook(id, token, { body: { env: "prod", sha: "b" } }, "second");
+      const recovered = yield* restart;
+      // Retries return the run they belong to and leave the latest payload alone.
+      expect(
+        yield* recovered.triggerWebhook(id, token, { body: { env: "prod", sha: "x" } }, "first"),
+      ).toEqual({ outcome: "run", run: opened });
+      expect(
+        yield* recovered.triggerWebhook(id, token, { body: { env: "prod", sha: "y" } }, "second"),
+      ).toEqual({ outcome: "coalesced", run: opened });
+      yield* TestClock.adjust("1 minute");
+      yield* recovered.tick;
+      expect(texts(commands)).toEqual(["Deploy b"]);
+      const late = yield* recovered.triggerWebhook(
+        id,
+        token,
+        { body: { env: "prod", sha: "z" } },
+        "second",
+      );
+      expect(late).toMatchObject({
+        outcome: "coalesced",
+        run: { id: opened.id, status: "started" },
+      });
+      yield* recovered.tick;
+      assert.strictEqual(commands.length, 1);
+    }),
+  );
+
+  it.effect(
+    "skips a window whose thread is busy at the deadline and cancels windows on pause",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const { tasks, commands, setThread } = yield* fixture;
+        const saved = yield* tasks.save({
+          ...baseInput,
+          schedule: { type: "webhook", coalesce: { key: "{{body.group}}", windowSeconds: 10 } },
+        });
+        const id = saved.task.id;
+        const token = tokenOf(saved);
+        const busyWindow = runOf(yield* tasks.triggerWebhook(id, token, { body: { group: "a" } }));
+        setThread({ ...thread, hasPendingApprovals: true });
+        yield* TestClock.adjust("10 seconds");
+        yield* tasks.tick;
+        assert.strictEqual(commands.length, 0);
+        expect((yield* tasks.history(id)).find((run) => run.id === busyWindow.id)).toMatchObject({
+          status: "skipped",
+          error: "The thread is busy or waiting for input.",
+        });
+        setThread(thread);
+        const paused = runOf(yield* tasks.triggerWebhook(id, token, { body: { group: "b" } }));
+        yield* tasks.setEnabled(id, false);
+        yield* tasks.setEnabled(id, true);
+        yield* TestClock.adjust("10 seconds");
+        yield* tasks.tick;
+        assert.strictEqual(commands.length, 0);
+        expect((yield* tasks.history(id)).find((run) => run.id === paused.id)).toMatchObject({
+          status: "skipped",
+          error: "Automation paused before dispatch.",
+        });
+      }),
+  );
+
+  it.effect("bounds joins per minute without spending the run budget", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const { tasks } = yield* fixture;
+      const saved = yield* tasks.save({
+        ...baseInput,
+        schedule: { type: "webhook", coalesce: { key: "{{body.group}}", windowSeconds: 3600 } },
+      });
+      const id = saved.task.id;
+      const token = tokenOf(saved);
+      const deliver = (group: string) =>
+        Effect.result(tasks.triggerWebhook(id, token, { body: { group } }));
+      assert.strictEqual((yield* deliver("joined"))._tag, "Success");
+      for (let index = 0; index < 60; index += 1) {
+        const joined = yield* deliver("joined");
+        assert.strictEqual(joined._tag === "Success" && joined.success.outcome, "coalesced");
+      }
+      const overJoins = yield* deliver("joined");
+      assert.strictEqual(overJoins._tag === "Failure" && overJoins.failure.reason, "rate_limited");
+      // Nine more windows fit in the run budget the joins left untouched.
+      for (let index = 0; index < 9; index += 1) {
+        assert.strictEqual((yield* deliver(`group-${index}`))._tag, "Success");
+      }
+      const overRuns = yield* deliver("one-more");
+      assert.strictEqual(overRuns._tag === "Failure" && overRuns.failure.reason, "rate_limited");
+      // The rate windows count deliveries from the last full minute.
+      yield* TestClock.adjust("61 seconds");
+      assert.strictEqual((yield* deliver("joined"))._tag, "Success");
+    }),
+  );
+
+  it.effect("passes headers and the query string through the HTTP route", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const { tasks, commands } = yield* fixture;
+      const saved = yield* tasks.save({
+        ...baseInput,
+        prompt: "From {{query.source}} for {{headers.x-group}}",
+        schedule: {
+          type: "webhook",
+          filters: [{ path: "query.source", op: "equals", value: "ci" }],
+          coalesce: { key: "{{headers.x-group}}", windowSeconds: 10 },
+        },
+      });
+      const app = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          HttpRouter.toWebHandler(
+            webhookRouteLayer.pipe(HttpRouter.provideRequest(Layer.succeed(ScheduledTasks, tasks))),
+            { disableLogger: true },
+          ),
+        ),
+        (handler) => Effect.promise(() => handler.dispose()),
+      );
+      const post = (query: string, headers: Record<string, string>) =>
+        Effect.promise(async () => {
+          const response = await app.handler(
+            new Request(`http://environment.test${saved.webhookPath}${query}`, {
+              method: "POST",
+              body: "{}",
+              headers,
+            }),
+          );
+          return { status: response.status, body: (await response.json()) as unknown };
+        });
+      expect(yield* post("?source=other", {})).toEqual({
+        status: 202,
+        body: { status: "filtered", reason: "Filter 1 (query.source) did not match." },
+      });
+      // The handler runs on the real clock, so only the shape of the window is checked here.
+      const opened = (yield* post("?source=ci", { "x-group": "g", "x-webhook-id": "one" }))
+        .body as {
+        runId: string;
+        dueAt: string;
+      };
+      expect(opened).toMatchObject({ status: "pending", dueAt: expect.any(String) });
+      expect(yield* post("?source=ci", { "x-group": "g", "x-webhook-id": "two" })).toEqual({
+        status: 202,
+        body: { runId: opened.runId, status: "coalesced", dueAt: opened.dueAt },
+      });
+      const otherGroup = (yield* post("?source=ci", { "x-group": "h" })).body as { runId: string };
+      assert.notStrictEqual(otherGroup.runId, opened.runId);
+      assert.strictEqual(commands.length, 0);
     }),
   );
 });
