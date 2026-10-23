@@ -512,6 +512,18 @@ export const CommandResolutionCache = Context.Reference<Map<string, CommandResol
   },
 );
 
+// An injected resolver or locator may answer differently for the same search, so its
+// entries are kept apart from every other resolver's.
+let spawnResolverCacheIdCount = 0;
+const spawnResolverCacheIds = new WeakMap<SpawnExecutableResolver | XcodeGitLocator, number>();
+function spawnResolverCacheId(resolver: SpawnExecutableResolver | XcodeGitLocator): number {
+  const known = spawnResolverCacheIds.get(resolver);
+  if (known !== undefined) return known;
+  const id = spawnResolverCacheIdCount++;
+  spawnResolverCacheIds.set(resolver, id);
+  return id;
+}
+
 function cacheCommandResolution(
   cache: Map<string, CommandResolutionCacheEntry>,
   cacheKey: string,
@@ -626,13 +638,88 @@ export const resolveCommandPath = Effect.fn("shell.resolveCommandPath")(function
   });
 });
 
+export type XcodeGitLocator = (env: NodeJS.ProcessEnv) => string | undefined;
+
+// xcrun honors DEVELOPER_DIR and the `xcode-select` choice, as the shim does.
+function locateXcodeGitWithXcrun(env: NodeJS.ProcessEnv): string | undefined {
+  try {
+    const located = NodeChildProcess.execFileSync("/usr/bin/xcrun", ["--find", "git"], {
+      encoding: "utf8",
+      env,
+      timeout: 5_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return NodePath.isAbsolute(located) ? located : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export const XcodeGitLocation = Context.Reference<XcodeGitLocator>(
+  "@t3tools/shared/shell/XcodeGitLocation",
+  { defaultValue: () => locateXcodeGitWithXcrun },
+);
+
+const MACOS_GIT_SHIM = "/usr/bin/git";
+
+/**
+ * /usr/bin/git is an xcrun shim that finds the active developer directory on
+ * every run: about 8 ms per spawn, against under 3 ms for the git behind it.
+ * Only the shim is replaced, so a git the user put first on PATH (Homebrew,
+ * Nix) still wins, and git's own children keep the same PATH. Any lookup
+ * failure keeps plain `git`.
+ */
+const resolveMacosGit = Effect.fnUntraced(function* (
+  env: NodeJS.ProcessEnv,
+  resolveExecutable: SpawnExecutableResolver,
+) {
+  const locateXcodeGit = yield* XcodeGitLocation;
+  const cache = yield* CommandResolutionCache;
+  const cacheKey = [
+    "xcode-git",
+    String(spawnResolverCacheId(resolveExecutable)),
+    String(spawnResolverCacheId(locateXcodeGit)),
+    resolvePathEnvironmentVariable(env),
+    env.DEVELOPER_DIR ?? "",
+  ].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
+  const nowNanos = yield* Clock.currentTimeNanos;
+  const cached = cache.get(cacheKey);
+  // An Xcode update or removal deletes the binary; look again instead of failing the spawn.
+  if (
+    cached !== undefined &&
+    cached.expiresAtNanos > nowNanos &&
+    (cached.resolvedPath === null ||
+      resolveExecutable(cached.resolvedPath, "darwin", env) !== undefined)
+  ) {
+    return cached.resolvedPath ?? "git";
+  }
+  const located =
+    resolveExecutable("git", "darwin", env) === MACOS_GIT_SHIM ? locateXcodeGit(env) : undefined;
+  const realGit =
+    located !== undefined && resolveExecutable(located, "darwin", env) !== undefined
+      ? located
+      : null;
+  cacheCommandResolution(cache, cacheKey, realGit, nowNanos);
+  return realGit ?? "git";
+});
+
+/**
+ * The git to spawn without a shell for `env`: the binary behind the macOS xcrun
+ * shim there, and plain `git` for Node's own lookup everywhere else.
+ */
+export const resolveGitExecutable = Effect.fnUntraced(function* (env: NodeJS.ProcessEnv) {
+  if ((yield* HostProcessPlatform) !== "darwin") return "git";
+  return yield* resolveMacosGit(env, yield* SpawnExecutableResolution);
+});
+
 export const resolveSpawnCommand = Effect.fn("shell.resolveSpawnCommand")(function* (
   command: string,
   args: ReadonlyArray<string>,
   options: CommandAvailabilityOptions = {},
 ): Effect.fn.Return<ResolvedSpawnCommand> {
   const platform = yield* HostProcessPlatform;
-  if (platform !== "win32") {
+  const isMacosGit = platform === "darwin" && command === "git";
+  if (platform !== "win32" && !isMacosGit) {
     return { command, args: [...args], shell: false };
   }
 
@@ -644,6 +731,13 @@ export const resolveSpawnCommand = Effect.fn("shell.resolveSpawnCommand")(functi
         ? { ...hostEnvironment, ...options.env }
         : options.env;
   const resolveExecutable = yield* SpawnExecutableResolution;
+  if (isMacosGit) {
+    return {
+      command: yield* resolveMacosGit(env, resolveExecutable),
+      args: [...args],
+      shell: false,
+    };
+  }
   const resolvedCommand = resolveExecutable(command, platform, env) ?? command;
   const extension = NodePath.win32.extname(resolvedCommand).toLowerCase();
   if (extension !== ".cmd" && extension !== ".bat") {
