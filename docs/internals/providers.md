@@ -39,7 +39,10 @@ Every process a chat session starts carries its thread's
 [process tag](../../apps/server/src/process/threadProcesses.ts), which its children inherit.
 Archiving stops tagged processes that are still running, so a session spawned without the tag
 leaves its dev servers and build workers behind. The tag names the server's environment as well,
-so a server running on copied state never stops another server's processes.
+so a server running on copied state never stops another server's processes. Archiving leaves the
+server's direct children to their session managers, and a server that crashes runs none of this,
+so the Claude CLI leads its own [process group](../../apps/server/src/provider/Layers/claudeProcessGroup.ts)
+that stops when the CLI exits or the server dies.
 
 ## Setup must not happen as a health-check side effect
 
