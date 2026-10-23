@@ -15,7 +15,8 @@ import {
   type ChatMessage,
   type SessionPhase,
   type Thread,
-  type ThreadShell,
+  type ThreadShellStructure,
+  type ThreadStructure,
   type TurnDiffSummary,
 } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
@@ -63,7 +64,7 @@ export function canCreateEmptyWorktreeThread(input: {
  * a synthetic or earlier message id; turn ids remain stable across that race.
  */
 export function buildTurnDiffSummaryByAssistantMessageId(
-  messages: ReadonlyArray<ChatMessage>,
+  messages: ReadonlyArray<Pick<ChatMessage, "id" | "role" | "turnId">>,
   summaries: ReadonlyArray<TurnDiffSummary>,
 ): Map<MessageId, TurnDiffSummary> {
   const messageIds = new Set(messages.map((message) => message.id));
@@ -156,7 +157,7 @@ export function buildLocalDraftThread(
   };
 }
 
-export function buildLoadingThreadFromShell(shell: ThreadShell): Thread {
+export function buildLoadingThreadFromShell(shell: ThreadShellStructure): ThreadStructure {
   return {
     ...shell,
     messages: [],
@@ -417,7 +418,9 @@ export function isBranchMismatchDismissedForSession(key: string | null): boolean
   return key !== null && sessionDismissedBranchMismatchKeys.has(key);
 }
 
-export function threadHasStarted(thread: Thread | null | undefined): boolean {
+export function threadHasStarted(
+  thread: Pick<ThreadStructure, "latestTurn" | "messages" | "session"> | null | undefined,
+): boolean {
   return Boolean(
     thread && (thread.latestTurn !== null || thread.messages.length > 0 || thread.session !== null),
   );
@@ -436,7 +439,7 @@ export function threadHasStarted(thread: Thread | null | undefined): boolean {
 // a custom instance's underlying driver kind should resolve the instance id
 // upstream and pass the correlated kind.
 export function deriveLockedProvider(input: {
-  thread: Thread | null | undefined;
+  thread: ThreadStructure | null | undefined;
   selectedProvider: string | null;
   threadProvider: string | null;
 }): ProviderDriverKind | null {
@@ -554,7 +557,7 @@ export interface LocalDispatchSnapshot {
 }
 
 export function createLocalDispatchSnapshot(
-  activeThread: Thread | undefined,
+  activeThread: ThreadStructure | undefined,
   options?: { preparingWorktree?: boolean },
 ): LocalDispatchSnapshot {
   const latestTurn = activeThread?.latestTurn ?? null;

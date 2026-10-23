@@ -43,7 +43,12 @@ import {
 import { buildDiffViewedSignature, buildDiffViewedSignatures } from "../lib/diffViewedSignature";
 import { useDiffThemeName } from "../hooks/useDiffThemeName";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
-import { useProject, useThread, useThreadShell, useThreadStatus } from "../state/entities";
+import {
+  useProject,
+  useThreadShellStructure,
+  useThreadStatus,
+  useThreadStructure,
+} from "../state/entities";
 import { resolveThreadRouteRef } from "../threadRoutes";
 import { useWorkspaceThreadRef } from "../lib/workspaceThreadRef";
 import { useClientSettings } from "../hooks/useSettings";
@@ -302,12 +307,12 @@ export default function DiffPanel({
   // not-yet-sent draft shows the shared diff immediately instead of only after
   // its first message promotes it to a server thread.
   const workspaceThreadRef = useWorkspaceThreadRef(currentThreadRef);
-  const activeThread = useThread(currentThreadRef);
+  const activeThread = useThreadStructure(currentThreadRef);
   const activeThreadStatus = useThreadStatus(currentThreadRef);
   // The worktree's data source. For a draft the current chat has no server
   // thread yet, so this resolves to the representative sibling that owns the
   // worktree; for an ordinary chat it's the same worktree either way.
-  const workspaceThread = useThread(workspaceThreadRef) ?? activeThread;
+  const workspaceThread = useThreadStructure(workspaceThreadRef) ?? activeThread;
   // A worktree can hold only a not-yet-sent draft (no server thread), so
   // `workspaceThread` is null even though the draft already targets a worktree
   // on disk. Read that draft's worktree/environment/project so the shared diff,
@@ -373,8 +378,8 @@ export default function DiffPanel({
       threadId: diffSelection.threadId,
     } satisfies ScopedThreadRef;
   }, [currentThreadRef?.threadId, diffSelection, workspaceThreadRef]);
-  const turnOwnerThread = useThread(turnOwnerThreadRef);
-  const turnOwnerShell = useThreadShell(turnOwnerThreadRef);
+  const turnOwnerThread = useThreadStructure(turnOwnerThreadRef);
+  const turnOwnerShell = useThreadShellStructure(turnOwnerThreadRef);
   const turnOwnerSummaries = useTurnDiffSummaries(turnOwnerThread);
   // The owning chat can be archived out from under a shared selection. Once the
   // open chat has loaded (so the thread index has arrived) an owner with neither

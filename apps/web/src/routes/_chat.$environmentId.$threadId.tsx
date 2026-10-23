@@ -9,10 +9,10 @@ import { resolveThreadSyncPhase } from "../threadSync";
 import { SidebarInset } from "~/components/ui/sidebar";
 import {
   useEnvironmentThreadRefs,
-  useThreadDetail,
   useThreadError,
-  useThreadShell,
+  useThreadShellStructure,
   useThreadStatus,
+  useThreadStructure,
 } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { environmentShell } from "../state/shell";
@@ -25,8 +25,10 @@ function ChatThreadRouteView() {
   const shell = useEnvironmentQuery(
     threadRef === null ? null : environmentShell.stateAtom(threadRef.environmentId),
   );
-  const serverThreadShell = useThreadShell(threadRef);
-  const serverThreadDetail = useThreadDetail(threadRef);
+  // Structure reads hold still while a reply streams, so neither this route nor
+  // the ChatView element it renders changes per streamed delta.
+  const serverThreadShellExists = useThreadShellStructure(threadRef) !== null;
+  const serverThread = useThreadStructure(threadRef);
   const serverThreadStatus = useThreadStatus(threadRef);
   const serverThreadError = useThreadError(threadRef);
   const environmentThreadRefs = useEnvironmentThreadRefs(threadRef?.environmentId ?? null);
@@ -46,18 +48,18 @@ function ChatThreadRouteView() {
   });
   const renderState = resolveThreadRouteRenderState({
     bootstrapComplete,
-    serverThreadShellExists: serverThreadShell !== null,
-    serverThreadDetailExists: serverThreadDetail !== null,
+    serverThreadShellExists,
+    serverThreadDetailExists: serverThread !== null,
     serverThreadDetailDeleted: serverThreadStatus === "deleted",
     draftThreadExists,
   });
   const threadSyncPhase = resolveThreadSyncPhase({
-    detailExists: serverThreadDetail !== null,
-    shellExists: serverThreadShell !== null,
+    detailExists: serverThread !== null,
+    shellExists: serverThreadShellExists,
     status: serverThreadStatus,
     failed: serverThreadError !== null,
   });
-  const serverThreadStarted = threadHasStarted(serverThreadDetail);
+  const serverThreadStarted = threadHasStarted(serverThread);
   const environmentHasAnyThreads = environmentHasServerThreads || environmentHasDraftThreads;
 
   useEffect(() => {
@@ -83,7 +85,7 @@ function ChatThreadRouteView() {
 
   return (
     <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
-      {renderState === "ready" || (renderState === "loading" && serverThreadShell !== null) ? (
+      {renderState === "ready" || (renderState === "loading" && serverThreadShellExists) ? (
         <ChatView
           environmentId={threadRef.environmentId}
           threadId={threadRef.threadId}

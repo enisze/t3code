@@ -112,8 +112,10 @@ import {
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_TERMINALS_PER_GROUP,
   type ChatMessage,
+  type ChatMessageStructure,
   type SessionPhase,
   type Thread,
+  type ThreadStructure,
 } from "../types";
 import { useTheme } from "../hooks/useTheme";
 import { useReopenClosedChat } from "../hooks/useReopenClosedChat";
@@ -230,13 +232,14 @@ import { retryThreadDetail, threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
+  readThreadShellsForProjectRefs,
   useProject,
   useProjects,
-  useThread,
   useThreadProposedPlans,
   useThreadRefs,
-  useThreadShell,
-  useThreadShellsForProjectRefs,
+  useThreadShellStructure,
+  useThreadStructure,
+  useThreadUpdatedAt,
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
@@ -244,7 +247,7 @@ import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { FileViewModeToggle } from "./FileViewModeToggle";
-import { MessagesTimeline } from "./chat/MessagesTimeline";
+import { ThreadTimeline } from "./chat/ThreadTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
 import { WorktreeThreadTabs } from "./chat/WorktreeThreadTabs";
 import { PanelLayoutControls } from "./chat/PanelLayoutControls";
@@ -530,7 +533,7 @@ interface TerminalLaunchContext {
 type PersistentTerminalLaunchContext = Pick<TerminalLaunchContext, "cwd" | "worktreePath">;
 
 function useLocalDispatchState(input: {
-  activeThread: Thread | undefined;
+  activeThread: ThreadStructure | undefined;
   activeLatestTurn: Thread["latestTurn"] | null;
   phase: SessionPhase;
   activePendingApproval: ApprovalRequestId | null;
@@ -664,7 +667,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
   const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
-  const serverThread = useThread(threadRef, { waitForShell: draftThread !== null });
+  const serverThread = useThreadStructure(threadRef, { waitForShell: draftThread !== null });
   const projectRef = serverThread
     ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
     : draftThread
@@ -1029,7 +1032,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
   closeShortcutLabel,
 }: PersistentThreadTerminalPanelProps) {
   const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
-  const serverThread = useThread(threadRef, { waitForShell: draftThread !== null });
+  const serverThread = useThreadStructure(threadRef, { waitForShell: draftThread !== null });
   const projectRef = serverThread
     ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
     : draftThread
@@ -1184,6 +1187,33 @@ function chatActionErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "An error occurred.";
 }
 
+/**
+ * Marks the open thread visited whenever it updates. Every thread event moves
+ * `updatedAt`, so only this leaf reads it, and a streamed reply re-renders it
+ * instead of ChatView.
+ */
+function ThreadVisitMarker({
+  threadRef,
+  waitForShell,
+}: {
+  threadRef: ScopedThreadRef;
+  waitForShell: boolean;
+}) {
+  const updatedAt = useThreadUpdatedAt(threadRef, { waitForShell });
+  const threadKey = scopedThreadKey(threadRef);
+  const lastVisitedAt = useUiStateStore((store) => store.threadLastVisitedAtById[threadKey]);
+  const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
+  useEffect(() => {
+    if (updatedAt === null) return;
+    const threadUpdatedAt = Date.parse(updatedAt);
+    if (Number.isNaN(threadUpdatedAt)) return;
+    const lastVisited = lastVisitedAt ? Date.parse(lastVisitedAt) : NaN;
+    if (!Number.isNaN(lastVisited) && lastVisited >= threadUpdatedAt) return;
+    markThreadVisited(threadKey, updatedAt);
+  }, [lastVisitedAt, markThreadVisited, threadKey, updatedAt]);
+  return null;
+}
+
 function ChatViewContent(props: ChatViewProps) {
   const {
     environmentId,
@@ -1258,8 +1288,12 @@ function ChatViewContent(props: ChatViewProps) {
         ? store.getDraftSession(draftId)
         : null,
   );
-  const routeServerThreadShell = useThreadShell(routeKind === "server" ? routeThreadRef : null);
-  const serverThread = useThread(routeThreadRef, { waitForShell: draftThread !== null });
+  const routeServerThreadShell = useThreadShellStructure(
+    routeKind === "server" ? routeThreadRef : null,
+  );
+  // The thread without streamed text: ChatView does not re-render per delta.
+  // ThreadTimeline reads the live messages it renders.
+  const serverThread = useThreadStructure(routeThreadRef, { waitForShell: draftThread !== null });
   const loadingServerThread = useMemo(
     () =>
       threadDetailUnavailable && routeServerThreadShell
@@ -1268,10 +1302,6 @@ function ChatViewContent(props: ChatViewProps) {
     [routeServerThreadShell, threadDetailUnavailable],
   );
   const activeServerThread = serverThread ?? loadingServerThread;
-  const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
-  const activeThreadLastVisitedAt = useUiStateStore(
-    (store) => store.threadLastVisitedAtById[routeThreadKey],
-  );
   const settings = useEnvironmentSettings(environmentId);
   // New-thread defaults live in the primary environment's settings.json (the
   // settings UI never writes to remote environments), so read them from the
@@ -1680,7 +1710,6 @@ function ChatViewContent(props: ChatViewProps) {
     () => (activeProjectRef === null ? [] : [activeProjectRef]),
     [activeProjectRef],
   );
-  const activeProjectThreadShells = useThreadShellsForProjectRefs(activeProjectRefs);
   const handleNewThreadInActiveProject = useCallback(() => {
     startNewThreadForProject(activeProjectRef, handleNewThread);
   }, [activeProjectRef, handleNewThread]);
@@ -1918,7 +1947,8 @@ function ChatViewContent(props: ChatViewProps) {
       worktreePath: string | null;
       reuseLocalCheckout?: boolean;
     }) => {
-      const existing = activeProjectThreadShells.find(
+      // Read when needed: subscribing would re-render ChatView on every shell update.
+      const existing = readThreadShellsForProjectRefs(activeProjectRefs).find(
         (shell) =>
           activeProject !== null &&
           shell.environmentId === activeProject.environmentId &&
@@ -1959,27 +1989,8 @@ function ChatViewContent(props: ChatViewProps) {
       }
       return false;
     },
-    [activeProject, activeProjectThreadShells, navigate, openOrReuseProjectDraftThread],
+    [activeProject, activeProjectRefs, navigate, openOrReuseProjectDraftThread],
   );
-
-  useEffect(() => {
-    if (!serverThread?.id) return;
-    const threadUpdatedAt = Date.parse(serverThread.updatedAt);
-    if (Number.isNaN(threadUpdatedAt)) return;
-    const lastVisitedAt = activeThreadLastVisitedAt ? Date.parse(activeThreadLastVisitedAt) : NaN;
-    if (!Number.isNaN(lastVisitedAt) && lastVisitedAt >= threadUpdatedAt) return;
-
-    markThreadVisited(
-      scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id)),
-      serverThread.updatedAt,
-    );
-  }, [
-    activeThreadLastVisitedAt,
-    markThreadVisited,
-    serverThread?.environmentId,
-    serverThread?.id,
-    serverThread?.updatedAt,
-  ]);
 
   const selectedProviderByThreadId = composerActiveProvider ?? null;
   const threadProvider =
@@ -2297,7 +2308,7 @@ function ChatViewContent(props: ChatViewProps) {
       ),
     [serverAttachmentIds, serverAttachmentUrls],
   );
-  const displayServerMessages = useMemo<ReadonlyArray<ChatMessage>>(() => {
+  const displayServerMessages = useMemo<ReadonlyArray<ChatMessageStructure>>(() => {
     if (!serverMessages) return [];
     return serverMessages.map((message) => {
       if (!message.attachments || message.attachments.length === 0) {
@@ -2318,7 +2329,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     const cleanups: Array<() => void> = [];
-    const userMessagesById = new Map<string, ChatMessage>(
+    const userMessagesById = new Map<string, ChatMessageStructure>(
       displayServerMessages
         .filter((message) => message.role === "user")
         .map((message) => [String(message.id), message] as const),
@@ -3824,12 +3835,11 @@ function ChatViewContent(props: ChatViewProps) {
     }
   }, []);
 
-  useEffect(() => {
-    if (!activeThread?.id) {
-      return;
-    }
+  // ThreadTimeline runs this after each change to the rendered entries,
+  // streamed text included, which ChatView itself does not re-render for.
+  const followTimelineEnd = useCallback(() => {
     if (liveFollowUserScrollGenerationRef.current !== userScrollGenerationRef.current) {
-      return;
+      return undefined;
     }
 
     let secondFrame: number | null = null;
@@ -3860,7 +3870,7 @@ function ChatViewContent(props: ChatViewProps) {
         cancelAnimationFrame(secondFrame);
       }
     };
-  }, [activeThread?.id, timelineEntries, timelineRealContentOverflowsViewport]);
+  }, [timelineRealContentOverflowsViewport]);
 
   useEffect(() => {
     setPullRequestDialogState(null);
@@ -4003,7 +4013,7 @@ function ChatViewContent(props: ChatViewProps) {
   // Settled state of the open thread, resolved exactly like the sidebar
   // partition (same shell, same capability gate, same PR auto-settle input)
   // so the banner and the sidebar row never disagree.
-  const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
+  const activeThreadShell = useThreadShellStructure(isServerThread ? activeThreadRef : null);
   const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
   const activeThreadPr = resolveThreadPr({
     threadBranch: activeThread?.branch ?? null,
@@ -6135,6 +6145,7 @@ function ChatViewContent(props: ChatViewProps) {
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
+      <ThreadVisitMarker threadRef={routeThreadRef} waitForShell={draftThread !== null} />
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
@@ -6238,8 +6249,10 @@ function ChatViewContent(props: ChatViewProps) {
               style={{ paddingBottom: timelineComposerLayout.viewportPaddingBottom }}
             >
               {/* Messages — LegendList handles virtualization and scrolling internally */}
-              <MessagesTimeline
+              <ThreadTimeline
                 key={activeThread.id}
+                liveMessagesRef={serverThread !== null ? routeThreadRef : null}
+                onRenderedEntriesChange={followTimelineEnd}
                 isWorking={isWorking}
                 activeTurnInProgress={isWorking || !latestTurnSettled}
                 activeTurnStartedAt={activeWorkStartedAt}

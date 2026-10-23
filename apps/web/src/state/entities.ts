@@ -3,6 +3,8 @@ import type {
   EnvironmentProject,
   EnvironmentThread,
   EnvironmentThreadShell,
+  ThreadShellStructure,
+  ThreadStructure,
 } from "@t3tools/client-runtime/state/shell";
 import {
   type EnvironmentThreadStatus,
@@ -19,11 +21,16 @@ import {
   allEnvironmentProjectSnapshotsReadyAtom,
   allEnvironmentShellsBootstrappedAtom,
 } from "./shell";
-import { environmentThreadDetails, environmentThreadShells } from "./threads";
+import {
+  environmentThreadDetails,
+  environmentThreadShells,
+  environmentThreadStructures,
+} from "./threads";
 
-import type { OrchestrationProposedPlan } from "@t3tools/contracts";
+import type { OrchestrationMessage, OrchestrationProposedPlan } from "@t3tools/contracts";
 
 const EMPTY_PROPOSED_PLANS: ReadonlyArray<OrchestrationProposedPlan> = Object.freeze([]);
+const EMPTY_MESSAGES: ReadonlyArray<OrchestrationMessage> = Object.freeze([]);
 const EMPTY_THREAD_REFS: ReadonlyArray<ScopedThreadRef> = Object.freeze([]);
 
 const EMPTY_PROJECT_ATOM = Atom.make<EnvironmentProject | null>(null).pipe(
@@ -37,6 +44,18 @@ const EMPTY_THREAD_SHELL_ATOM = Atom.make<EnvironmentThreadShell | null>(null).p
 );
 const EMPTY_THREAD_DETAIL_ATOM = Atom.make<EnvironmentThread | null>(null).pipe(
   Atom.withLabel("web-thread-detail:empty"),
+);
+const EMPTY_THREAD_MESSAGES_ATOM = Atom.make(EMPTY_MESSAGES).pipe(
+  Atom.withLabel("web-thread-messages:empty"),
+);
+const EMPTY_THREAD_STRUCTURE_ATOM = Atom.make<ThreadStructure | null>(null).pipe(
+  Atom.withLabel("web-thread-structure:empty"),
+);
+const EMPTY_THREAD_SHELL_STRUCTURE_ATOM = Atom.make<ThreadShellStructure | null>(null).pipe(
+  Atom.withLabel("web-thread-shell-structure:empty"),
+);
+const EMPTY_THREAD_UPDATED_AT_ATOM = Atom.make<string | null>(null).pipe(
+  Atom.withLabel("web-thread-updated-at:empty"),
 );
 const EMPTY_THREAD_STATUS_ATOM = Atom.make<EnvironmentThreadStatus>("empty").pipe(
   Atom.withLabel("web-thread-status:empty"),
@@ -163,6 +182,51 @@ export function useThread(
   return useMemo(() => mergeEnvironmentThread(detail, shell), [detail, shell]);
 }
 
+/**
+ * `useThread` for views that must not re-render while a reply streams: the
+ * thread without assistant text and `updatedAt` (see `ThreadStructure`).
+ */
+export function useThreadStructure(
+  ref: ScopedThreadRef | null,
+  options?: { waitForShell?: boolean },
+): ThreadStructure | null {
+  return useAtomValue(
+    ref === null
+      ? EMPTY_THREAD_STRUCTURE_ATOM
+      : environmentThreadStructures.structureAtom(ref, options),
+  );
+}
+
+/** A thread's live messages. Assistant text changes with every streamed delta. */
+export function useThreadMessages(
+  ref: ScopedThreadRef | null,
+): ReadonlyArray<OrchestrationMessage> {
+  return useAtomValue(
+    ref === null ? EMPTY_THREAD_MESSAGES_ATOM : environmentThreadDetails.messagesAtom(ref),
+  );
+}
+
+/** `useThreadShell` without the `updatedAt` every thread event restamps. */
+export function useThreadShellStructure(ref: ScopedThreadRef | null): ThreadShellStructure | null {
+  return useAtomValue(
+    ref === null
+      ? EMPTY_THREAD_SHELL_STRUCTURE_ATOM
+      : environmentThreadStructures.shellStructureAtom(ref),
+  );
+}
+
+/** The `updatedAt` of `useThread`'s thread. It changes with every thread event. */
+export function useThreadUpdatedAt(
+  ref: ScopedThreadRef | null,
+  options?: { waitForShell?: boolean },
+): string | null {
+  return useAtomValue(
+    ref === null
+      ? EMPTY_THREAD_UPDATED_AT_ATOM
+      : environmentThreadStructures.updatedAtAtom(ref, options),
+  );
+}
+
 export function readProject(ref: ScopedProjectRef): EnvironmentProject | null {
   return appAtomRegistry.get(environmentProjects.projectAtom(ref));
 }
@@ -194,6 +258,12 @@ export function waitForProject(
     unsubscribe = appAtomRegistry.subscribe(environmentProjects.projectAtom(ref), finish);
     finish(readProject(ref));
   });
+}
+
+export function readThreadShellsForProjectRefs(
+  refs: ReadonlyArray<ScopedProjectRef>,
+): ReadonlyArray<EnvironmentThreadShell> {
+  return appAtomRegistry.get(environmentThreadShells.threadShellsForProjectRefsAtom(refs));
 }
 
 export function readThreadShell(ref: ScopedThreadRef): EnvironmentThreadShell | null {
