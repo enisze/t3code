@@ -167,6 +167,7 @@ describe("ProviderCommandReactor", () => {
 
   async function createHarness(input?: {
     readonly baseDir?: string;
+    readonly serverSettings?: Parameters<typeof ServerSettingsService.layerTest>[0];
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
@@ -475,7 +476,7 @@ describe("ProviderCommandReactor", () => {
           generateThreadTitle,
         }),
       ),
-      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(ServerSettingsService.layerTest(input?.serverSettings)),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
@@ -947,6 +948,42 @@ describe("ProviderCommandReactor", () => {
       );
       expect(harness.generateThreadTitle).toHaveBeenCalledWith(
         expect.objectContaining({ message: "Use the current message" }),
+      );
+    }),
+  );
+
+  effectIt.effect("generates a first title with the thread title instructions", () =>
+    Effect.gen(function* () {
+      const titleGenerated = yield* Deferred.make<void>();
+      const harness = yield* Effect.promise(() =>
+        createHarness({ serverSettings: { threadTitleInstructions: "Write titles in German." } }),
+      );
+      harness.generateThreadTitle.mockReturnValue(
+        Deferred.succeed(titleGenerated, undefined).pipe(Effect.as({ title: "Generated title" })),
+      );
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-instructed-title"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: MessageId.make("message-turn-start-instructed-title"),
+          role: "user",
+          text: "Fix the login redirect",
+          attachments: [],
+        },
+        titleSeed: "Thread",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+      yield* Deferred.await(titleGenerated);
+      yield* Effect.promise(() => harness.drain());
+
+      expect(harness.generateThreadTitle).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: "Fix the login redirect",
+          instructions: "Write titles in German.",
+        }),
       );
     }),
   );
@@ -1523,6 +1560,45 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("Resolve stale reconnect state");
     expect(thread?.titleRegeneration).toBeNull();
+  });
+
+  it("regenerates a title with the thread title instructions", async () => {
+    const harness = await createHarness({
+      serverSettings: { threadTitleInstructions: "Write titles in German." },
+    });
+    harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "Anmeldung reparieren" }));
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-before-instructed-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-before-instructed-regeneration"),
+          role: "user",
+          text: "Fix the login redirect",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-regenerate-instructed"),
+        threadId: ThreadId.make("thread-1"),
+        regenerateTitle: true,
+      }),
+    );
+    await harness.drain();
+
+    expect(harness.generateThreadTitle).toHaveBeenCalledTimes(1);
+    expect(harness.generateThreadTitle.mock.calls[0]?.[0]).toMatchObject({
+      message: "USER:\nFix the login redirect",
+      instructions: "Write titles in German.",
+    });
   });
 
   it("pins the first user message when regeneration context is truncated", async () => {

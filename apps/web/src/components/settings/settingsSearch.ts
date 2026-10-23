@@ -307,6 +307,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["generated thread titles source control content default provider"],
   },
   {
+    id: "thread-title-instructions",
+    title: "Thread title instructions",
+    to: "/settings/general",
+    searchTerms: ["generated thread titles prompt custom style naming language rename regenerate"],
+  },
+  {
     id: "diagnostics",
     title: "Diagnostics",
     to: "/settings/general",
