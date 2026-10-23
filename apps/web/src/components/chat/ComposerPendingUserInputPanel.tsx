@@ -137,7 +137,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     if (!activeQuestion || isResponding || isCollapsed) return;
     const handler = (event: globalThis.KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
-      const target = event.target;
+      // The composed path starts at the real target, which may sit inside a shadow root
+      // (a diff's find field) that retargets the event to its host.
+      const target = event.composedPath()[0] ?? event.target;
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
         return;
       }
