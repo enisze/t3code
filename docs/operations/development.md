@@ -56,7 +56,22 @@ The workarounds live in the [web entry](../../apps/web/src/bootstrap.ts) and
 
 ## Checks
 
-Run checks for the files and packages you changed:
+`vp run check:changed` runs CI's fast checks for your branch's changes: format and lint of the
+changed files, `knip:check` when code or a manifest changes, typecheck of the affected packages
+and their dependents, and the test files beside the changed files, each package's from its own
+directory. A dependency or patch change also gets an install check that catches unused patches
+before Release Smoke does. Knip findings fail the run only in files the branch changed, because
+`main` still has findings of its own; the rest are counted. A removed last import can leave an
+unused export in a file you did not touch, which only raises that count. It maps files to packages with
+[ci-changes.cjs](../../.github/scripts/ci-changes.cjs) and compares against the merge base with
+`origin/main`, or with a ref you pass. CI still runs every job, so a local pass does not promise
+a green CI run.
+
+The steps run side by side, so a run takes about as long as its slowest step. When the files are
+exactly those of the last passing run, it prints that run's summary instead of running again. Any
+change to a file, the install, or a generated file runs the checks again.
+
+While you iterate, run single checks:
 
 ```sh
 vp test run <files>
