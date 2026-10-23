@@ -4,6 +4,7 @@ import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 export const PROJECT_FILE_PICKER_RESULT_LIMIT = 200;
 
 export interface ProjectFilePickerMatch {
+  readonly isIgnored?: boolean;
   readonly name: string;
   readonly nameMatchIndices: ReadonlyArray<number>;
   readonly path: string;
@@ -61,6 +62,7 @@ export function getProjectFilePickerMatches(
     const nameMatchIndices = findMatchIndices(name, query);
     const pathMatchIndices = findMatchIndices(entry.path, query);
     matches.push({
+      ...(entry.isIgnored ? { isIgnored: true } : {}),
       name,
       nameMatchIndices: nameMatchIndices ?? [],
       path: entry.path,

@@ -138,6 +138,29 @@ const initRepoWithCommit = (
     return { initialBranch };
   });
 
+const worktreeRemovalPlatforms = [
+  ...new Set([HostProcessPlatform.defaultValue(), "win32" as const]),
+];
+
+const makeWorktreeRemovalFixture = Effect.fn("TestWorktreeRemoval.makeFixture")(function* () {
+  const cwd = yield* makeTmpDir();
+  const { initialBranch } = yield* initRepoWithCommit(cwd);
+  yield* writeTextFile(cwd, ".gitignore", "node_modules\n");
+  yield* git(cwd, ["add", ".gitignore"]);
+  yield* git(cwd, ["commit", "-m", "ignore node_modules"]);
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "removal");
+  const driver = yield* GitVcsDriver.GitVcsDriver;
+  yield* driver.createWorktree({
+    cwd,
+    path: worktreePath,
+    refName: initialBranch,
+    newRefName: "feature/removal",
+  });
+  return { cwd, worktreePath, driver, fileSystem, path };
+});
+
 it.effect("uses stable diagnostics for every parsed non-repository command", () => {
   const commands: Array<{ readonly args: ReadonlyArray<string>; readonly lcAll?: string }> = [];
   const spawner = ChildProcessSpawner.make((command) =>
@@ -840,7 +863,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           _tag: "GitCommandError",
           operation: "GitVcsDriver.removeWorktree",
           command: "git",
-          argumentCount: 3,
+          argumentCount: 6,
           cwd,
         });
         assert.notProperty(error, "cause");
@@ -1890,6 +1913,218 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect.each(worktreeRemovalPlatforms)(
+      "keeps a worktree whose untracked files status is configured to hide on %s",
+      (platform) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const pathService = yield* Path.Path;
+          const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "hidden");
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* driver.createWorktree({
+            cwd,
+            path: worktreePath,
+            refName: initialBranch,
+            newRefName: "feature/hidden",
+          });
+          yield* git(cwd, ["config", "status.showUntrackedFiles", "no"]);
+          yield* writeTextFile(worktreePath, "notes.txt", "draft\n");
+          assert.equal(yield* git(worktreePath, ["status", "--porcelain"]), "");
+
+          const result = yield* driver
+            .removeWorktree({ cwd, path: worktreePath })
+            .pipe(Effect.provideService(HostProcessPlatform, platform), Effect.result);
+
+          assert.equal(result._tag, "Failure");
+          const fileSystem = yield* FileSystem.FileSystem;
+          assert.equal(
+            yield* fileSystem.readFileString(pathService.join(worktreePath, "notes.txt")),
+            "draft\n",
+          );
+        }),
+    );
+
+    it.effect.each(worktreeRemovalPlatforms)(
+      "force-removes a worktree without deleting what its junctions point to on %s",
+      (platform) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          yield* writeTextFile(cwd, ".gitignore", "node_modules\n");
+          yield* git(cwd, ["add", ".gitignore"]);
+          yield* git(cwd, ["commit", "-m", "ignore node_modules"]);
+          const fileSystem = yield* FileSystem.FileSystem;
+          const pathService = yield* Path.Path;
+          const outside = yield* makeTmpDir("git-worktree-link-target-");
+          yield* writeTextFile(outside, "keep.txt", "keep\n");
+          const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "linked");
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* driver.createWorktree({
+            cwd,
+            path: worktreePath,
+            refName: initialBranch,
+            newRefName: "feature/linked",
+          });
+          // Junctions on Windows, the way pnpm links packages; symlinks elsewhere.
+          NodeFS.mkdirSync(pathService.join(worktreePath, "node_modules"));
+          NodeFS.symlinkSync(
+            outside,
+            pathService.join(worktreePath, "node_modules", "dep"),
+            "junction",
+          );
+          NodeFS.symlinkSync(outside, pathService.join(worktreePath, "shared"), "junction");
+
+          yield* driver
+            .removeWorktree({ cwd, path: worktreePath, force: true })
+            .pipe(Effect.provideService(HostProcessPlatform, platform));
+
+          assert.deepEqual(NodeFS.readdirSync(pathService.dirname(worktreePath)), []);
+          assert.equal(
+            yield* fileSystem.readFileString(pathService.join(outside, "keep.txt")),
+            "keep\n",
+          );
+        }),
+    );
+
+    it.effect.each(worktreeRemovalPlatforms)(
+      "keeps the junctions of a worktree that git refuses to remove on %s",
+      (platform) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          yield* writeTextFile(cwd, ".gitignore", "node_modules\n");
+          yield* git(cwd, ["add", ".gitignore"]);
+          yield* git(cwd, ["commit", "-m", "ignore node_modules"]);
+          const pathService = yield* Path.Path;
+          const outside = yield* makeTmpDir("git-worktree-link-target-");
+          const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "linked");
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* driver.createWorktree({
+            cwd,
+            path: worktreePath,
+            refName: initialBranch,
+            newRefName: "feature/linked",
+          });
+          const link = pathService.join(worktreePath, "node_modules");
+          NodeFS.symlinkSync(outside, link, "junction");
+          yield* writeTextFile(worktreePath, "notes.txt", "draft\n");
+
+          const result = yield* driver
+            .removeWorktree({ cwd, path: worktreePath })
+            .pipe(Effect.provideService(HostProcessPlatform, platform), Effect.result);
+
+          assert.equal(result._tag, "Failure");
+          assert.isTrue(NodeFS.lstatSync(link).isSymbolicLink());
+          assert.deepEqual(NodeFS.readdirSync(pathService.dirname(worktreePath)), ["linked"]);
+        }),
+    );
+
+    it.effect("removes an ignored worktree junction without force on Windows", () =>
+      Effect.gen(function* () {
+        const { cwd, worktreePath, driver, fileSystem, path } = yield* makeWorktreeRemovalFixture();
+        const outside = yield* makeTmpDir("git-worktree-link-target-");
+        yield* writeTextFile(outside, "keep.txt", "keep\n");
+        NodeFS.symlinkSync(outside, path.join(worktreePath, "node_modules"), "junction");
+
+        yield* driver
+          .removeWorktree({ cwd, path: worktreePath })
+          .pipe(Effect.provideService(HostProcessPlatform, "win32"));
+
+        assert.isFalse(yield* fileSystem.exists(worktreePath));
+        assert.equal(yield* fileSystem.readFileString(path.join(outside, "keep.txt")), "keep\n");
+        assert.notInclude(
+          yield* git(cwd, ["worktree", "list", "--porcelain"]),
+          "branch refs/heads/feature/removal",
+        );
+      }),
+    );
+
+    it.effect.each([false, true])("keeps a locked Windows worktree with force=%s", (force) =>
+      Effect.gen(function* () {
+        const { cwd, worktreePath, driver, fileSystem, path } = yield* makeWorktreeRemovalFixture();
+        yield* git(cwd, ["worktree", "lock", "--reason", "keep this checkout", worktreePath]);
+
+        const error = yield* driver
+          .removeWorktree({ cwd, path: worktreePath, force })
+          .pipe(Effect.provideService(HostProcessPlatform, "win32"), Effect.flip);
+
+        assert.include(error.detail, "locked working tree");
+        assert.equal(
+          yield* fileSystem.readFileString(path.join(worktreePath, "README.md")),
+          "# test\n",
+        );
+      }),
+    );
+
+    it.effect("keeps a Windows worktree belonging to another repository", () =>
+      Effect.gen(function* () {
+        const { cwd, worktreePath, driver, fileSystem, path } = yield* makeWorktreeRemovalFixture();
+        const unrelated = yield* makeTmpDir();
+        yield* initRepoWithCommit(unrelated);
+
+        const error = yield* driver
+          .removeWorktree({ cwd: unrelated, path: worktreePath, force: true })
+          .pipe(Effect.provideService(HostProcessPlatform, "win32"), Effect.flip);
+
+        assert.include(error.detail, "not a working tree");
+        assert.equal(
+          yield* fileSystem.readFileString(path.join(worktreePath, "README.md")),
+          "# test\n",
+        );
+        assert.include(
+          yield* git(cwd, ["worktree", "list", "--porcelain"]),
+          "branch refs/heads/feature/removal",
+        );
+      }),
+    );
+
+    it.effect("checks the Windows worktree for changes despite a core.worktree override", () =>
+      Effect.gen(function* () {
+        const { cwd, worktreePath, driver, fileSystem, path } = yield* makeWorktreeRemovalFixture();
+        yield* writeTextFile(worktreePath, "README.md", "unsaved work\n");
+        yield* git(cwd, ["config", "extensions.worktreeConfig", "true"]);
+        yield* git(worktreePath, ["config", "--worktree", "core.worktree", cwd]);
+
+        const error = yield* driver
+          .removeWorktree({ cwd, path: worktreePath })
+          .pipe(Effect.provideService(HostProcessPlatform, "win32"), Effect.flip);
+
+        assert.include(error.detail, "modified or untracked files");
+        assert.equal(
+          yield* fileSystem.readFileString(path.join(worktreePath, "README.md")),
+          "unsaved work\n",
+        );
+      }),
+    );
+
+    it.effect("keeps a Windows worktree with a populated submodule unless forced", () =>
+      Effect.gen(function* () {
+        const { cwd, worktreePath, driver, fileSystem, path } = yield* makeWorktreeRemovalFixture();
+        const submodule = yield* makeTmpDir("git-worktree-submodule-");
+        yield* initRepoWithCommit(submodule);
+        yield* git(worktreePath, [
+          "-c",
+          "protocol.file.allow=always",
+          "submodule",
+          "add",
+          submodule,
+          "child",
+        ]);
+        yield* git(worktreePath, ["commit", "-m", "add submodule"]);
+
+        const error = yield* driver
+          .removeWorktree({ cwd, path: worktreePath })
+          .pipe(Effect.provideService(HostProcessPlatform, "win32"), Effect.flip);
+
+        assert.include(error.detail, "containing submodules");
+        assert.equal(
+          yield* fileSystem.readFileString(path.join(worktreePath, "child", "README.md")),
+          "# test\n",
+        );
+      }),
+    );
+
     it.effect("allows worktree removal to run longer than the default command timeout", () =>
       Effect.gen(function* () {
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -1898,8 +2133,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           Effect.gen(function* () {
             if (
               ChildProcess.isStandardCommand(command) &&
-              command.args[0] === "worktree" &&
-              command.args[1] === "remove"
+              command.args.join(" ").includes("worktree remove")
             ) {
               yield* Deferred.succeed(removalStarted, undefined);
               yield* Effect.sleep("31 seconds");

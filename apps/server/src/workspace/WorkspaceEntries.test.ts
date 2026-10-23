@@ -96,6 +96,44 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
   });
 
   describe("list", () => {
+    it.effect("shows unignored dotenv files in non-Git workspaces", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir();
+        yield* writeTextFile(cwd, ".env", "EXAMPLE=value\n");
+        yield* writeTextFile(cwd, "config/.env.local", "EXAMPLE=local\n");
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* workspaceEntries.list({ cwd });
+        expect(result.entries).toContainEqual({ path: ".env", kind: "file" });
+        expect(result.entries).toContainEqual({ path: "config/.env.local", kind: "file" });
+      }),
+    );
+
+    it.effect("shows gitignored files and dotfiles with ignore metadata", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ git: true });
+        yield* writeTextFile(cwd, ".gitignore", ".env*\nlocal/\n");
+        yield* writeTextFile(cwd, ".env", "EXAMPLE=value\n");
+        yield* writeTextFile(cwd, "config/.env.local", "EXAMPLE=local\n");
+        yield* writeTextFile(cwd, "local/config.json", "{}\n");
+        yield* writeTextFile(cwd, "src/index.ts", "export {};\n");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const { entries, truncated } = yield* workspaceEntries.list({ cwd });
+        expect(entries).toEqual(
+          expect.arrayContaining([
+            { path: ".env", kind: "file", isIgnored: true },
+            { path: "config/.env.local", kind: "file", isIgnored: true },
+            { path: "config", kind: "directory" },
+            { path: "local", kind: "directory", isIgnored: true },
+            { path: "local/config.json", kind: "file", isIgnored: true },
+            { path: ".gitignore", kind: "file" },
+            { path: "src/index.ts", kind: "file" },
+          ]),
+        );
+        expect(truncated).toBe(false);
+      }),
+    );
+
     it.effect("returns the complete cached workspace index", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir();
@@ -124,6 +162,73 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
   });
 
   describe("search", () => {
+    it.effect("finds ignored .env variants and other ignored files by name", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ git: true });
+        yield* writeTextFile(cwd, ".gitignore", ".env*\nlocal/\n");
+        yield* writeTextFile(cwd, ".env", "EXAMPLE=value\n");
+        yield* writeTextFile(cwd, "config/.env.local", "EXAMPLE=local\n");
+        yield* writeTextFile(cwd, "local/config.json", "{}\n");
+        yield* writeTextFile(cwd, "src/environment.ts", "export {};\n");
+        for (const query of [".env", "env", "@.env"]) {
+          const result = yield* searchWorkspaceEntries({ cwd, query, kind: "file", limit: 10 });
+          expect(result.entries).toEqual(
+            expect.arrayContaining([
+              { path: ".env", kind: "file", isIgnored: true },
+              { path: "config/.env.local", kind: "file", isIgnored: true },
+            ]),
+          );
+        }
+        const ignored = yield* searchWorkspaceEntries({
+          cwd,
+          query: "config.json",
+          kind: "file",
+          limit: 10,
+        });
+        expect(ignored.entries).toContainEqual({
+          path: "local/config.json",
+          kind: "file",
+          isIgnored: true,
+        });
+        const limited = yield* searchWorkspaceEntries({
+          cwd,
+          query: ".env",
+          kind: "file",
+          limit: 1,
+        });
+        expect(limited.entries).toEqual([{ path: ".env", kind: "file", isIgnored: true }]);
+        expect(limited.truncated).toBe(true);
+        const gitignore = yield* searchWorkspaceEntries({
+          cwd,
+          query: ".gitignore",
+          kind: "file",
+          limit: 10,
+        });
+        expect(gitignore.entries).toContainEqual({ path: ".gitignore", kind: "file" });
+      }),
+    );
+
+    it.effect("finds directories containing only ignored files", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ git: true });
+        yield* writeTextFile(cwd, ".gitignore", ".env*\nlocal/\n");
+        yield* writeTextFile(cwd, "config/.env.local", "EXAMPLE=value\n");
+        yield* writeTextFile(cwd, "local/config.json", "{}\n");
+        for (const [query, entry] of [
+          ["config", { path: "config", kind: "directory" }],
+          ["local", { path: "local", kind: "directory", isIgnored: true }],
+        ] as const) {
+          const result = yield* searchWorkspaceEntries({
+            cwd,
+            query,
+            kind: "directory",
+            limit: 10,
+          });
+          expect(result.entries).toContainEqual(entry);
+        }
+      }),
+    );
+
     it.effect("returns files and directories relative to cwd", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir();
@@ -264,7 +369,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
-    it.effect("excludes gitignored paths for git repositories", () =>
+    it.effect("includes gitignored paths with ignore metadata", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-gitignore-", git: true });
         yield* writeTextFile(cwd, ".gitignore", ".convex/\nconvex/\nignored.txt\n");
@@ -278,13 +383,25 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
 
         expect(paths).toContain("src");
         expect(paths).toContain("src/keep.ts");
-        expect(paths).not.toContain("ignored.txt");
-        expect(paths.some((entryPath) => entryPath.startsWith(".convex/"))).toBe(false);
-        expect(paths.some((entryPath) => entryPath.startsWith("convex/"))).toBe(false);
+        expect(result.entries).toContainEqual({
+          path: "ignored.txt",
+          kind: "file",
+          isIgnored: true,
+        });
+        expect(result.entries).toContainEqual({
+          path: ".convex/local-storage/data.json",
+          kind: "file",
+          isIgnored: true,
+        });
+        expect(result.entries).toContainEqual({
+          path: "convex/UOoS-l/convex_local_storage/modules/data.json",
+          kind: "file",
+          isIgnored: true,
+        });
       }),
     );
 
-    it.effect("excludes tracked paths that match ignore rules", () =>
+    it.effect("keeps tracked paths matching ignore rules visible without dimming them", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({
           prefix: "t3code-workspace-tracked-gitignore-",
@@ -300,7 +417,11 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
 
         expect(paths).toContain("src");
         expect(paths).toContain("src/keep.ts");
-        expect(paths.some((entryPath) => entryPath.startsWith(".convex/"))).toBe(false);
+        expect(result.entries).toContainEqual({
+          path: ".convex/local-storage/data.json",
+          kind: "file",
+        });
+        expect(result.entries).toContainEqual({ path: ".convex", kind: "directory" });
       }),
     );
 
@@ -331,6 +452,70 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
             expect.objectContaining({ path: "src/components/Composer.tsx" }),
           ]),
         );
+      }),
+    );
+
+    it.effect("refreshes ignored files and clears ignore metadata after rules change", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ git: true });
+        yield* writeTextFile(cwd, ".gitignore", ".env*\n");
+        yield* writeTextFile(cwd, ".env", "EXAMPLE=value\n");
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        expect((yield* workspaceEntries.list({ cwd })).entries).toContainEqual({
+          path: ".env",
+          kind: "file",
+          isIgnored: true,
+        });
+        yield* writeTextFile(cwd, ".env.local", "EXAMPLE=local\n");
+        expect((yield* workspaceEntries.list({ cwd })).entries).toContainEqual({
+          path: ".env.local",
+          kind: "file",
+          isIgnored: true,
+        });
+        yield* writeTextFile(cwd, ".gitignore", "");
+        yield* workspaceEntries.refresh(cwd);
+        expect((yield* workspaceEntries.list({ cwd })).entries).toContainEqual({
+          path: ".env",
+          kind: "file",
+        });
+      }),
+    );
+
+    it.effect("keeps ignored images within the image-only filter", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ git: true });
+        yield* writeTextFile(cwd, ".gitignore", "local/\n");
+        yield* writeTextFile(cwd, "local/example.png", "image fixture");
+        yield* writeTextFile(cwd, "local/.env", "EXAMPLE=value\n");
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* workspaceEntries.search({
+          cwd,
+          query: "",
+          kind: "file",
+          imageOnly: true,
+          limit: 10,
+        });
+        expect(result.entries).toEqual([
+          { path: "local/example.png", kind: "file", isIgnored: true },
+        ]);
+      }),
+    );
+
+    it.effect("keeps ignored results relative to a nested workspace", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ git: true });
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, ".gitignore", ".env*\n");
+        yield* writeTextFile(cwd, ".env", "EXAMPLE=outside\n");
+        yield* writeTextFile(cwd, "nested/.env.local", "EXAMPLE=inside\n");
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* workspaceEntries.search({
+          cwd: path.join(cwd, "nested"),
+          query: ".env",
+          kind: "file",
+          limit: 10,
+        });
+        expect(result.entries).toEqual([{ path: ".env.local", kind: "file", isIgnored: true }]);
       }),
     );
 

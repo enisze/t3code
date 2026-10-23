@@ -282,6 +282,10 @@
     "./dateTime": {
       "types": "./src/dateTime.ts",
       "import": "./src/dateTime.ts"
+    },
+    "./markdownMath": {
+      "types": "./src/markdownMath.ts",
+      "import": "./src/markdownMath.ts"
     }
   },
   "scripts": {
@@ -294,11 +298,17 @@
     "@t3tools/contracts": "workspace:*",
     "effect": "catalog:",
     "jose": "catalog:",
+    "mdast-util-to-hast": "13.2.1",
+    "remark-gfm": "4.0.1",
+    "remark-math": "6.0.0",
+    "remark-parse": "11.0.0",
+    "unified": "11.0.5",
     "yaml": "catalog:"
   },
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
+    "@types/mdast": "4.0.4",
     "@types/node": "catalog:",
     "vite-plus": "catalog:"
   }

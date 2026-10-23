@@ -1651,6 +1651,30 @@ code {
   -webkit-app-region: drag;
 }
 
+/* Diagram colors follow the client theme without re-rendering the layout. */
+.pele {
+  --pele-bg: var(--background);
+  --pele-fg: var(--foreground);
+  --pele-muted: var(--muted-foreground);
+  --pele-line: var(--muted-foreground);
+  --pele-surface: var(--secondary);
+  --pele-surface-alt: var(--accent);
+  --pele-border: color-mix(in srgb, var(--foreground) 28%, transparent);
+  --pele-accent: var(--primary);
+  --pele-critical: var(--destructive);
+}
+
+.chat-markdown-mermaid {
+  padding: 0.75rem;
+}
+.chat-markdown-math-display .katex-display {
+  margin: 0;
+}
+.chat-markdown .chat-markdown-table-container td:has([data-markdown-math]) {
+  max-width: none;
+  overflow: visible;
+}
+
 .drag-region button,
 .drag-region input,
 .drag-region textarea,

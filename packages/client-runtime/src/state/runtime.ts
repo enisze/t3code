@@ -3,6 +3,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
@@ -20,6 +21,24 @@ import {
   subscribe,
 } from "../rpc/client.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import type { RpcSession } from "../rpc/session.ts";
+
+const isEnvironmentRpcUnavailable = Schema.is(EnvironmentRpcUnavailableError);
+
+/** Keeps a query pending until its replacement session triggers a retry. */
+const pendingOnceSessionReplaced =
+  (session: RpcSession) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.catchIf(isEnvironmentRpcUnavailable, (error) =>
+        EnvironmentSupervisor.pipe(
+          Effect.flatMap((supervisor) => SubscriptionRef.get(supervisor.session)),
+          Effect.flatMap((current) =>
+            Option.isSome(current) && current.value === session ? Effect.fail(error) : Effect.never,
+          ),
+        ),
+      ),
+    );
 
 interface EnvironmentAtomOptions<Input, A, E, R> {
   readonly label: string;
@@ -548,7 +567,10 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         switch (connectionState.phase) {
           case "connected":
             return Option.isSome(session)
-              ? runInEnvironment(target.environmentId, options.execute(target.input))
+              ? runInEnvironment(
+                  target.environmentId,
+                  options.execute(target.input).pipe(pendingOnceSessionReplaced(session.value)),
+                )
               : Effect.never;
           case "connecting":
           case "backoff":

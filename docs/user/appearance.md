@@ -1,5 +1,14 @@
 # Appearance and themes
 
+Mermaid code fences render as diagrams in web and desktop once a reply finishes.
+Use the source toggle to read or copy their Mermaid code. Invalid diagrams keep
+their source visible.
+
+Enable **Settings → Appearance → LaTeX rendering** to typeset formulas written
+with `$…$`, `$$…$$`, `\(…\)`, `\[…\]`, or a `math` code fence. Turning it off
+restores the source. Native mobile keeps diagram and formula source readable
+with its current Markdown renderer.
+
 Open **Settings → Appearance** to choose a theme and follow the system appearance or stay in light
 or dark mode. To use different themes for light and dark mode, select the corresponding preview
 within each theme. Appearance preferences are saved separately on each device or browser.

@@ -26,6 +26,7 @@ export type ComposerCommandItem =
       type: "path";
       path: string;
       pathKind: ProjectEntry["kind"];
+      isIgnored?: boolean | undefined;
       label: string;
       description: string;
     }
@@ -222,6 +223,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       className={cn(
         "cursor-pointer select-none gap-2 hover:bg-transparent hover:text-inherit data-highlighted:bg-transparent data-highlighted:text-inherit",
         props.isActive && "bg-accent! text-accent-foreground!",
+        props.item.type === "path" && props.item.isIgnored && "opacity-55",
       )}
       onMouseMove={() => {
         if (!props.isActive) props.onHighlight(props.item.id);

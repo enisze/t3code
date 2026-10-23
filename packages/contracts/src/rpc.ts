@@ -235,6 +235,14 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
+import {
+  ScheduledTask,
+  ScheduledTaskError,
+  ScheduledTaskId,
+  ScheduledTaskInput,
+  ScheduledTaskRun,
+  ScheduledTaskSaveResult,
+} from "./scheduledTask.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -324,6 +332,13 @@ export const WS_METHODS = {
   serverRemoveKeybinding: "server.removeKeybinding",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
+  scheduledTasksList: "scheduledTasks.list",
+  scheduledTasksSave: "scheduledTasks.save",
+  scheduledTasksDelete: "scheduledTasks.delete",
+  scheduledTasksSetEnabled: "scheduledTasks.setEnabled",
+  scheduledTasksRunNow: "scheduledTasks.runNow",
+  scheduledTasksHistory: "scheduledTasks.history",
+  scheduledTasksRotateWebhook: "scheduledTasks.rotateWebhook",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
@@ -517,6 +532,43 @@ const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
   payload: Schema.Struct({}),
   success: ServerSettings,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+const ScheduledTaskRpcError = Schema.Union([ScheduledTaskError, EnvironmentAuthorizationError]);
+const WsScheduledTasksListRpc = Rpc.make(WS_METHODS.scheduledTasksList, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(ScheduledTask),
+  error: ScheduledTaskRpcError,
+});
+const WsScheduledTasksSaveRpc = Rpc.make(WS_METHODS.scheduledTasksSave, {
+  payload: ScheduledTaskInput,
+  success: ScheduledTaskSaveResult,
+  error: ScheduledTaskRpcError,
+});
+const WsScheduledTasksDeleteRpc = Rpc.make(WS_METHODS.scheduledTasksDelete, {
+  payload: Schema.Struct({ id: ScheduledTaskId }),
+  success: Schema.Void,
+  error: ScheduledTaskRpcError,
+});
+const WsScheduledTasksSetEnabledRpc = Rpc.make(WS_METHODS.scheduledTasksSetEnabled, {
+  payload: Schema.Struct({ id: ScheduledTaskId, enabled: Schema.Boolean }),
+  success: ScheduledTask,
+  error: ScheduledTaskRpcError,
+});
+const WsScheduledTasksRunNowRpc = Rpc.make(WS_METHODS.scheduledTasksRunNow, {
+  payload: Schema.Struct({ id: ScheduledTaskId }),
+  success: ScheduledTaskRun,
+  error: ScheduledTaskRpcError,
+});
+const WsScheduledTasksHistoryRpc = Rpc.make(WS_METHODS.scheduledTasksHistory, {
+  payload: Schema.Struct({ id: ScheduledTaskId }),
+  success: Schema.Array(ScheduledTaskRun),
+  error: ScheduledTaskRpcError,
+});
+const WsScheduledTasksRotateWebhookRpc = Rpc.make(WS_METHODS.scheduledTasksRotateWebhook, {
+  payload: Schema.Struct({ id: ScheduledTaskId }),
+  success: Schema.Struct({ webhookPath: Schema.String }),
+  error: ScheduledTaskRpcError,
 });
 
 const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
@@ -1202,6 +1254,13 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
 });
 
 export const WsRpcGroup = RpcGroup.make(
+  WsScheduledTasksListRpc,
+  WsScheduledTasksSaveRpc,
+  WsScheduledTasksDeleteRpc,
+  WsScheduledTasksSetEnabledRpc,
+  WsScheduledTasksRunNowRpc,
+  WsScheduledTasksHistoryRpc,
+  WsScheduledTasksRotateWebhookRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,

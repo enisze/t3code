@@ -24,6 +24,9 @@ import type {
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+import { scoreQueryMatch } from "@t3tools/shared/searchRanking";
+import { readIgnoredEntries } from "./WorkspaceIgnoredEntries.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 
 const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
 const WORKSPACE_INDEX_PAGE_SIZE = WORKSPACE_INDEX_MAX_ENTRIES + 2;
@@ -297,6 +300,55 @@ function withDirectoryAncestors(entries: ReadonlyArray<ProjectEntry>): ProjectEn
   return [...entryByPath.values()];
 }
 
+function mergeIgnoredSearchResults(
+  result: ProjectSearchEntriesResult,
+  ignored: ProjectSearchEntriesResult,
+  query: string,
+  limit: number,
+  kind?: ProjectEntryKind,
+): ProjectSearchEntriesResult {
+  const token = query.replaceAll(/\s/g, "");
+  const scores = new Map<string, number | null>();
+  const score = (entry: ProjectEntry) => {
+    if (!token) return 0;
+    const cached = scores.get(entry.path);
+    if (cached !== undefined) return cached;
+    const value = entry.path.toLowerCase();
+    const name = value.slice(value.lastIndexOf("/") + 1).replace(/^\./, "");
+    const result =
+      scoreQueryMatch({
+        value: name,
+        query: token,
+        exactBase: 0,
+        prefixBase: 10,
+        includesBase: 20,
+        fuzzyBase: 100,
+      }) ??
+      scoreQueryMatch({
+        value,
+        query: token,
+        exactBase: 200,
+        prefixBase: 210,
+        includesBase: 220,
+        fuzzyBase: 300,
+      });
+    scores.set(entry.path, result);
+    return result;
+  };
+  const candidates = ignored.entries.filter(
+    (entry) => (kind === undefined || entry.kind === kind) && score(entry) !== null,
+  );
+  if (candidates.length === 0)
+    return { ...result, truncated: result.truncated || ignored.truncated };
+  const byPath = new Map(result.entries.map((entry) => [entry.path, entry]));
+  for (const entry of candidates) byPath.set(entry.path, entry);
+  const entries = [...byPath.values()].sort((a, b) => (score(a) ?? 500) - (score(b) ?? 500));
+  return {
+    entries: entries.slice(0, limit),
+    truncated: result.truncated || ignored.truncated || entries.length > limit,
+  };
+}
+
 const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (
   cwd: string,
   variant: WorkspaceSearchIndexVariant,
@@ -356,6 +408,13 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   cwd: string,
   variant: WorkspaceSearchIndexVariant = "paths",
 ) {
+  const vcsProcess = yield* VcsProcess.VcsProcess;
+  const readIgnored = (query = "") =>
+    readIgnoredEntries(cwd, query).pipe(Effect.provideService(VcsProcess.VcsProcess, vcsProcess));
+  const [ignoredEntries, invalidateIgnoredEntries] = yield* Effect.cachedInvalidateWithTTL(
+    readIgnored(),
+    "2 seconds",
+  );
   const finder = yield* Effect.acquireRelease(createFinder(cwd, variant), (finder) =>
     Effect.try({
       try: () => finder.destroy(),
@@ -404,6 +463,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const refresh: WorkspaceSearchIndex["Service"]["refresh"] = Effect.fn(
     "WorkspaceSearchIndex.refresh",
   )(function* () {
+    yield* invalidateIgnoredEntries;
     const result = yield* Effect.try({
       try: () => finder.scanFiles(),
       catch: (cause) =>
@@ -437,13 +497,22 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         finder.mixedSearch("", { pageSize: WORKSPACE_INDEX_PAGE_SIZE }),
       );
       const mapped = mapMixedSearchResult(result, WORKSPACE_INDEX_MAX_ENTRIES);
-      const sortedEntries = withDirectoryAncestors(mapped.entries).toSorted((left, right) =>
+      yield* invalidateIgnoredEntries;
+      const ignored = yield* ignoredEntries;
+      const combined = new Map(mapped.entries.map((entry) => [entry.path, entry]));
+      for (const entry of ignored.entries) combined.set(entry.path, entry);
+      const bounded = [...combined.values()].slice(0, WORKSPACE_INDEX_MAX_ENTRIES);
+      const sortedEntries = withDirectoryAncestors(bounded).toSorted((left, right) =>
         left.path.localeCompare(right.path),
       );
       const entries = sortedEntries.slice(0, WORKSPACE_INDEX_MAX_ENTRIES);
       return {
         entries,
-        truncated: mapped.truncated || entries.length < sortedEntries.length,
+        truncated:
+          mapped.truncated ||
+          ignored.truncated ||
+          combined.size > WORKSPACE_INDEX_MAX_ENTRIES ||
+          entries.length < sortedEntries.length,
       };
     },
   );
@@ -451,23 +520,40 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const search: WorkspaceSearchIndex["Service"]["search"] = Effect.fn(
     "WorkspaceSearchIndex.search",
   )(function* (query, limit, kind, imageOnly) {
+    const ignored = yield* ignoredEntries;
+    const narrowed = ignored.truncated && query ? yield* readIgnored(query) : ignored;
+    const candidates = imageOnly
+      ? {
+          ...narrowed,
+          entries: narrowed.entries.filter(
+            (entry) => entry.kind === "file" && isWorkspaceImagePreviewPath(entry.path),
+          ),
+        }
+      : narrowed;
     const pageSize = imageOnly ? WORKSPACE_INDEX_PAGE_SIZE : Math.max(1, limit + 1);
     if (kind === "file" || imageOnly) {
       const result = yield* runSearch(query, pageSize, "fileSearch", () =>
         finder.fileSearch(query, { pageSize }),
       );
-      return mapFileSearchResult(result, limit, imageOnly);
+      const mapped = mapFileSearchResult(result, limit, imageOnly);
+      return mergeIgnoredSearchResults(mapped, candidates, query, limit, "file");
     }
     if (kind === "directory") {
       const result = yield* runSearch(query, pageSize, "directorySearch", () =>
         finder.directorySearch(query, { pageSize }),
       );
-      return mapDirectorySearchResult(result, limit);
+      return mergeIgnoredSearchResults(
+        mapDirectorySearchResult(result, limit),
+        candidates,
+        query,
+        limit,
+        kind,
+      );
     }
     const result = yield* runSearch(query, pageSize, "mixedSearch", () =>
       finder.mixedSearch(query, { pageSize }),
     );
-    return mapMixedSearchResult(result, limit);
+    return mergeIgnoredSearchResults(mapMixedSearchResult(result, limit), candidates, query, limit);
   });
 
   const searchContents: WorkspaceSearchIndex["Service"]["searchContents"] = Effect.fn(
@@ -561,6 +647,7 @@ export class WorkspaceSearchIndexMap extends LayerMap.Service<WorkspaceSearchInd
   "t3/workspace/WorkspaceSearchIndexMap",
   {
     lookup: layer,
+    dependencies: [VcsProcess.layer],
     idleTimeToLive: WORKSPACE_INDEX_IDLE_TTL,
   },
 ) {}

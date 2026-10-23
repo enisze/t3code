@@ -1,8 +1,6 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 
-export interface ComposerPathSearchEntry {
-  readonly path: string;
-  readonly kind: "file" | "directory";
+export interface ComposerPathSearchEntry extends ProjectEntry {
   readonly parentPath?: string;
 }
 

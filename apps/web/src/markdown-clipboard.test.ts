@@ -128,6 +128,20 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("run `git status` first");
   });
 
+  it("copies equation source once instead of duplicated visual and accessibility text", () => {
+    const formula = new FakeElement("SPAN", [], {
+      "data-markdown-math": "inline",
+      "data-markdown-copy": "\\(\\frac{1}{|x|}\\)",
+    }).append(
+      new FakeElement("SPAN").append(new FakeText("1/|x|")),
+      new FakeElement("MATH").append(new FakeText("1/|x|")),
+    );
+    const paragraph = new FakeElement("P").append(new FakeText("Value: "), formula);
+    expect(
+      serializeRenderedMarkdownFragment(asNode(new FakeElement("DIV").append(paragraph))),
+    ).toBe("Value: \\(\\frac{1}{|x|}\\)");
+  });
+
   it("copies the complete quote, source, and comment instead of the comment-only chip label", () => {
     const citation = {
       version: 1 as const,

@@ -140,6 +140,9 @@ function LocalSettingsRouteScreen() {
         </SettingsSection>
 
         <GeneralSettingsSection />
+        <SettingsSection title="Automations">
+          <SettingsRow icon="timer" label="Automations" target="SettingsAutomations" />
+        </SettingsSection>
 
         <SettingsSection title="Appearance">
           <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
@@ -526,6 +529,10 @@ function ConfiguredSettingsRouteScreen() {
         </SettingsSection>
 
         <GeneralSettingsSection />
+
+        <SettingsSection title="Automations">
+          <SettingsRow icon="timer" label="Automations" target="SettingsAutomations" />
+        </SettingsSection>
 
         <SettingsSection title="Appearance">
           <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />

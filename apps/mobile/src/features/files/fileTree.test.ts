@@ -12,6 +12,19 @@ const entries = [
 ] satisfies ReadonlyArray<ProjectEntry>;
 
 describe("mobile file tree helpers", () => {
+  it("keeps ignored files searchable and preserves their muted state", () => {
+    const tree = buildFileTree([
+      { path: ".env", kind: "file", isIgnored: true },
+      { path: "local", kind: "directory", isIgnored: true },
+      { path: "local/.env.local", kind: "file", isIgnored: true },
+      { path: ".gitignore", kind: "file" },
+    ]);
+    const matches = flattenFileTree({ nodes: tree, expanded: new Set(), searchQuery: ".env" });
+    expect(matches.map((item) => item.node.path)).toEqual(["local", "local/.env.local", ".env"]);
+    expect(matches.every((item) => item.node.isIgnored)).toBe(true);
+    expect(tree.find((node) => node.path === ".gitignore")?.isIgnored).toBe(false);
+  });
+
   it("builds a deterministic hierarchy with directories before files", () => {
     const tree = buildFileTree(entries);
 

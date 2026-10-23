@@ -1361,7 +1361,39 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..a2df18d450eebe451fda42bab47d1658
    }
    return nextSize;
  }
-@@ -6446,8 +6453,8 @@ function ScrollAdjust() {
+@@ -4978,12 +4985,26 @@ var ContainerLayoutCoordinator = typedMemo(function ContainerLayoutCoordinatorCo
+ }) {
+   const ctx = useStateContext();
+   const [containerLayoutEpoch] = useArr$(["containerLayoutEpoch"]);
++  const layoutPasses = React3__namespace.useRef(0);
+   React3__namespace.useLayoutEffect(() => {
+-    {
+-      const targetContainerIds = getContainerLayoutEffectScope(ctx);
+-      if (targetContainerIds !== void 0) {
+-        measureContainersInLayoutEffect(ctx, targetContainerIds);
+-      }
++    const targetContainerIds = getContainerLayoutEffectScope(ctx);
++    if (targetContainerIds === void 0) return;
++    if (layoutPasses.current === 0) {
++      queueMicrotask(() => { layoutPasses.current = 0; });
++    }
++    // Correcting large estimates can mount one row per commit. Bound the
++    // synchronous chain below React's nested-update limit, then keep measuring
++    // the latest pending rows on the next frame. Idle lists schedule no work.
++    if (layoutPasses.current++ < 8) {
++      measureContainersInLayoutEffect(ctx, targetContainerIds);
++    } else {
++      ctx.pendingContainerIds = targetContainerIds;
++      ctx.state.scheduledWork.frame(() => {
++        const pendingIds = getContainerLayoutEffectScope(ctx);
++        if (pendingIds !== void 0) {
++          measureContainersInLayoutEffect(ctx, pendingIds);
++        }
++      }, "containerLayout");
+     }
+   }, [ctx, containerLayoutEpoch]);
+   return children;
+@@ -6446,8 +6467,8 @@ function ScrollAdjust() {
                window.getComputedStyle(contentNode)[axis.paddingEndProp]
              );
              const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;
@@ -1398,7 +1430,39 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..25cf046f2c3141ddce5a0b6e28c354b8
    }
    return nextSize;
  }
-@@ -6425,8 +6432,8 @@ function ScrollAdjust() {
+@@ -4957,12 +4964,26 @@ var ContainerLayoutCoordinator = typedMemo(function ContainerLayoutCoordinatorCo
+ }) {
+   const ctx = useStateContext();
+   const [containerLayoutEpoch] = useArr$(["containerLayoutEpoch"]);
++  const layoutPasses = React3.useRef(0);
+   React3.useLayoutEffect(() => {
+-    {
+-      const targetContainerIds = getContainerLayoutEffectScope(ctx);
+-      if (targetContainerIds !== void 0) {
+-        measureContainersInLayoutEffect(ctx, targetContainerIds);
+-      }
++    const targetContainerIds = getContainerLayoutEffectScope(ctx);
++    if (targetContainerIds === void 0) return;
++    if (layoutPasses.current === 0) {
++      queueMicrotask(() => { layoutPasses.current = 0; });
++    }
++    // Correcting large estimates can mount one row per commit. Bound the
++    // synchronous chain below React's nested-update limit, then keep measuring
++    // the latest pending rows on the next frame. Idle lists schedule no work.
++    if (layoutPasses.current++ < 8) {
++      measureContainersInLayoutEffect(ctx, targetContainerIds);
++    } else {
++      ctx.pendingContainerIds = targetContainerIds;
++      ctx.state.scheduledWork.frame(() => {
++        const pendingIds = getContainerLayoutEffectScope(ctx);
++        if (pendingIds !== void 0) {
++          measureContainersInLayoutEffect(ctx, pendingIds);
++        }
++      }, "containerLayout");
+     }
+   }, [ctx, containerLayoutEpoch]);
+   return children;
+@@ -6425,8 +6446,8 @@ function ScrollAdjust() {
                window.getComputedStyle(contentNode)[axis.paddingEndProp]
              );
              const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;

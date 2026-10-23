@@ -55,6 +55,7 @@ const FileTreeRow = memo(function FileTreeRow(props: {
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={node.path}
+      accessibilityHint={node.isIgnored ? "Ignored by Git" : undefined}
       onPressIn={() => {
         if (node.kind === "file") {
           props.onPreviewFile?.(node.path);
@@ -70,6 +71,7 @@ const FileTreeRow = memo(function FileTreeRow(props: {
       className={cn(
         "mx-2 min-h-[42px] flex-row items-center gap-2 rounded-[12px] px-2 active:bg-subtle",
         props.selected && "bg-subtle-strong",
+        node.isIgnored && "opacity-55",
       )}
       style={{ paddingLeft: 8 + depth * 18 }}
     >

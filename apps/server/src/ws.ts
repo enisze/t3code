@@ -12,6 +12,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import { ScheduledTasks } from "./scheduledTasks/ScheduledTasks.ts";
 import * as Stream from "effect/Stream";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
@@ -579,6 +580,7 @@ const makeWsRpcLayer = (
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const scheduledTasks = yield* ScheduledTasks;
       const textGeneration = yield* TextGeneration.TextGeneration;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
@@ -2194,6 +2196,14 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.scheduledTasksList]: () => scheduledTasks.list(),
+        [WS_METHODS.scheduledTasksSave]: (input) => scheduledTasks.save(input),
+        [WS_METHODS.scheduledTasksDelete]: ({ id }) => scheduledTasks.remove(id),
+        [WS_METHODS.scheduledTasksSetEnabled]: ({ id, enabled }) =>
+          scheduledTasks.setEnabled(id, enabled),
+        [WS_METHODS.scheduledTasksRunNow]: ({ id }) => scheduledTasks.runNow(id),
+        [WS_METHODS.scheduledTasksHistory]: ({ id }) => scheduledTasks.history(id),
+        [WS_METHODS.scheduledTasksRotateWebhook]: ({ id }) => scheduledTasks.rotateWebhook(id),
         [WS_METHODS.serverUpdateSettings]: ({ patch }) =>
           observeRpcEffect(
             WS_METHODS.serverUpdateSettings,
