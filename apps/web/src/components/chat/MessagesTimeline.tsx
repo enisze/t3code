@@ -162,6 +162,7 @@ interface TimelineRowSharedState {
   onSteerQueuedMessage: (id: string) => void;
   steerQueuedMessageShortcutLabel: string | null;
   onRemoveQueuedMessage: (id: string) => void;
+  onRunShellCommand: ((command: string) => void) | undefined;
 }
 
 interface TimelineRowActivityState {
@@ -219,6 +220,8 @@ interface MessagesTimelineProps {
   onRevertUserMessage: (messageId: MessageId) => void;
   /** Opens a fresh draft seeded with a past user message's text and attachments. */
   onStartNewChatFromMessage: (message: TimelineMessage) => void;
+  /** Runs a shell code block from an assistant reply in the thread terminal, on the user's click. */
+  onRunShellCommand?: ((command: string) => void) | undefined;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   activeThreadEnvironmentId: EnvironmentId;
@@ -269,6 +272,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
   onStartNewChatFromMessage,
+  onRunShellCommand,
   isRevertingCheckpoint,
   onImageExpand,
   activeThreadEnvironmentId,
@@ -587,6 +591,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onSteerQueuedMessage,
       steerQueuedMessageShortcutLabel,
       onRemoveQueuedMessage,
+      onRunShellCommand,
     }),
     [
       timestampFormat,
@@ -608,6 +613,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onSteerQueuedMessage,
       steerQueuedMessageShortcutLabel,
       onRemoveQueuedMessage,
+      onRunShellCommand,
     ],
   );
   // The same rule the row derivation folds with, so a thinking row and the
@@ -1623,6 +1629,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             threadRef={ctx.threadRef ?? undefined}
             isStreaming={Boolean(row.message.streaming)}
             skills={ctx.skills}
+            onRunShellCommand={ctx.onRunShellCommand}
           />
         </div>
         <AssistantChangedFilesSection

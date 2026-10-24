@@ -9,6 +9,7 @@ import {
   GlobeIcon,
   Maximize2Icon,
   Minimize2Icon,
+  PlayIcon,
   WrapTextIcon,
 } from "lucide-react";
 import type { ScopedThreadRef, ServerProviderSkill } from "@t3tools/contracts";
@@ -178,6 +179,8 @@ interface ChatMarkdownProps {
   environmentId?: EnvironmentId | undefined;
   /** Extra remark plugins appended after the built-in set. */
   extraRemarkPlugins?: ReactMarkdownOptions["remarkPlugins"];
+  /** Offers a run button on finished shell code blocks; the user's click runs it. */
+  onRunShellCommand?: ((command: string) => void) | undefined;
 }
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
@@ -551,6 +554,33 @@ function MarkdownCodeBlockTitleContent({
   );
 }
 
+/** True when the code block's closing fence has arrived, so its command is complete. */
+function isClosedCodeFence(
+  node:
+    | {
+        position?:
+          | { start: { offset?: number | undefined }; end: { offset?: number | undefined } }
+          | undefined;
+      }
+    | undefined,
+  text: string,
+): boolean {
+  const start = node?.position?.start.offset;
+  const end = node?.position?.end.offset;
+  if (start === undefined || end === undefined) return false;
+  const source = text.slice(start, end);
+  const opening = /^(?:`{3,}|~{3,})/.exec(source)?.[0];
+  // One class for the blockquote prefix: nested quantifiers here backtrack
+  // exponentially on code lines that start with many `> ` markers.
+  const closing = /(?:^|\n)[ \t>]*(`{3,}|~{3,})[ \t\r]*$/.exec(source)?.[1];
+  return (
+    opening !== undefined &&
+    closing !== undefined &&
+    opening[0] === closing[0] &&
+    closing.length >= opening.length
+  );
+}
+
 function MarkdownCodeBlock({
   code,
   language,
@@ -559,6 +589,7 @@ function MarkdownCodeBlock({
   children,
   isStreaming,
   onExpand,
+  onRunShellCommand,
 }: {
   code: string;
   language: string;
@@ -567,6 +598,7 @@ function MarkdownCodeBlock({
   children: ReactNode;
   isStreaming: boolean;
   onExpand: (url: string) => void;
+  onRunShellCommand?: ((command: string) => void) | undefined;
 }) {
   const [copied, setCopied] = useState(false);
   const [showSource, setShowSource] = useState(false);
@@ -576,6 +608,17 @@ function MarkdownCodeBlock({
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrapLabel = wrapped ? "Disable line wrap" : "Wrap lines";
   const copyLabel = copied ? "Copied" : "Copy code";
+  const command = code.trim();
+  const canRun =
+    onRunShellCommand !== undefined &&
+    !isStreaming &&
+    /^(?:sh|bash|zsh|fish|shell|powershell|pwsh)$/.test(language) &&
+    code.endsWith("\n") &&
+    command.length > 0 &&
+    !command.endsWith("\\") &&
+    // Control and invisible format characters (bidi overrides, zero-width) can
+    // make the rendered command differ from what the terminal would receive.
+    !/[\p{Cc}\p{Cf}]/u.test(code.slice(0, -1));
 
   const handleCopy = useCallback(() => {
     if (typeof navigator === "undefined" || navigator.clipboard == null) {
@@ -670,6 +713,25 @@ function MarkdownCodeBlock({
             </TooltipTrigger>
             <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
           </Tooltip>
+          {canRun ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="chat-markdown-chrome-action"
+                    onClick={() => onRunShellCommand(command)}
+                    aria-label="Run in terminal"
+                  />
+                }
+              >
+                <PlayIcon className="size-3" />
+              </TooltipTrigger>
+              <TooltipPopup side="top">Run in terminal</TooltipPopup>
+            </Tooltip>
+          ) : null}
           <Tooltip>
             <TooltipTrigger
               render={
@@ -1229,6 +1291,7 @@ function ChatMarkdown({
   imageBaseDir,
   environmentId: explicitEnvironmentId,
   extraRemarkPlugins,
+  onRunShellCommand,
 }: ChatMarkdownProps) {
   const mathEnabled = useClientSettings((settings) => settings.mathRenderingEnabled);
   const remarkPlugins = useMemo(() => {
@@ -1627,6 +1690,11 @@ function ChatMarkdown({
             onExpand={(url) =>
               setImagePreview({ images: [{ src: url, name: "Diagram.svg" }], index: 0 })
             }
+            onRunShellCommand={
+              onRunShellCommand && !isStreaming && isClosedCodeFence(node, text)
+                ? onRunShellCommand
+                : undefined
+            }
           >
             <CodeHighlightErrorBoundary fallback={<pre {...props}>{children}</pre>}>
               {/* Reserve the block's height but stay hidden until Shiki has colored
@@ -1660,6 +1728,7 @@ function ChatMarkdown({
     isStreaming,
     mathEnabled,
     markdownFileLinkMetaByHref,
+    onRunShellCommand,
     onTaskListChange,
     openInPreferredEditor,
     openExternalLinkInPreview,
