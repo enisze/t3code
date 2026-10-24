@@ -11,6 +11,7 @@ import {
   USAGE_CONTRACT_VERSION,
   type EnvironmentId,
   type UsageSummary,
+  type UsageProviderKind,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 import { refreshUsage } from "@t3tools/client-runtime/state/usage";
@@ -73,9 +74,39 @@ export interface UsageView {
   readonly refresh: (input?: UsageSummaryInput) => Promise<void>;
 }
 
+const NO_HIDDEN_PROVIDERS: ReadonlySet<UsageProviderKind> = new Set();
+
+/**
+ * Drops hidden providers' buckets and sources before merging, so totals,
+ * shares, and session counts all describe only the visible providers.
+ */
+function withoutProviders(
+  environments: readonly EnvironmentUsageStatus[],
+  hiddenProviders: ReadonlySet<UsageProviderKind>,
+): readonly EnvironmentUsageStatus[] {
+  if (hiddenProviders.size === 0) return environments;
+  return environments.map((environment) =>
+    environment.summary === null
+      ? environment
+      : {
+          ...environment,
+          summary: {
+            ...environment.summary,
+            buckets: environment.summary.buckets.filter(
+              (bucket) => !hiddenProviders.has(bucket.provider),
+            ),
+            sources: environment.summary.sources.filter(
+              (source) => !hiddenProviders.has(source.fingerprint.provider),
+            ),
+          },
+        },
+  );
+}
+
 export function useUsage(
   input: UsageSummaryInput,
   selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null,
+  hiddenProviders: ReadonlySet<UsageProviderKind> = NO_HIDDEN_PROVIDERS,
 ): UsageView {
   const windowKey = useMemo(
     () =>
@@ -121,7 +152,10 @@ export function useUsage(
   );
 
   const merged = useMemo(() => {
-    const answered: EnvironmentUsage[] = selectedEnvironments.flatMap((environment) =>
+    const answered: EnvironmentUsage[] = withoutProviders(
+      selectedEnvironments,
+      hiddenProviders,
+    ).flatMap((environment) =>
       environment.summary === null
         ? []
         : [
@@ -133,7 +167,7 @@ export function useUsage(
           ],
     );
     return mergeUsage(answered, USAGE_CONTRACT_VERSION);
-  }, [selectedEnvironments]);
+  }, [selectedEnvironments, hiddenProviders]);
 
   const answeredCount = selectedEnvironments.filter(
     (environment) => environment.summary !== null,
