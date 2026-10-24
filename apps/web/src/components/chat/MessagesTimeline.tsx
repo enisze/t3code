@@ -104,6 +104,7 @@ import {
   extractTrailingPreviewAnnotation,
   type ParsedPreviewAnnotation,
 } from "~/lib/previewAnnotation";
+import { useClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
@@ -389,6 +390,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
+  const [listReady, setListReady] = useState(false);
+  const handleListLoad = useCallback(() => setListReady(true), []);
+  const chatWidth = useClientSettings((settings) => settings.chatWidth);
+  const hasRows = rows.length > 0;
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
   const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
   const scrollMeasurementFrameRef = useRef<number | null>(null);
@@ -459,11 +464,19 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
     const measure = () => {
       const viewportWidth = timelineViewportElement.getBoundingClientRect().width;
-      const nextHasPersistentGutter = resolveTimelineMinimapHasPersistentGutter(viewportWidth);
+      // Without a mounted row, treat the column as full width so the strip stays inert.
+      const contentWidth =
+        timelineViewportElement
+          .querySelector<HTMLElement>("[data-timeline-root]")
+          ?.getBoundingClientRect().width ?? viewportWidth;
+      const nextHasPersistentGutter = resolveTimelineMinimapHasPersistentGutter(
+        viewportWidth,
+        contentWidth,
+      );
       setMinimapHasPersistentGutter((current) =>
         current === nextHasPersistentGutter ? current : nextHasPersistentGutter,
       );
-      setMinimapHitStripWidth(resolveTimelineMinimapHitStripWidth(viewportWidth));
+      setMinimapHitStripWidth(resolveTimelineMinimapHitStripWidth(viewportWidth, contentWidth));
     };
 
     const frame = requestAnimationFrame(measure);
@@ -475,7 +488,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [timelineViewportElement]);
+  }, [
+    timelineViewportElement,
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- The list's first rows and a new Chat width change the column width without resizing the viewport.
+    listReady,
+    hasRows,
+    chatWidth,
+  ]);
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
@@ -546,10 +565,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     );
   }, [contentInsetEndAdjustment, registerFindPositionReader, rows, timelineViewportElement]);
 
-  const [findListReady, setFindListReady] = useState(false);
-  const handleListLoad = useCallback(() => setFindListReady(true), []);
   useThreadFindNavigation({
-    listReady: findListReady,
+    listReady,
     history,
     entries: timelineEntries,
     container: timelineViewportElement,
@@ -565,7 +582,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // from TimelineRowCtx, which propagates through LegendList's memo.
   const renderItem = useCallback(
     ({ item }: { item: MessagesTimelineRow }) => (
-      <div className="mx-auto w-full min-w-0 max-w-3xl overflow-x-clip" data-timeline-root="true">
+      <div
+        className="mx-auto w-full min-w-0 max-w-(--chat-max-width) overflow-x-clip"
+        data-timeline-root="true"
+      >
         <TimelineRowContent row={item} />
       </div>
     ),

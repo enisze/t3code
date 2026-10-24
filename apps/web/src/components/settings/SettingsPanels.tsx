@@ -31,6 +31,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  type ChatWidth,
   DEFAULT_DIFF_THEME,
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
   DEFAULT_UNIFIED_SETTINGS,
@@ -178,6 +179,12 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const CHAT_WIDTH_LABELS: Record<ChatWidth, string> = {
+  comfortable: "Comfortable",
+  wide: "Wide",
+  full: "Full",
+};
 
 const BACKGROUND_ACTIVITY_PROFILE_LABELS: Record<BackgroundActivityProfile, string> = {
   balanced: "Balanced",
@@ -601,6 +608,7 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Project Grouping"]
         : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
+      ...(settings.chatWidth !== DEFAULT_UNIFIED_SETTINGS.chatWidth ? ["Chat width"] : []),
       ...(settings.mathRenderingEnabled !== DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled
         ? ["LaTeX rendering"]
         : []),
@@ -663,6 +671,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sendShortcut,
       settings.followUpBehavior,
       settings.wordWrap,
+      settings.chatWidth,
       settings.mathRenderingEnabled,
       theme,
     ],
@@ -684,6 +693,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
+      chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth,
       mathRenderingEnabled: DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       diffTheme: DEFAULT_UNIFIED_SETTINGS.diffTheme,
@@ -1200,6 +1210,44 @@ export function AppearanceSettingsPanel() {
               onCheckedChange={(checked) => updateSettings({ wordWrap: Boolean(checked) })}
               aria-label="Wrap code, tables, diffs, and file previews by default"
             />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("chat-width")}
+          description="Set how wide messages and the composer can grow on large screens."
+          resetAction={
+            settings.chatWidth !== DEFAULT_UNIFIED_SETTINGS.chatWidth ? (
+              <SettingResetButton
+                label="chat width"
+                onClick={() => updateSettings({ chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth })}
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.chatWidth}
+              onValueChange={(value) => {
+                if (value === "comfortable" || value === "wide" || value === "full") {
+                  updateSettings({ chatWidth: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Chat width">
+                <SelectValue>{CHAT_WIDTH_LABELS[settings.chatWidth]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="comfortable">
+                  Comfortable (default)
+                </SelectItem>
+                <SelectItem hideIndicator value="wide">
+                  Wide
+                </SelectItem>
+                <SelectItem hideIndicator value="full">
+                  Full
+                </SelectItem>
+              </SelectPopup>
+            </Select>
           }
         />
       </SettingsSection>

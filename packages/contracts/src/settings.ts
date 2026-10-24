@@ -245,6 +245,10 @@ export const DEFAULT_REVIEW_PROMPT =
 export const DEFAULT_RESOLVE_PROMPT =
   "Resolve the merge conflicts between this branch and its origin/upstream branch. Fetch the latest origin branch, merge or rebase it into the current branch, and resolve every conflict so the working tree is clean. Preserve the intent of both sides, keep the build passing, and explain each conflict you resolved.";
 
+/** Maximum width of the chat timeline and composer on wide screens. */
+export const ChatWidth = Schema.Literals(["comfortable", "wide", "full"]);
+export type ChatWidth = typeof ChatWidth.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   /**
    * BCP-47 tag dictation listens for. Empty follows the OS language, which is
@@ -252,6 +256,7 @@ export const ClientSettingsSchema = Schema.Struct({
    */
   dictationLocale: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  chatWidth: ChatWidth.pipe(Schema.withDecodingDefault(Effect.succeed("comfortable" as const))),
   loadBalancingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   loadBalancingWeights: LoadBalancingWeights.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   appearanceContrast: AppearanceContrast.pipe(
@@ -1321,6 +1326,7 @@ export const ClientSettingsPatch = Schema.Struct({
   dictationLocale: Schema.optionalKey(Schema.String),
   autoOpenPlanSidebar: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
+  chatWidth: Schema.optionalKey(ChatWidth),
   loadBalancingEnabled: Schema.optionalKey(Schema.Boolean),
   loadBalancingWeights: Schema.optionalKey(LoadBalancingWeights),
   appearanceContrast: Schema.optionalKey(AppearanceContrast),
