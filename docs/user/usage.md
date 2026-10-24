@@ -11,7 +11,8 @@ record are missing from the totals.
 
 On web and desktop, use the environment dropdown to filter costs, tokens, and limits. All
 environments are selected by default. The dropdown shows which environments are still scanning;
-results appear as each one responds.
+results appear as each one responds. Use the provider dropdown beside it to show only the
+providers you want; Usage remembers that choice in this browser or desktop app.
 
 If recent work is missing or a new model shows no cost, refresh to rescan session history and
 update model pricing.
