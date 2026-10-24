@@ -671,6 +671,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const settings = yield* serverSettings.getSettings;
 
       assert.equal(settings.textGenerationModelSelection.instanceId, "claudeAgent");
+      assert.equal(settings.textGenerationModelSelection.model, "claude-haiku-5-5");
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
