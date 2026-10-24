@@ -3,6 +3,17 @@
 Customize shortcuts in **Settings → Keybindings** on web and desktop. That page
 also lists the command IDs and defaults available in your version.
 
+## Composer controls
+
+In **Settings → General → Send shortcut**, choose whether Enter sends, requires
+`mod+Enter` for multiline prompts, or always requires `mod+Enter`. `Shift+Enter`
+inserts a new line. This applies to the web and desktop composer at desktop widths.
+
+**Follow-up behavior** chooses whether a message sent while the agent runs steers
+its turn (the default) or queues. Use `mod+Enter` to do the opposite for one
+message. When sending requires `mod+Enter`, use `mod+Shift+Enter` for the opposite
+action.
+
 ## Edit the configuration file
 
 Keybindings live on the environment's machine, in

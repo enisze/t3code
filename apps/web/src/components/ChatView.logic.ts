@@ -4,6 +4,7 @@ import {
   type MessageId,
   ProjectId,
   type ModelSelection,
+  type PreviewAnnotationPayload,
   type ProviderDriverKind,
   type ServerProvider,
   type ScopedProjectRef,
@@ -19,15 +20,23 @@ import {
   type ThreadStructure,
   type TurnDiffSummary,
 } from "../types";
-import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
+import {
+  type ComposerDocumentAttachment,
+  type ComposerImageAttachment,
+  type DraftThreadState,
+} from "../composerDraftStore";
 import * as Schema from "effect/Schema";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
 import {
+  appendTerminalContextsToPrompt,
   filterTerminalContextsWithText,
   stripInlineTerminalContextPlaceholders,
   type TerminalContextDraft,
 } from "../lib/terminalContext";
+import { appendElementContextsToPrompt, type ElementContextDraft } from "../lib/elementContext";
+import { appendPreviewAnnotationPrompt } from "../lib/previewAnnotation";
+import { appendReviewCommentsToPrompt, type ReviewCommentContext } from "../reviewCommentContext";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 
 import { isImageAttachment } from "../types";
@@ -298,6 +307,60 @@ export function readFileAsDataUrl(file: File): Promise<string> {
     });
     reader.readAsDataURL(file);
   });
+}
+
+const IMAGE_ONLY_BOOTSTRAP_PROMPT =
+  "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
+const DOCUMENT_ONLY_BOOTSTRAP_PROMPT =
+  "[User attached one or more files without additional text. Open the attached file(s) from the paths noted below and respond using the conversation context.]";
+
+/**
+ * The text a turn sends: the prompt with its contexts appended, or a bootstrap
+ * line when only attachments were sent. Shared by the composer send and queued
+ * sends, so both produce the same message.
+ */
+export function buildTurnMessageText(input: {
+  prompt: string;
+  /** Only the terminal contexts that still have text. */
+  terminalContexts: ReadonlyArray<TerminalContextDraft>;
+  elementContexts: ReadonlyArray<ElementContextDraft>;
+  previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
+  reviewComments: ReadonlyArray<ReviewCommentContext>;
+  hasImages: boolean;
+}): string {
+  const withContexts = appendElementContextsToPrompt(
+    appendTerminalContextsToPrompt(input.prompt, input.terminalContexts),
+    input.elementContexts,
+  );
+  const withAnnotations = input.previewAnnotations.reduce(
+    (text, annotation) => appendPreviewAnnotationPrompt(text, annotation),
+    withContexts,
+  );
+  const text = appendReviewCommentsToPrompt(withAnnotations, input.reviewComments);
+  return text || (input.hasImages ? IMAGE_ONLY_BOOTSTRAP_PROMPT : DOCUMENT_ONLY_BOOTSTRAP_PROMPT);
+}
+
+/** Reads composer attachments into the data URLs a turn start carries. */
+export function readTurnAttachments(input: {
+  images: ReadonlyArray<ComposerImageAttachment>;
+  documents: ReadonlyArray<ComposerDocumentAttachment>;
+}) {
+  return Promise.all([
+    ...input.images.map(async (image) => ({
+      type: "image" as const,
+      name: image.name,
+      mimeType: image.mimeType,
+      sizeBytes: image.sizeBytes,
+      dataUrl: await readFileAsDataUrl(image.file),
+    })),
+    ...input.documents.map(async (document) => ({
+      type: "document" as const,
+      name: document.name,
+      mimeType: document.mimeType,
+      sizeBytes: document.sizeBytes,
+      dataUrl: await readFileAsDataUrl(document.file),
+    })),
+  ]);
 }
 
 export function resolveSendEnvMode(input: {
