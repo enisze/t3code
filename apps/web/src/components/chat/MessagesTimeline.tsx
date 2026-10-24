@@ -41,11 +41,13 @@ import { getRenderablePatch, resolveFileDiffPath } from "../../lib/diffRendering
 import { useDiffThemeName } from "../../hooks/useDiffThemeName";
 import ChatMarkdown from "../ChatMarkdown";
 import {
+  ArrowUpIcon,
   BotIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   CircleAlertIcon,
+  ClockIcon,
   EyeIcon,
   GlobeIcon,
   HammerIcon,
@@ -91,7 +93,9 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   deriveDisplayedUserMessageState,
   type ParsedTerminalContextEntry,
+  stripInlineTerminalContextPlaceholders,
 } from "~/lib/terminalContext";
+import type { QueuedComposerMessage } from "../../queuedMessageStore";
 import {
   extractTrailingElementContexts,
   type ParsedElementContextEntry,
@@ -142,6 +146,9 @@ interface TimelineRowSharedState {
   onOpenGitDiff: (scope: ChatDiffScope, filePath?: string) => void;
   onToggleTurnFold: (turnId: TurnId) => void;
   onToggleWorkGroup: (groupId: string, anchorElement?: HTMLElement) => void;
+  onSteerQueuedMessage: (id: string) => void;
+  steerQueuedMessageShortcutLabel: string | null;
+  onRemoveQueuedMessage: (id: string) => void;
 }
 
 interface TimelineRowActivityState {
@@ -157,6 +164,8 @@ const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FADE_HEADER = <div className="h-10 sm:h-12" />;
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
+const EMPTY_QUEUED_MESSAGES: ReadonlyArray<QueuedComposerMessage> = [];
+const NOOP_QUEUED_MESSAGE_ACTION = (_id: string) => {};
 export const TIMELINE_MINIMAP_PREVIEW_MAX_LENGTH = 400;
 const TIMELINE_MINIMAP_WHITESPACE = /\s/u;
 
@@ -200,6 +209,11 @@ interface MessagesTimelineProps {
     readonly loading: boolean;
     readonly loadOlder: () => void;
   } | null;
+  /** Messages sent during the running turn. They render as dashed bubbles after the live rows. */
+  queuedMessages?: ReadonlyArray<QueuedComposerMessage>;
+  onSteerQueuedMessage?: (id: string) => void;
+  steerQueuedMessageShortcutLabel?: string | null;
+  onRemoveQueuedMessage?: (id: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -235,6 +249,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
   history = null,
+  queuedMessages = EMPTY_QUEUED_MESSAGES,
+  onSteerQueuedMessage = NOOP_QUEUED_MESSAGE_ACTION,
+  steerQueuedMessageShortcutLabel = null,
+  onRemoveQueuedMessage = NOOP_QUEUED_MESSAGE_ACTION,
 }: MessagesTimelineProps) {
   const find = use(ThreadFindTimelineContext);
   const findOpen = find?.findOpen ?? false;
@@ -337,6 +355,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         activeTurnStartedAt,
         turnDiffSummaryByAssistantMessageId,
         revertTurnCountByUserMessageId,
+        queuedMessages,
       }),
     [
       timelineEntries,
@@ -348,6 +367,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeTurnStartedAt,
       turnDiffSummaryByAssistantMessageId,
       revertTurnCountByUserMessageId,
+      queuedMessages,
     ],
   );
   const rows = useStableRows(rawRows);
@@ -474,6 +494,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenGitDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
+      onSteerQueuedMessage,
+      steerQueuedMessageShortcutLabel,
+      onRemoveQueuedMessage,
     }),
     [
       timestampFormat,
@@ -490,6 +513,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenGitDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
+      onSteerQueuedMessage,
+      steerQueuedMessageShortcutLabel,
+      onRemoveQueuedMessage,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -977,9 +1003,116 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
       {row.kind === "diff" ? <DiffTimelineRow row={row} /> : null}
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
+      {row.kind === "queued-message" ? <QueuedMessageTimelineRow row={row} /> : null}
     </div>
   );
 });
+
+/** A message waiting for the running turn: a dashed user bubble with icon actions inside it. */
+function QueuedMessageTimelineRow({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "queued-message" }>;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const { queuedMessage } = row;
+  const attachmentCount = queuedMessage.images.length + queuedMessage.documents.length;
+  const contextCount =
+    queuedMessage.terminalContexts.length +
+    queuedMessage.elementContexts.length +
+    queuedMessage.previewAnnotations.length +
+    queuedMessage.reviewComments.length;
+  const text = stripInlineTerminalContextPlaceholders(queuedMessage.prompt).trim();
+  const sending = queuedMessage.sending !== undefined;
+  const statusLabel = sending
+    ? "Sending to the agent"
+    : queuedMessage.holdUntilUserAction
+      ? "Waits for Send now"
+      : row.isNext
+        ? "Sends after the next tool call or when the turn ends"
+        : "Sends after the messages above it";
+  return (
+    <div className="flex flex-col items-end" data-queued-message-id={queuedMessage.id}>
+      <div className="max-w-[80%] rounded-2xl border border-dashed border-border p-3 text-message-foreground/80">
+        {text.length > 0 ? (
+          <div className="whitespace-pre-wrap break-words text-sm">{text}</div>
+        ) : null}
+        {attachmentCount > 0 || contextCount > 0 ? (
+          <div className={cn("text-secondary-label text-xs", text.length > 0 && "mt-1.5")}>
+            {[
+              attachmentCount > 0
+                ? `${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`
+                : null,
+              contextCount > 0
+                ? `${contextCount} context item${contextCount === 1 ? "" : "s"}`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(", ")}
+          </div>
+        ) : null}
+        <div
+          className="mt-2 flex items-center gap-4 text-secondary-label text-xs"
+          data-scroll-anchor-ignore
+        >
+          <Tooltip>
+            <TooltipTrigger
+              render={<span className="inline-flex h-6 items-center gap-1" />}
+              aria-label={`${sending ? "Sending" : "Queued"}. ${statusLabel}.`}
+            >
+              <ClockIcon className="size-3.5" aria-hidden />
+              {sending ? "Sending" : "Queued"}
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">{statusLabel}</TooltipPopup>
+          </Tooltip>
+          <div className={cn("ml-auto flex items-center gap-0.5", sending && "invisible")}>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="icon-micro"
+                    variant="ghost-muted"
+                    className="size-6"
+                    onPointerDown={(event) => event.preventDefault()}
+                    onClick={() => ctx.onSteerQueuedMessage(queuedMessage.id)}
+                    aria-label="Send now"
+                  />
+                }
+              >
+                <ArrowUpIcon className="size-3.5" aria-hidden />
+              </TooltipTrigger>
+              <TooltipPopup side="bottom">
+                Send now
+                {row.isNext && ctx.steerQueuedMessageShortcutLabel
+                  ? ` (${ctx.steerQueuedMessageShortcutLabel})`
+                  : null}
+              </TooltipPopup>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="icon-micro"
+                    variant="ghost-muted"
+                    className="size-6"
+                    onPointerDown={(event) => event.preventDefault()}
+                    onClick={() => ctx.onRemoveQueuedMessage(queuedMessage.id)}
+                    aria-label="Cancel and return to the composer"
+                  />
+                }
+              >
+                <XIcon className="size-3.5" aria-hidden />
+              </TooltipTrigger>
+              <TooltipPopup side="bottom">Cancel and return to the composer</TooltipPopup>
+            </Tooltip>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 type UserMessageAttachment = NonNullable<TimelineMessage["attachments"]>[number];
 

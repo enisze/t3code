@@ -23,6 +23,26 @@ T3 Code through another app's system share sheet.
 
 See [images and videos](#images-and-videos-in-messages) for previewing and saving media.
 
+## Send while the agent is working
+
+On web and desktop, a message you send during a running turn goes to the agent
+right away and steers its current turn. To hold follow-ups instead, choose **Queue**
+in **Settings → General → Follow-up behavior**. This setting applies to the current
+client. Press `mod+Enter` to do the opposite for one message; see
+[Composer controls](./keybindings.md#composer-controls).
+
+A queued message waits at the end of the conversation as a dashed bubble. It goes
+out on its own when the agent finishes its next tool call, or when the turn ends,
+even while you have another thread open. While messages are queued, a new message
+lines up behind them. Use the arrow in the bubble to send it right away, or the X to
+move it back into the composer. Stop returns every queued message to the composer.
+Queued messages live only in the open app, so a reload discards them.
+
+Use `Cmd+Shift+Enter` on macOS or `Ctrl+Shift+Enter` on Windows and Linux to send
+the oldest queued message now. Change `thread.steerQueuedMessage` in
+**Settings → Keybindings** to use another shortcut. It leaves the current draft
+in the composer and waits if the agent needs an approval or an answer.
+
 ## Queue messages offline on mobile
 
 Mobile keeps local copies of draft attachments, so you can preview them and queue

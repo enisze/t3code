@@ -35,6 +35,8 @@ const clientSettings: ClientSettings = {
   contextWindowMeterEnabled: false,
   composerCollapseOnBlur: false,
   composerCollapseOnScroll: true,
+  sendShortcut: "mod-enter",
+  followUpBehavior: "queue",
   dismissedProviderUpdateNotificationKeys: [],
   diffIgnoreWhitespace: true,
   diffLayout: "stacked",

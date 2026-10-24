@@ -1,3 +1,4 @@
+import { ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   computeStableMessagesTimelineRows,
@@ -261,6 +262,41 @@ describe("resolveAssistantMessageCopyState", () => {
 });
 
 describe("deriveMessagesTimelineRows", () => {
+  it("appends queued messages after the live rows, marking the oldest as next", () => {
+    const queuedMessage = (id: string, prompt: string) => ({
+      id,
+      prompt,
+      images: [],
+      documents: [],
+      terminalContexts: [],
+      elementContexts: [],
+      previewAnnotations: [],
+      reviewComments: [],
+      sendSettings: {
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        promptEffort: null,
+      },
+      queuedAfterToolActivityId: null,
+      createdAt: "2026-01-01T00:00:01Z",
+    });
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [],
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+      queuedMessages: [queuedMessage("q1", "first"), queuedMessage("q2", "second")],
+    });
+
+    expect(rows.map((row) => row.kind)).toEqual(["working", "queued-message", "queued-message"]);
+    expect(rows.slice(1)).toMatchObject([
+      { id: "queued-message:q1", isNext: true, queuedMessage: { prompt: "first" } },
+      { id: "queued-message:q2", isNext: false, queuedMessage: { prompt: "second" } },
+    ]);
+  });
+
   it("only enables assistant copy for the terminal assistant message in a turn", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [

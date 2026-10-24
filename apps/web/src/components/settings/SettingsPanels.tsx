@@ -115,6 +115,7 @@ import {
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { DictationLanguageSetting } from "./DictationLanguageSetting";
 import { Switch } from "../ui/switch";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
@@ -148,6 +149,8 @@ import {
 } from "./settingsLayout";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { isMacPlatform } from "../../lib/utils";
+import { searchableSetting } from "./settingsSearch";
 
 const THEME_OPTIONS = [
   {
@@ -586,6 +589,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
+      ...(settings.sendShortcut !== DEFAULT_UNIFIED_SETTINGS.sendShortcut ? ["Send shortcut"] : []),
+      ...(settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior
+        ? ["Follow-up behavior"]
+        : []),
       ...(settings.sidebarThreadPreviewCount !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount
         ? ["Visible threads"]
         : []),
@@ -653,6 +660,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
+      settings.sendShortcut,
+      settings.followUpBehavior,
       settings.wordWrap,
       settings.mathRenderingEnabled,
       theme,
@@ -672,6 +681,8 @@ export function useSettingsRestore(onRestored?: () => void) {
     setTheme("system");
     updateSettings({
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
+      sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
+      followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       mathRenderingEnabled: DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
@@ -1197,6 +1208,12 @@ export function AppearanceSettingsPanel() {
 }
 
 export function GeneralSettingsPanel() {
+  const modifierLabel = isMacPlatform(navigator.platform) ? "⌘" : "Ctrl";
+  const sendShortcutOptions = [
+    { value: "enter", label: "Enter" },
+    { value: "mod-enter-multiline", label: `${modifierLabel} + Enter for multiline prompts` },
+    { value: "mod-enter", label: `${modifierLabel} + Enter always` },
+  ] as const;
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
   const dictationLocale = useClientSettings((clientSettings) => clientSettings.dictationLocale);
@@ -1298,6 +1315,86 @@ export function GeneralSettingsPanel() {
               value={dictationLocale}
               onChange={(tag) => updateClientSettings({ dictationLocale: tag })}
             />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("send-shortcut")}
+          description="Choose when Enter sends a prompt or inserts a new line."
+          resetAction={
+            settings.sendShortcut !== DEFAULT_UNIFIED_SETTINGS.sendShortcut ? (
+              <SettingResetButton
+                label="send shortcut"
+                onClick={() =>
+                  updateSettings({ sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.sendShortcut}
+              onValueChange={(value) => {
+                const option = sendShortcutOptions.find((option) => option.value === value);
+                if (option) updateSettings({ sendShortcut: option.value });
+              }}
+            >
+              <SelectTrigger
+                size="sm"
+                className="w-auto min-w-0 max-w-full"
+                aria-label="Send shortcut"
+              >
+                <SelectValue>
+                  {
+                    sendShortcutOptions.find((option) => option.value === settings.sendShortcut)
+                      ?.label
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {sendShortcutOptions.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("follow-up-behavior")}
+          description={
+            "Steer the current run with follow-ups, or queue them until the agent finishes a tool call or the turn. " +
+            (settings.sendShortcut === "mod-enter-multiline"
+              ? `Press ${modifierLabel} + Enter for single-line prompts or ${modifierLabel} + Shift + Enter for multiline prompts to do the opposite for one message.`
+              : `Press ${modifierLabel}${settings.sendShortcut === "mod-enter" ? " + Shift" : ""} + Enter to do the opposite for one message.`)
+          }
+          resetAction={
+            settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior ? (
+              <SettingResetButton
+                label="follow-up behavior"
+                onClick={() =>
+                  updateSettings({ followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ToggleGroup
+              aria-label="Follow-up behavior"
+              variant="segmented"
+              value={[settings.followUpBehavior]}
+              onValueChange={(values) => {
+                const value = values[0];
+                if (value === "queue" || value === "steer") {
+                  updateSettings({ followUpBehavior: value });
+                }
+              }}
+            >
+              <Toggle value="queue">Queue</Toggle>
+              <Toggle value="steer">Steer</Toggle>
+            </ToggleGroup>
           }
         />
         <SettingsRow

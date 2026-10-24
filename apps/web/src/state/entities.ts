@@ -222,6 +222,11 @@ export function readThreadShellsForProjectRefs(
   return appAtomRegistry.get(environmentThreadShells.threadShellsForProjectRefsAtom(refs));
 }
 
+/** The thread `useThreadStructure` reads, read outside React. */
+export function readThreadStructure(ref: ScopedThreadRef): ThreadStructure | null {
+  return appAtomRegistry.get(environmentThreadStructures.structureAtom(ref));
+}
+
 export function readThreadShell(ref: ScopedThreadRef): EnvironmentThreadShell | null {
   return appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref));
 }

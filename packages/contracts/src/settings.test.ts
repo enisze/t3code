@@ -341,6 +341,30 @@ describe("ClientSettings context window meter", () => {
   });
 });
 
+describe("ClientSettings send shortcut", () => {
+  it("defaults to Enter and validates the supported choices", () => {
+    expect(decodeClientSettings({}).sendShortcut).toBe("enter");
+    for (const sendShortcut of ["enter", "mod-enter-multiline", "mod-enter"]) {
+      expect(decodeClientSettings({ sendShortcut }).sendShortcut).toBe(sendShortcut);
+      expect(decodeClientSettingsPatch({ sendShortcut }).sendShortcut).toBe(sendShortcut);
+    }
+    expect(() => decodeClientSettingsPatch({ sendShortcut: "invalid" })).toThrow();
+  });
+});
+
+describe("ClientSettings follow-up behavior", () => {
+  it("defaults to steer and accepts either behavior", () => {
+    expect(decodeClientSettings({}).followUpBehavior).toBe("steer");
+    for (const followUpBehavior of ["queue", "steer"]) {
+      expect(decodeClientSettings({ followUpBehavior }).followUpBehavior).toBe(followUpBehavior);
+      expect(decodeClientSettingsPatch({ followUpBehavior }).followUpBehavior).toBe(
+        followUpBehavior,
+      );
+    }
+    expect(() => decodeClientSettingsPatch({ followUpBehavior: "invalid" })).toThrow();
+  });
+});
+
 describe("ClientSettings composer collapse", () => {
   it("collapses on blur and scroll by default and accepts opting out of each", () => {
     const defaults = decodeClientSettings({});

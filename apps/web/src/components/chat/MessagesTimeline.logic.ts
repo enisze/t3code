@@ -7,6 +7,7 @@ import {
   type WorkLogEntry,
 } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
+import type { QueuedComposerMessage } from "../../queuedMessageStore";
 import {
   type DiffShownActivityPayload,
   type MessageId,
@@ -200,7 +201,15 @@ export type MessagesTimelineRow =
       createdAt: string;
       diff: DiffShownActivityPayload;
     }
-  | { kind: "working"; id: string; createdAt: string | null };
+  | { kind: "working"; id: string; createdAt: string | null }
+  | {
+      kind: "queued-message";
+      id: string;
+      createdAt: string;
+      queuedMessage: QueuedComposerMessage;
+      /** Oldest queued message, the one the next boundary sends. */
+      isNext: boolean;
+    };
 
 export interface StableMessagesTimelineRowsState {
   byId: Map<string, MessagesTimelineRow>;
@@ -437,6 +446,8 @@ export function deriveMessagesTimelineRows(input: {
   activeTurnStartedAt: string | null;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
+  /** Messages sent during the running turn, rendered after the live rows. */
+  queuedMessages?: ReadonlyArray<QueuedComposerMessage>;
 }): MessagesTimelineRow[] {
   const nextRows: MessagesTimelineRow[] = [];
   const durationStartByMessageId = computeMessageDurationStart(
@@ -606,6 +617,16 @@ export function deriveMessagesTimelineRows(input: {
     });
   }
 
+  input.queuedMessages?.forEach((queuedMessage, index) => {
+    nextRows.push({
+      kind: "queued-message",
+      id: `queued-message:${queuedMessage.id}`,
+      createdAt: queuedMessage.createdAt,
+      queuedMessage,
+      isNext: index === 0,
+    });
+  });
+
   return nextRows;
 }
 
@@ -644,6 +665,11 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "proposed-plan":
       return a.proposedPlan === (b as typeof a).proposedPlan;
+
+    case "queued-message": {
+      const bq = b as typeof a;
+      return a.queuedMessage === bq.queuedMessage && a.isNext === bq.isNext;
+    }
 
     // Activities are append-only, so an id never changes what it shows.
     case "diff":
