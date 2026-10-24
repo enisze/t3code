@@ -23,6 +23,7 @@ import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPrompt
 import { DesktopAppActivationCoordinator } from "../components/desktop/DesktopAppActivationCoordinator";
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
 import { QueuedMessageSender } from "../components/QueuedMessageSender";
+import { ThreadNotificationCoordinator } from "../components/ThreadNotificationCoordinator";
 import { SlowRpcRequestToastCoordinator } from "../components/SlowRpcRequestToastCoordinator";
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
@@ -176,6 +177,7 @@ function RootRouteView() {
           <RelayClientInstallDialog />
           <ConnectOnboardingDialog />
           <SshPasswordPromptDialog />
+          <ThreadNotificationCoordinator />
           <ConfirmDialogHost />
           <QueuedMessageSender />
           <SlowRpcRequestToastCoordinator />
