@@ -81,6 +81,14 @@ worktree's dependency and build folders, such as `node_modules`, `.next`, and
 `dist`. Source and `.env` files stay, so after you restore the thread, reinstall
 dependencies to keep working.
 
+## Undo a snooze or archive
+
+On web and desktop, snoozing or archiving a single thread shows a notification with
+**Undo** for five seconds. `mod+z` triggers the most recent Undo when no text field
+or terminal is focused; see [Keybindings](./keybindings.md#commands-with-special-behavior).
+Undo restores the thread and reopens an archived thread you were viewing. It does
+not restart processes the archive stopped or bring back build folders it deleted.
+
 ## Link a pull request
 
 The server finds the PR for each unsettled thread's saved branch, even when your

@@ -48,7 +48,9 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 ## When conditions
 
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
-`previewOpen`, and `modelPickerOpen`. Unknown keys evaluate to `false`.
+`previewOpen`, `modelPickerOpen`, and `editableFocus`. `editableFocus` is true while
+a text field, the composer, or another editor has the keyboard. Unknown keys
+evaluate to `false`.
 
 Combine keys with `!` for not, `&&` for and, `||` for or, and parentheses:
 
@@ -90,6 +92,10 @@ different command. Put a more specific rule after a general one when they share
 a shortcut.
 
 ## Commands with special behavior
+
+`thread.undo` (`mod+z` by default) reverses the most recent thread action that is
+still offering **Undo** in a notification, such as a snooze or an archive. Its
+default rule skips text fields and terminals so native undo keeps working there.
 
 `chat.new` may ask you to choose a project when there is more than one.
 `chat.newLocal` skips that chooser. Both use your

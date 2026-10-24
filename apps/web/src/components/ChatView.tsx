@@ -161,6 +161,9 @@ import TasksDock from "./tasks/TasksDock";
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import { isEditableFocused } from "../lib/editableFocus";
+import { undoLatestThreadAction } from "../hooks/showUndoToast";
+import * as ThreadUndo from "../hooks/threadUndo";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
@@ -4127,6 +4130,8 @@ function ChatViewContent(props: ChatViewProps) {
   const handleUnsnoozeActiveThread = useCallback(async () => {
     if (!activeThreadRef) return;
     const threadKey = scopedThreadKey(activeThreadRef);
+    // Waking the thread here makes its snooze notice's Undo stale.
+    ThreadUndo.invalidate("snooze", threadKey);
     setUnsnoozingThreadKey(threadKey);
     try {
       const result = await unsnoozeThreadMutation({
@@ -4492,6 +4497,7 @@ function ChatViewContent(props: ChatViewProps) {
         terminalFocus: terminalFocusOwner !== null,
         terminalOpen: Boolean(terminalUiState.terminalOpen),
         previewFocus: isPreviewFocused(),
+        editableFocus: isEditableFocused(event.target),
         modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
       };
 
@@ -4511,6 +4517,17 @@ function ChatViewContent(props: ChatViewProps) {
         context: shortcutContext,
       });
       if (!command) return;
+
+      if (command === "thread.undo") {
+        // Only claim the chord when there is an Undo to run; otherwise the
+        // page keeps its native behavior for the key.
+        if (event.repeat) return;
+        if (undoLatestThreadAction()) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        return;
+      }
 
       if (command === "thread.steerQueuedMessage") {
         const message = activeThreadKey

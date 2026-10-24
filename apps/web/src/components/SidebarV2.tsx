@@ -147,12 +147,7 @@ import {
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import { prStatusIndicator, resolveThreadPr, ThreadReadyCheck } from "./ThreadStatusIndicators";
-import {
-  resolveSnoozePresets,
-  snoozeWakeDescription,
-  snoozeWakeLabel,
-  type SnoozePreset,
-} from "./Sidebar.snooze";
+import { resolveSnoozePresets, snoozeWakeLabel, type SnoozePreset } from "./Sidebar.snooze";
 import { GitHubIcon } from "./Icons";
 import { ProjectDefaultAgentField } from "./ProjectDefaultAgentField";
 import { ProjectDefaultWorktreeBranchField } from "./ProjectDefaultWorktreeBranchField";
@@ -2163,7 +2158,11 @@ export default function SidebarV2() {
             // Stop + remove: halt a live session before it disappears from the
             // inbox. Navigation off the archived thread is the hook's job.
             archive: ({ threadRef: ref }, onArchived) =>
-              archiveThread(ref, { onArchived, stopRunningSession: true }),
+              archiveThread(ref, {
+                onArchived,
+                stopRunningSession: true,
+                undoToast: entries.length === 1,
+              }),
           });
           const failure = outcome.mutationFailure ?? outcome.followupFailures[0] ?? null;
           if (failure && !isAtomCommandInterrupted(failure)) {
@@ -2235,19 +2234,6 @@ export default function SidebarV2() {
             }
             return;
           }
-          // Snooze hides the row, so the toast is the only confirmation —
-          // and the Undo is the escape hatch for a mis-click.
-          toastManager.add(
-            stackedThreadToast({
-              type: "success",
-              title: `Snoozed until ${snoozeWakeDescription(preset.snoozedUntil, new Date())}`,
-              timeout: 5_000,
-              actionProps: {
-                children: "Undo",
-                onClick: () => attemptUnsnooze(threadRef),
-              },
-            }),
-          );
           // Only move forward if the user is still on the snoozed thread —
           // a navigation made during the await wins over ours.
           if (routeThreadKeyRef.current === threadKey) {
@@ -2258,7 +2244,7 @@ export default function SidebarV2() {
         }
       })();
     },
-    [attemptUnsnooze, planForwardNavigation, snoozeThread],
+    [planForwardNavigation, snoozeThread],
   );
 
   const removeFromSelection = useThreadSelectionStore((s) => s.removeFromSelection);
@@ -2341,7 +2327,11 @@ export default function SidebarV2() {
         const outcome = await archiveSelectedThreadEntries({
           entries,
           archive: ({ threadRef: ref }, onArchived) =>
-            archiveThread(ref, { onArchived, stopRunningSession: true }),
+            archiveThread(ref, {
+              onArchived,
+              stopRunningSession: true,
+              undoToast: entries.length === 1,
+            }),
         });
         const failure = outcome.mutationFailure ?? outcome.followupFailures[0] ?? null;
         if (failure && !isAtomCommandInterrupted(failure)) {

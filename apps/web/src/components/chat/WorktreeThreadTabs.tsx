@@ -239,12 +239,13 @@ export const WorktreeThreadTabs = memo(function WorktreeThreadTabs({
         shell.id === activeThreadId ? getWorktreeTabAfterClose(tabs, shell.id) : null;
       setClosingThreadId(shell.id);
       try {
-        const result = await archiveThread(
-          scopeThreadRef(shell.environmentId, shell.id),
-          fallback
+        const result = await archiveThread(scopeThreadRef(shell.environmentId, shell.id), {
+          ...(fallback
             ? { navigateToThreadRef: scopeThreadRef(fallback.environmentId, fallback.id) }
-            : undefined,
-        );
+            : {}),
+          // Closing a tab is reopened with Cmd/Ctrl+Shift+T, not an Undo notice.
+          undoToast: false,
+        });
         if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
           toastManager.add(

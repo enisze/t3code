@@ -1841,7 +1841,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
         const archiveOutcome = await archiveSelectedThreadEntries({
           entries: selectedThreadEntries,
-          archive: ({ threadRef }, onArchived) => archiveThread(threadRef, { onArchived }),
+          archive: ({ threadRef }, onArchived) =>
+            archiveThread(threadRef, {
+              onArchived,
+              undoToast: selectedThreadEntries.length === 1,
+            }),
         });
         for (const failure of archiveOutcome.followupFailures) {
           if (isAtomCommandInterrupted(failure)) continue;
@@ -2036,7 +2040,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
       const outcome = await archiveSelectedThreadEntries({
         entries,
-        archive: ({ threadRef: ref }, onArchived) => archiveThread(ref, { onArchived }),
+        archive: ({ threadRef: ref }, onArchived) =>
+          archiveThread(ref, { onArchived, undoToast: entries.length === 1 }),
       });
       const failure = outcome.mutationFailure ?? outcome.followupFailures[0] ?? null;
       if (failure && !isAtomCommandInterrupted(failure)) {
