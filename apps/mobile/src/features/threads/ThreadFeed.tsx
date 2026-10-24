@@ -10,6 +10,7 @@ import type {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import { isAutomationMessageId } from "@t3tools/contracts";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
 import {
   codexArtifactTemplatePresentationLabel,
@@ -1328,6 +1329,101 @@ function useMarkdownStyles(
   ]);
 }
 
+/** Automation prompts are long runbooks repeated on every run, so they fold to their first line. */
+function ThreadAutomationMessageRow(props: {
+  readonly text: string;
+  readonly copyText: string;
+  readonly timestampLabel: string;
+  readonly expanded: boolean;
+  readonly onToggle: () => void;
+  readonly bubbleColor: ColorValue;
+  readonly bubbleMaxWidth: number;
+  readonly iconSubtleColor: ColorValue;
+  readonly markdownStyles: MarkdownStyleSet;
+  readonly reviewCommentColors: ReviewCommentColors;
+  readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
+  readonly linkHandlers: MarkdownLinkHandlers;
+  readonly renderImage: MarkdownImageRenderer;
+}) {
+  const summary = props.text.trim().split(/\r?\n/, 1)[0] ?? "";
+
+  return (
+    <View className="mb-5 items-end">
+      <View
+        className="min-w-0 rounded-[20px]"
+        style={{
+          backgroundColor: props.bubbleColor,
+          maxWidth: props.bubbleMaxWidth,
+          ...(props.expanded ? { width: props.bubbleMaxWidth } : null),
+        }}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Automation: ${summary}`}
+          accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} the prompt.`}
+          accessibilityState={{ expanded: props.expanded }}
+          hitSlop={4}
+          className="min-h-10 flex-row items-center gap-1.5 px-3.5 py-2"
+          onPress={() => {
+            void Haptics.selectionAsync();
+            props.onToggle();
+          }}
+        >
+          <SymbolView
+            name="calendar.badge.clock"
+            size={14}
+            weight="medium"
+            tintColorClassName="accent-user-bubble-foreground-muted"
+            type="monochrome"
+          />
+          <Text className="font-t3-medium text-sm text-user-bubble-foreground-muted">
+            Automation
+          </Text>
+          <Text numberOfLines={1} className="min-w-0 shrink text-sm text-user-bubble-foreground">
+            {summary}
+          </Text>
+          <ThreadDisclosureChevron
+            expanded={props.expanded}
+            collapsedDirection="down"
+            size={11}
+            tintColor={props.iconSubtleColor}
+          />
+        </Pressable>
+        {props.expanded ? (
+          <View className="px-3.5 pb-2.5">
+            <MarkdownImageAvailableWidthContext
+              value={props.bubbleMaxWidth - USER_BUBBLE_HORIZONTAL_PADDING * 2}
+            >
+              <UserMessageContent
+                text={props.text}
+                markdownStyles={props.markdownStyles}
+                reviewCommentColors={props.reviewCommentColors}
+                skills={props.skills}
+                linkHandlers={props.linkHandlers}
+                renderImage={props.renderImage}
+              />
+            </MarkdownImageAvailableWidthContext>
+          </View>
+        ) : null}
+      </View>
+      {props.expanded ? (
+        <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
+          <Text className="font-t3-medium text-xs tabular-nums text-adaptive-neutral-600-400">
+            {props.timestampLabel}
+          </Text>
+          <CopyTextButton
+            accessibilityLabel="Copy message"
+            text={props.copyText}
+            tintColor={props.iconSubtleColor}
+            buttonSize={28}
+            iconSize={13}
+          />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function renderFeedEntry(
   info: { item: ThreadFeedEntry; index: number },
   props: Pick<ThreadFeedProps, "environmentId" | "onUseArtifactTemplate" | "skills"> & {
@@ -1508,6 +1604,26 @@ function renderFeedEntry(
       props.terminalAssistantMessageIds.has(message.id) &&
       !assistantTurnStillInProgress &&
       !message.streaming;
+
+    if (isUser && isAutomationMessageId(message.id)) {
+      return (
+        <ThreadAutomationMessageRow
+          text={renderedText}
+          copyText={message.text}
+          timestampLabel={timestampLabel}
+          expanded={props.expandedWorkRows[message.id] ?? false}
+          onToggle={() => props.onToggleWorkRow(message.id, entry.id)}
+          bubbleColor={userBubbleColor}
+          bubbleMaxWidth={props.userBubbleMaxWidth}
+          iconSubtleColor={iconSubtleColor}
+          markdownStyles={styles}
+          reviewCommentColors={props.reviewCommentColors}
+          skills={props.skills}
+          linkHandlers={props.markdownLinkHandlers}
+          renderImage={props.renderMarkdownImage}
+        />
+      );
+    }
 
     if (isUser) {
       const enterAnimated = isFreshTimestamp(message.createdAt);
@@ -2898,7 +3014,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             viewabilityConfig={THREAD_MEDIA_VIEWABILITY_CONFIG}
             keyExtractor={(entry) => entry.id}
             getItemType={(entry) =>
-              entry.type === "message" ? `message:${entry.message.role}` : entry.type
+              entry.type !== "message"
+                ? entry.type
+                : isAutomationMessageId(entry.message.id)
+                  ? "message:automation"
+                  : `message:${entry.message.role}`
             }
             getFixedItemSize={getFixedItemSize}
             itemLayoutAnimation={THREAD_FEED_LAYOUT_TRANSITION}

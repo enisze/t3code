@@ -21,6 +21,7 @@ import IconBellRinging from "@tabler/icons-react-native/IconBellRinging";
 import IconBolt from "@tabler/icons-react-native/IconBolt";
 import IconBox from "@tabler/icons-react-native/IconBox";
 import IconBrain from "@tabler/icons-react-native/IconBrain";
+import IconCalendarClock from "@tabler/icons-react-native/IconCalendarClock";
 import IconCamera from "@tabler/icons-react-native/IconCamera";
 import IconChartBar from "@tabler/icons-react-native/IconChartBar";
 import IconCheck from "@tabler/icons-react-native/IconCheck";
@@ -112,6 +113,7 @@ const ANDROID_ICON_BY_SF_SYMBOL: Partial<Record<SFSymbol, Icon>> = {
   "bolt.circle": IconBolt,
   "bolt.horizontal.circle": IconBolt,
   brain: IconBrain,
+  "calendar.badge.clock": IconCalendarClock,
   camera: IconCamera,
   "chart.bar.xaxis": IconChartBar,
   checkmark: IconCheck,

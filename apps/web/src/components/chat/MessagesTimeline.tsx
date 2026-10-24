@@ -1,6 +1,7 @@
 import {
   type ChatDiffScope,
   type EnvironmentId,
+  isAutomationMessageId,
   type MessageId,
   type ScopedThreadRef,
   type ServerProviderSkill,
@@ -45,6 +46,7 @@ import {
   ArrowUpIcon,
   BotIcon,
   BrainIcon,
+  CalendarClockIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
@@ -1197,7 +1199,13 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "work" ? <WorkGroupSection groupedEntries={row.groupedEntries} /> : null}
       {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
-      {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
+      {row.kind === "message" && row.message.role === "user" ? (
+        isAutomationMessageId(row.message.id) ? (
+          <AutomationTimelineRow row={row} />
+        ) : (
+          <UserTimelineRow row={row} />
+        )
+      ) : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
         <AssistantTimelineRow row={row} />
       ) : null}
@@ -1552,6 +1560,81 @@ function StartNewChatFromMessageButton({ message }: { message: TimelineMessage }
       </TooltipTrigger>
       <TooltipPopup side="top">Start a new chat with this message</TooltipPopup>
     </Tooltip>
+  );
+}
+
+/**
+ * Automation prompts are long runbooks repeated on every run, so they fold to
+ * their first line. While find is open the folded prompt stays mounted but
+ * hidden, and opens when the selected match lies inside it.
+ */
+function AutomationTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+  const ctx = use(TimelineRowCtx);
+  const findActive = use(MarkdownFindContext);
+  const [expanded, setExpanded] = useState(false);
+  const revealForFind = useCallback(() => setExpanded(true), []);
+  const findRevealRef = useFindRevealRef(revealForFind);
+  const prompt = deriveDisplayedUserMessageState(row.message.text);
+  const summary = prompt.visibleText.trim().split(/\r?\n/, 1)[0] ?? "";
+
+  return (
+    <div className="group flex flex-col items-end gap-1">
+      <div className={cn("min-w-0 max-w-[80%] rounded-2xl bg-accent", expanded && "w-full")}>
+        <button
+          type="button"
+          aria-expanded={expanded}
+          data-scroll-anchor-ignore
+          onClick={() => setExpanded((value) => !value)}
+          className="flex w-full min-w-0 items-center gap-1.5 rounded-2xl px-3 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-ring"
+        >
+          <CalendarClockIcon className="size-4 shrink-0 text-muted-foreground" />
+          <span className="shrink-0 text-muted-foreground">Automation</span>
+          <span className="min-w-0 flex-1 truncate">{summary}</span>
+          <ChevronDownIcon
+            className={cn(
+              "size-3.5 shrink-0 text-muted-foreground transition-transform",
+              expanded && "rotate-180",
+            )}
+          />
+        </button>
+        {expanded || findActive ? (
+          <div
+            ref={findRevealRef}
+            hidden={!expanded}
+            className={cn("px-3 pb-3", !findActive && "max-h-96 overflow-auto")}
+            data-thread-find-text="true"
+          >
+            <UserMessageBody
+              text={prompt.visibleText}
+              terminalContexts={prompt.contexts}
+              skills={ctx.skills}
+              markdownCwd={ctx.markdownCwd}
+            />
+          </div>
+        ) : null}
+      </div>
+      {expanded ? (
+        <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
+          <div className="flex shrink-0 items-center gap-2">
+            <Tooltip>
+              <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
+                {formatShortTimestamp(row.message.createdAt, ctx.timestampFormat)}
+              </TooltipTrigger>
+              <TooltipPopup>
+                {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
+              </TooltipPopup>
+            </Tooltip>
+            <div className="flex items-center gap-0.5">
+              {typeof row.revertTurnCount === "number" && (
+                <RevertUserMessageButton messageId={row.message.id} />
+              )}
+              <StartNewChatFromMessageButton message={row.message} />
+              {prompt.copyText && <MessageCopyButton text={prompt.copyText} variant="ghost" />}
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
