@@ -1,5 +1,7 @@
 # Usage and limits
 
+On web and desktop, open **Usage** from the command palette.
+
 ## Understand your usage
 
 **Usage** combines Codex, Claude Code, and Grok Build session history from your connected
