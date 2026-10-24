@@ -1,6 +1,17 @@
-import { EventId, TurnId, type OrchestrationThreadActivity } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
-import { derivePendingRequests } from "./pendingRequests.ts";
+import {
+  ApprovalRequestId,
+  EventId,
+  TurnId,
+  type OrchestrationThreadActivity,
+} from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
+import { describe, expect, it, vi } from "vite-plus/test";
+import {
+  type ApprovalResponder,
+  declinePendingApprovals,
+  derivePendingRequests,
+} from "./pendingRequests.ts";
 
 let nextActivityId = 0;
 
@@ -513,4 +524,38 @@ describe.each(["approval", "user-input"])("%s request completion", (requestKind)
       userInputs: [],
     });
   });
+});
+
+describe("declining approvals before sending", () => {
+  const approval = { requestId: ApprovalRequestId.make("first-approval") };
+  const second = { requestId: ApprovalRequestId.make("second-approval") };
+
+  it("declines every pending approval before the send continues", async () => {
+    let resolve!: (value: Awaited<ReturnType<ApprovalResponder>>) => void;
+    const firstResponse = new Promise<Awaited<ReturnType<ApprovalResponder>>>((done) => {
+      resolve = done;
+    });
+    const respond = vi.fn<ApprovalResponder>(async (id) =>
+      id === approval.requestId ? firstResponse : AsyncResult.success(undefined),
+    );
+    const send = vi.fn();
+    const submission = (async () => {
+      if (await declinePendingApprovals([approval, second], respond)) send();
+    })();
+    expect(respond).toHaveBeenCalledWith(approval.requestId, "decline");
+    expect(send).not.toHaveBeenCalled();
+    resolve(AsyncResult.success(undefined));
+    await submission;
+    expect(respond).toHaveBeenCalledWith(second.requestId, "decline");
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it.each([AsyncResult.failure(Cause.fail("decline failed")), undefined])(
+    "does not send when a decline is unsuccessful: %s",
+    async (response) => {
+      const send = vi.fn();
+      if (await declinePendingApprovals([approval], async () => response)) send();
+      expect(send).not.toHaveBeenCalled();
+    },
+  );
 });

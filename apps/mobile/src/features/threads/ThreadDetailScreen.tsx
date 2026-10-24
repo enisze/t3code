@@ -1,5 +1,9 @@
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
+  type ApprovalResponder,
+  declinePendingApprovals,
+} from "@t3tools/client-runtime/pending-requests";
+import {
   appendCodexArtifactTemplateUsePrompt,
   type CodexArtifactTemplate,
 } from "@t3tools/client-runtime/codex-artifact-templates";
@@ -14,7 +18,6 @@ import type {
   MessageId,
   ModelSelection,
   OrchestrationThreadShell,
-  ProviderApprovalDecision,
   ProviderInteractionMode,
   RuntimeMode,
   ServerConfig as T3ServerConfig,
@@ -105,6 +108,7 @@ export interface ThreadDetailScreenProps {
   readonly activeWorkStartedAt: string | null;
   readonly isCompacting: boolean;
   readonly activePendingApproval: PendingApproval | null;
+  readonly activePendingApprovals: ReadonlyArray<PendingApproval>;
   readonly respondingApprovalId: ApprovalRequestId | null;
   readonly activePendingUserInput: PendingUserInput | null;
   readonly activePendingUserInputDrafts: Record<string, PendingUserInputDraftAnswer>;
@@ -132,15 +136,12 @@ export interface ThreadDetailScreenProps {
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
-  readonly onSendMessage: () => Promise<MessageId | null>;
+  readonly onSendMessage: (beforeDispatch?: () => Promise<boolean>) => Promise<MessageId | null>;
   readonly onReconnectEnvironment: () => void;
   readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateThreadRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateThreadInteractionMode: (interactionMode: ProviderInteractionMode) => void;
-  readonly onRespondToApproval: (
-    requestId: ApprovalRequestId,
-    decision: ProviderApprovalDecision,
-  ) => Promise<unknown>;
+  readonly onRespondToApproval: ApprovalResponder;
   readonly onSelectUserInputOption: (
     requestId: ApprovalRequestId,
     question: UserInputQuestion,
@@ -679,40 +680,70 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     selectedThreadKey,
   ]);
 
-  const handleSendMessage = useCallback(async () => {
-    const targetThreadKey = selectedThreadKey;
-    const hasUserMessage = selectedThreadFeed.some(
-      (entry) => entry.type === "message" && entry.message.role === "user",
-    );
-    const messageId = await props.onSendMessage();
-    if (messageId === null || selectedThreadKeyRef.current !== targetThreadKey) {
+  const activePendingApprovalsRef = useRef(props.activePendingApprovals);
+  useLayoutEffect(() => {
+    activePendingApprovalsRef.current = props.activePendingApprovals;
+  }, [props.activePendingApprovals]);
+  const handleSendMessage = useCallback(
+    async (stillSendable?: () => boolean) => {
+      const targetThreadKey = selectedThreadKey;
+      const hasUserMessage = selectedThreadFeed.some(
+        (entry) => entry.type === "message" && entry.message.role === "user",
+      );
+      // A message sent while approvals are pending redirects the agent. This runs
+      // only once the send path has validated the draft and is about to deliver
+      // it, so an empty submit or `/feedback` leaves the approvals alone.
+      const approvalsToDecline = props.activePendingApprovals;
+      const declineBeforeDispatch =
+        approvalsToDecline.length > 0 && props.activePendingUserInput === null
+          ? async () =>
+              props.respondingApprovalId === null &&
+              (await declinePendingApprovals(approvalsToDecline, props.onRespondToApproval)) &&
+              selectedThreadKeyRef.current === targetThreadKey &&
+              // A draft edited or pasted into during the decline isn't what the user sent.
+              stillSendable?.() !== false &&
+              // An approval that arrived during the decline would block the redirect; the draft
+              // stays so the next send declines it too.
+              !activePendingApprovalsRef.current.some(
+                (approval) =>
+                  !approvalsToDecline.some((declined) => declined.requestId === approval.requestId),
+              )
+          : undefined;
+      const messageId = await props.onSendMessage(declineBeforeDispatch);
+      if (messageId === null || selectedThreadKeyRef.current !== targetThreadKey) {
+        return messageId;
+      }
+
+      // A sent message makes the snapshot stale; a refused send leaves it in place.
+      clearUsageLimitsFor(targetThreadKey);
+
+      setSubmittedMessageId(messageId);
+      setAnchorMessageId(
+        resolveThreadFeedSubmissionAnchor({
+          currentAnchorMessageId: anchorMessageId,
+          submittedMessageId: messageId,
+          hasStartedTurn: props.selectedThread.latestTurn !== null,
+          hasUserMessage,
+          queuedMessageCount: props.selectedThreadQueueCount,
+        }),
+      );
+      composerEditorRef.current?.blur();
       return messageId;
-    }
-
-    // A sent message makes the snapshot stale; a refused send leaves it in place.
-    clearUsageLimitsFor(targetThreadKey);
-
-    setSubmittedMessageId(messageId);
-    setAnchorMessageId(
-      resolveThreadFeedSubmissionAnchor({
-        currentAnchorMessageId: anchorMessageId,
-        submittedMessageId: messageId,
-        hasStartedTurn: props.selectedThread.latestTurn !== null,
-        hasUserMessage,
-        queuedMessageCount: props.selectedThreadQueueCount,
-      }),
-    );
-    composerEditorRef.current?.blur();
-    return messageId;
-  }, [
-    anchorMessageId,
-    clearUsageLimitsFor,
-    props.onSendMessage,
-    props.selectedThread.latestTurn,
-    props.selectedThreadQueueCount,
-    selectedThreadFeed,
-    selectedThreadKey,
-  ]);
+    },
+    [
+      anchorMessageId,
+      clearUsageLimitsFor,
+      props.activePendingApprovals,
+      props.activePendingUserInput,
+      props.onRespondToApproval,
+      props.onSendMessage,
+      props.respondingApprovalId,
+      props.selectedThread.latestTurn,
+      props.selectedThreadQueueCount,
+      selectedThreadFeed,
+      selectedThreadKey,
+    ],
+  );
 
   const collapseComposer = useCallback(() => {
     composerEditorRef.current?.blur();
@@ -911,7 +942,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   editorRef={composerEditorRef}
                   draftMessage={props.draftMessage}
                   draftAttachments={props.draftAttachments}
-                  placeholder="Ask the repo agent, or run a command…"
+                  placeholder={
+                    props.activePendingApproval
+                      ? "Send a message to decline and redirect the agent"
+                      : "Ask the repo agent, or run a command…"
+                  }
                   contentMaxWidth={contentMaxWidth}
                   connectionState={props.connectionStateLabel}
                   connectionError={props.connectionError}

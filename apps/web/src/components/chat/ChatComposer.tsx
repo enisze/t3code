@@ -1174,8 +1174,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isComposerApprovalState ||
     pendingUserInputs.length > 0 ||
     (showPlanFollowUpPrompt && activeProposedPlan !== null);
-  const showCollapsedMobilePromptRow =
-    isComposerCollapsedMobile && !isComposerApprovalState && pendingUserInputs.length === 0;
+  const showCollapsedMobilePromptRow = isComposerCollapsedMobile && pendingUserInputs.length === 0;
 
   const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
   const showPlanSidebarToggle = Boolean(activePlan || sidebarProposedPlan || planSidebarOpen);
@@ -1628,7 +1627,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     preferredLocale: dictationLocale,
     draftMessage: prompt,
     selection: { start: composerCursor, end: composerCursor },
-    disabled: isConnecting || isComposerApprovalState || projectSelectionRequired,
+    disabled: isConnecting || projectSelectionRequired,
     onCommitTranscript: (text, selection) => {
       promptRef.current = text;
       setPrompt(text);
@@ -2332,7 +2331,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       event.stopPropagation();
       if (
         isCommandPaletteOpen() ||
-        isComposerApprovalState ||
         pendingUserInputs.length > 0 ||
         projectSelectionRequired ||
         activePendingProgress !== null
@@ -2345,7 +2343,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return () => window.removeEventListener("keydown", handler, true);
   }, [
     activePendingProgress,
-    isComposerApprovalState,
     isComposerModelPickerOpen,
     keybindings,
     pendingUserInputs.length,
@@ -2529,7 +2526,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (
       text.length === 0 ||
       isConnecting ||
-      isComposerApprovalState ||
       pendingUserInputs.length > 0 ||
       projectSelectionRequired
     ) {
@@ -2739,7 +2735,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerPreviewAnnotations,
       composerReviewComments,
       isConnecting,
-      isComposerApprovalState,
       pendingUserInputs.length,
       projectSelectionRequired,
       applyPromptReplacement,
@@ -2813,6 +2808,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   approval={activePendingApproval}
                   pendingCount={pendingApprovals.length}
                 />
+                <div className="flex flex-wrap items-center justify-end gap-2 px-3 pb-3 sm:px-4">
+                  <ComposerPendingApprovalActions
+                    requestId={activePendingApproval.requestId}
+                    isResponding={respondingRequestIds.includes(activePendingApproval.requestId)}
+                    onRespondToApproval={onRespondToApproval}
+                  />
+                </div>
               </div>
             ) : pendingUserInputs.length > 0 ? (
               <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
@@ -2978,7 +2980,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               onToggleMenu={toggleStashMenu}
             />
 
-            {isStashMenuOpen && !composerMenuOpen && !isComposerApprovalState && (
+            {isStashMenuOpen && !composerMenuOpen && (
               <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
                 <ComposerStashMenu
                   entries={stashQueue}
@@ -2989,7 +2991,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               </ComposerCommandMenuLayer>
             )}
 
-            {composerMenuOpen && !isComposerApprovalState && (
+            {composerMenuOpen && (
               <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
                 <ComposerCommandMenu
                   items={composerMenuItems}
@@ -3009,7 +3011,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             )}
 
             {!isComposerCollapsedMobile &&
-              !isComposerApprovalState &&
               pendingUserInputs.length === 0 &&
               composerPreviewAnnotations.length > 0 && (
                 <ComposerPreviewAnnotationCards
@@ -3027,7 +3028,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               )}
 
             {!isComposerCollapsedMobile &&
-              !isComposerApprovalState &&
               pendingUserInputs.length === 0 &&
               composerReviewComments.length > 0 && (
                 <ComposerPendingReviewComments
@@ -3040,7 +3040,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               )}
 
             {!isComposerCollapsedMobile &&
-              !isComposerApprovalState &&
               pendingUserInputs.length === 0 &&
               composerElementContexts.length > 0 && (
                 <ComposerPendingElementContexts
@@ -3053,7 +3052,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               )}
 
             {!isComposerCollapsedMobile &&
-              !isComposerApprovalState &&
               pendingUserInputs.length === 0 &&
               composerImages.some(
                 (image) =>
@@ -3128,7 +3126,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               )}
 
             {!isComposerCollapsedMobile &&
-              !isComposerApprovalState &&
               pendingUserInputs.length === 0 &&
               composerDocuments.length > 0 && (
                 <div className="mb-3 flex flex-wrap gap-2">
@@ -3161,19 +3158,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             <div className="relative">
               <ComposerPromptEditor
                 editorRef={composerEditorRef}
-                value={
-                  isComposerApprovalState
-                    ? ""
-                    : activePendingProgress
-                      ? activePendingProgress.customAnswer
-                      : prompt
-                }
+                value={activePendingProgress ? activePendingProgress.customAnswer : prompt}
                 cursor={composerCursor}
-                terminalContexts={
-                  !isComposerApprovalState && pendingUserInputs.length === 0
-                    ? composerTerminalContexts
-                    : []
-                }
+                terminalContexts={pendingUserInputs.length === 0 ? composerTerminalContexts : []}
                 skills={selectedProviderStatus?.skills ?? []}
                 {...(showMobilePendingAnswerActions ? { className: "max-sm:pb-11" } : {})}
                 onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
@@ -3182,7 +3169,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 onPaste={onComposerPaste}
                 placeholder={
                   isComposerApprovalState
-                    ? (activePendingApproval?.detail ?? "Resolve this approval request to continue")
+                    ? "Send a message to decline and redirect the agent"
                     : activePendingProgress
                       ? "Type your own answer, or leave this blank to use the selected option"
                       : showPlanFollowUpPrompt && activeProposedPlan
@@ -3195,12 +3182,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               ? "Ask for follow-up changes or attach images"
                               : "Ask anything, @tag files/folders, $use skills, or / for commands"
                 }
-                disabled={
-                  isConnecting ||
-                  isComposerApprovalState ||
-                  projectSelectionRequired ||
-                  dictation.freezesEditor
-                }
+                disabled={isConnecting || projectSelectionRequired || dictation.freezesEditor}
               />
               {showMobilePendingAnswerActions ? (
                 <div
@@ -3235,15 +3217,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           </div>
 
           {/* Bottom toolbar */}
-          {isComposerCollapsedMobile ? null : activePendingApproval ? (
-            <div className="flex items-center justify-end gap-2 px-2.5 pb-2.5 sm:px-3 sm:pb-3">
-              <ComposerPendingApprovalActions
-                requestId={activePendingApproval.requestId}
-                isResponding={respondingRequestIds.includes(activePendingApproval.requestId)}
-                onRespondToApproval={onRespondToApproval}
-              />
-            </div>
-          ) : (
+          {isComposerCollapsedMobile ? null : (
             <div
               data-chat-composer-footer="true"
               data-chat-composer-footer-compact={isComposerFooterCompact ? "true" : "false"}
@@ -3325,7 +3299,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   <>
                     <ComposerDictationButton
                       state={dictation.state}
-                      disabled={isConnecting || isComposerApprovalState || projectSelectionRequired}
+                      disabled={isConnecting || projectSelectionRequired}
                       onStart={dictation.start}
                       onStop={dictation.stop}
                     />
@@ -3416,7 +3390,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     canCreateEmptyWorktreeThread && !composerSendState.hasSendableContent
                   }
                   preserveComposerFocusOnPointerDown={isMobileViewport}
-                  queuesWhileRunning={settings.followUpBehavior === "queue"}
+                  // A send during an approval declines it and steers the waiting turn.
+                  queuesWhileRunning={
+                    settings.followUpBehavior === "queue" && !isComposerApprovalState
+                  }
                   onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                   onInterrupt={handleInterruptPrimaryAction}
                   onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
