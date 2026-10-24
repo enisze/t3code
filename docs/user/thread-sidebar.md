@@ -115,9 +115,10 @@ The linked pull request participates in automatic settlement.
 
 ## Find and reference work
 
-On web and desktop, open the command palette with `Cmd/Ctrl+K` to search threads
-across connected environments. Message search starts after two characters and
-includes your messages and final agent responses.
+On web and desktop, open the command palette with `Cmd/Ctrl+K` to find threads
+across connected environments by title, project, branch, or thread ID. Archived
+threads are included. On mobile, thread search also matches message text after
+two characters: your messages and final agent responses.
 
 Use **Settings → Keybindings** to find or customize shortcuts for searching files
 and copying a thread reference. A copied reference uses the thread's pull request
