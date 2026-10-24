@@ -148,6 +148,10 @@ Type `/` for commands or `$` to add a skill from the selected environment and
 provider. On mobile, both are also available before starting a thread on
 **New task**.
 
+The slash menu includes the provider's own commands for the project, such as
+OpenCode project commands. Cursor reports its commands when a session starts, so
+they appear after your first message in a project.
+
 The slash menu also includes skills unless you turn off **Settings → General →
 Show skills in slash menu**. Only skills enabled for the provider are listed.
 

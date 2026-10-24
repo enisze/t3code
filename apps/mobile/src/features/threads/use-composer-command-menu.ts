@@ -14,8 +14,10 @@ import {
 import {
   dedupeProviderSkillsByName,
   getProviderSkillsForSlashMenu,
+  getProviderSlashCommandsForSlashMenu,
   isProviderSkillUserInvocable,
   resolveProviderSkillsForCwd,
+  resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -276,6 +278,7 @@ export function useComposerCommandMenu({
 
     if (trigger.kind === "slash-command") {
       const q = trigger.query.toLowerCase();
+      const visibleSkills = getProviderSkillsForSlashMenu(skills, true);
       const commandItems = buildComposerSlashCommandItems({
         query: q,
         atMessageStart: trigger.rangeStart === 0,
@@ -283,10 +286,18 @@ export function useComposerCommandMenu({
         hasCompactableConversation,
         offersUsageLimits,
         allowInteractionMode: onUpdateInteractionMode !== undefined,
-        selectedProviderStatus,
+        selectedProviderStatus: selectedProviderStatus
+          ? {
+              ...selectedProviderStatus,
+              slashCommands: getProviderSlashCommandsForSlashMenu(
+                resolveProviderSlashCommandsForCwd(selectedProviderStatus, projectCwd),
+                visibleSkills,
+              ),
+            }
+          : null,
       });
 
-      const skillItems = getProviderSkillsForSlashMenu(skills, true)
+      const skillItems = visibleSkills
         .filter((skill) => matchesSlashSkillQuery(skill, q))
         .map((skill) => ({
           id: `skill:${skill.name}`,
@@ -403,6 +414,7 @@ export function useComposerCommandMenu({
     hasCompactableConversation,
     onUpdateInteractionMode,
     pathSearch.entries,
+    projectCwd,
     selectedProviderStatus,
     skills,
     trigger,
