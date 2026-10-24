@@ -18,6 +18,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
@@ -47,6 +48,7 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  ChevronUpIcon,
   CircleAlertIcon,
   ClockIcon,
   EyeIcon,
@@ -74,21 +76,25 @@ import { shouldAutoExpandChangedFiles } from "./changedFilesPresentation";
 import { MessageCopyButton } from "./MessageCopyButton";
 import {
   computeStableMessagesTimelineRows,
+  createTimelineMinimapPositionStore,
   deriveMessagesTimelineRows,
   deriveUnsettledTurnId,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
   resolveTimelineIsAtEnd,
+  resolveTimelineMinimapCurrentIndex,
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapHeightStyle,
   resolveTimelineMinimapHitStripWidth,
   resolveTimelineMinimapIndexFromPointer,
   resolveTimelineMinimapInteractiveWidth,
+  resolveTimelineMinimapNeighbors,
   resolveTimelineMinimapTopPercent,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
   TIMELINE_MINIMAP_MIN_ITEMS,
   type TimelineLatestTurn,
+  type TimelineMinimapPositionStore,
 } from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -300,6 +306,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ReadonlySet<string>
   >(new Set());
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
+  const [minimapPosition] = useState(createTimelineMinimapPositionStore);
 
   const onToggleTurnFold = useCallback((turnId: TurnId) => {
     setExpandedTurnIds((existing) => {
@@ -468,14 +475,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     const scrollTop = state.scroll ?? 0;
     const scrollBottom = scrollTop + (state.scrollLength ?? 0);
 
+    const itemBounds: Array<{ top: number | null; height: number | null }> = [];
     for (const item of minimapItems) {
+      const rowTop = resolveTimelineRowTop(state, item.rowIndex);
+      const rowHeight = resolveTimelineRowHeight(state, item.rowIndex);
+      itemBounds.push({ top: rowTop, height: rowHeight });
       const strip = minimapStripMap.get(item.id);
       if (!strip) {
         continue;
       }
 
-      const rowTop = resolveTimelineRowTop(state, item.rowIndex);
-      const rowHeight = resolveTimelineRowHeight(state, item.rowIndex);
       const inView =
         rowTop !== null &&
         rowTop < scrollBottom &&
@@ -486,7 +495,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         strip.dataset.inView = nextInView;
       }
     }
-  }, [listRef, minimapItems, minimapStripMap, onIsAtEndChange]);
+    minimapPosition.set(
+      resolveTimelineMinimapCurrentIndex({ scrollTop, scrollBottom, itemBounds }),
+    );
+  }, [listRef, minimapItems, minimapPosition, minimapStripMap, onIsAtEndChange]);
 
   const handleScroll = useCallback(() => {
     if (scrollMeasurementFrameRef.current !== null) {
@@ -727,6 +739,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               hasPersistentGutter={minimapHasPersistentGutter}
               hitStripWidth={minimapHitStripWidth}
               stripMap={minimapStripMap}
+              position={minimapPosition}
+              history={history}
               onSelect={(item) => {
                 onManualNavigation();
                 void listRef.current?.scrollToIndex({
@@ -852,6 +866,8 @@ function TimelineMinimap({
   hitStripWidth,
   items,
   stripMap,
+  position,
+  history,
   onSelect,
 }: {
   bottomInset: number;
@@ -859,9 +875,32 @@ function TimelineMinimap({
   hitStripWidth: number;
   items: ReadonlyArray<TimelineMinimapItem>;
   stripMap: Map<string, HTMLSpanElement>;
+  position: TimelineMinimapPositionStore;
+  history: MessagesTimelineProps["history"];
   onSelect: (item: TimelineMinimapItem) => void;
 }) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const currentIndex = useSyncExternalStore(position.subscribe, position.get, position.get);
+  const neighbors = resolveTimelineMinimapNeighbors({
+    items,
+    currentIndex,
+    canLoadOlder: history?.hasMore === true,
+  });
+  // Previous before the oldest loaded turn loads older turns, then continues
+  // to the turn before the one the reader was on.
+  const pendingPreviousFromRef = useRef<string | null>(null);
+  useEffect(() => {
+    const pendingFrom = pendingPreviousFromRef.current;
+    if (pendingFrom === null) return;
+    const index = items.findIndex((item) => item.id === pendingFrom);
+    const target = index > 0 ? items[index - 1] : undefined;
+    if (target) {
+      pendingPreviousFromRef.current = null;
+      onSelect(target);
+    } else if (index < 0 || (history?.loading !== true && history?.hasMore !== true)) {
+      pendingPreviousFromRef.current = null;
+    }
+  }, [history?.hasMore, history?.loading, items, onSelect]);
 
   const resolvedActiveIndex =
     activeIndex !== null && activeIndex < items.length ? activeIndex : null;
@@ -929,6 +968,24 @@ function TimelineMinimap({
       style={{ bottom: safeBottomInset }}
     >
       <div className="relative h-full w-full select-none">
+        <TimelineMinimapNavigationButton
+          direction="previous"
+          stripHeight={resolveTimelineMinimapHeightStyle(items.length)}
+          disabled={
+            neighbors.previous === null ||
+            (neighbors.previous === "older" && history?.loading === true)
+          }
+          onClick={() => {
+            if (neighbors.previous === "older") {
+              const oldest = items[0];
+              if (!oldest || !history) return;
+              pendingPreviousFromRef.current = oldest.id;
+              history.loadOlder();
+            } else if (neighbors.previous) {
+              onSelect(neighbors.previous);
+            }
+          }}
+        />
         <button
           aria-label={`Jump to message: ${activeItem?.userText ?? "User message"}`}
           className={cn(
@@ -1046,8 +1103,61 @@ function TimelineMinimap({
             </span>
           ) : null}
         </button>
+        <TimelineMinimapNavigationButton
+          direction="next"
+          stripHeight={resolveTimelineMinimapHeightStyle(items.length)}
+          disabled={neighbors.next === null}
+          onClick={() => {
+            if (neighbors.next) onSelect(neighbors.next);
+          }}
+        />
       </div>
     </div>
+  );
+}
+
+/** Jumps to the turn before or after the reader's position, just above or below the strip. */
+function TimelineMinimapNavigationButton({
+  direction,
+  stripHeight,
+  disabled,
+  onClick,
+}: {
+  direction: "previous" | "next";
+  stripHeight: string;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  const previous = direction === "previous";
+  const label = previous ? "Previous turn" : "Next turn";
+  const Icon = previous ? ChevronUpIcon : ChevronDownIcon;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            className="pointer-events-auto absolute left-4 z-10 inline-flex opacity-0 transition-opacity duration-150 group-hover/minimap:opacity-100 focus-within:opacity-100"
+            style={{
+              top: `calc(50% ${previous ? "-" : "+"} (${stripHeight}) / 2 ${previous ? "- 2px" : "+ 2px"})`,
+              transform: `translate(-50%, ${previous ? "-100%" : "0"})`,
+            }}
+          />
+        }
+      >
+        <Button
+          aria-label={label}
+          disabled={disabled}
+          onClick={onClick}
+          size="icon-micro"
+          type="button"
+          variant="ghost-muted"
+        >
+          <Icon className="size-4 text-foreground/90" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipPopup side={previous ? "top" : "bottom"}>{label}</TooltipPopup>
+    </Tooltip>
   );
 }
 
