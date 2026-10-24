@@ -32,12 +32,20 @@ import { useThreadFindNavigation } from "./useThreadFindNavigation";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { FileDiff } from "@pierre/diffs/react";
 import {
+  type AgentSpawnWorkLog,
+  formatDuration,
   type TimelineEntry,
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolNeutralStatus,
   workEntryIndicatesToolSuccess,
   workLogEntryIsToolLike,
 } from "../../session-logic";
+import {
+  formatSubagentTokenCount,
+  isActiveSubagentStatus,
+  type RuntimeSubagent,
+} from "@t3tools/client-runtime/state/subagentRuntime";
+import { summarizeAgentSpawn } from "./agentSpawnSummary";
 import { type TurnDiffSummary } from "../../types";
 import { getRenderablePatch, resolveFileDiffPath } from "../../lib/diffRendering";
 import { useDiffThemeName } from "../../hooks/useDiffThemeName";
@@ -1877,13 +1885,21 @@ const WorkGroupSection = memo(function WorkGroupSection({
         </p>
       )}
       <div className="space-y-px">
-        {nonEmptyEntries.map((workEntry) => (
-          <SimpleWorkEntryRow
-            key={workEntry.id}
-            workEntry={workEntry}
-            workspaceRoot={workspaceRoot}
-          />
-        ))}
+        {nonEmptyEntries.map((workEntry) =>
+          workEntry.agentSpawn ? (
+            <AgentSpawnWorkEntryRow
+              key={workEntry.id}
+              workEntry={workEntry}
+              spawn={workEntry.agentSpawn}
+            />
+          ) : (
+            <SimpleWorkEntryRow
+              key={workEntry.id}
+              workEntry={workEntry}
+              workspaceRoot={workspaceRoot}
+            />
+          ),
+        )}
       </div>
     </section>
   );
@@ -2798,3 +2814,148 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
     </div>
   );
 });
+
+const AGENT_MEMBER_STATUS_LABEL: Record<RuntimeSubagent["status"], string> = {
+  pending: "Working",
+  running: "Working",
+  waiting: "Working",
+  idle: "Idle",
+  completed: "Completed",
+  failed: "Failed",
+  cancelled: "Stopped",
+  interrupted: "Stopped",
+};
+
+/**
+ * One row per batch of spawned subagents; expanding it lists each member's
+ * latest state. That state arrives on the work entry, so a member update
+ * re-renders only this row.
+ */
+const AgentSpawnWorkEntryRow = memo(function AgentSpawnWorkEntryRow(props: {
+  workEntry: TimelineWorkEntry;
+  spawn: AgentSpawnWorkLog;
+}) {
+  const { workEntry, spawn } = props;
+  const { timestampFormat } = use(TimelineRowCtx);
+  const [expanded, setExpanded] = useState(false);
+  const summary = summarizeAgentSpawn(spawn);
+  const workflowName = spawn.workflow?.workflowName ?? spawn.workflow?.title ?? null;
+  const heading = workflowName ? `${summary.lead} · ${workflowName}` : summary.lead;
+  const failed = summary.tone === "failed";
+
+  return (
+    <div className="group/timeline-row relative flex flex-col rounded-md px-0.5 py-0.5">
+      <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          aria-expanded={expanded}
+          data-scroll-anchor-ignore
+          onClick={() => setExpanded((value) => !value)}
+          className="flex min-w-0 flex-1 cursor-pointer select-none items-center gap-1.5 rounded-md text-left transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        >
+          <span
+            className={cn(
+              "flex size-5 shrink-0 items-center justify-center",
+              failed ? "text-destructive" : "text-muted-foreground/65",
+            )}
+          >
+            <WorkEntryIconSvg
+              name="bot"
+              className="block size-3.5 shrink-0 stroke-[1.8] opacity-80"
+            />
+          </span>
+          <span className="flex min-w-0 flex-1 items-baseline gap-1.5 text-[12px] leading-5">
+            <span
+              className={cn(
+                "min-w-0 shrink truncate font-medium",
+                failed ? "text-destructive" : "text-foreground/82",
+              )}
+            >
+              {heading}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-muted-foreground/55">
+              {summary.status}
+            </span>
+          </span>
+          <ChevronDownIcon
+            className={cn(
+              "size-3 shrink-0 text-muted-foreground/55 opacity-70 transition-transform duration-200",
+              expanded && "rotate-180",
+            )}
+            aria-hidden
+          />
+        </button>
+        <TimelineRowTimestamp createdAt={workEntry.createdAt} timestampFormat={timestampFormat} />
+      </div>
+      {expanded ? (
+        <ul className="mt-1 ms-7 space-y-1.5 border-s border-border/45 ps-3 pt-0.5">
+          {spawn.agents.length > 0 ? (
+            spawn.agents.map((agent) => <AgentSpawnMemberRow key={agent.id} agent={agent} />)
+          ) : (
+            <li className="text-[11px] text-muted-foreground/70">
+              These subagents have not reported yet.
+            </li>
+          )}
+        </ul>
+      ) : null}
+    </div>
+  );
+});
+
+function AgentSpawnMemberRow({ agent }: { agent: RuntimeSubagent }) {
+  const working = isActiveSubagentStatus(agent.status);
+  const activity = working
+    ? (agent.progress ?? (agent.lastToolName ? `▸ ${agent.lastToolName}` : null))
+    : (agent.error ?? agent.result ?? agent.progress ?? null);
+  const durationMs =
+    agent.startedAt && agent.completedAt
+      ? Date.parse(agent.completedAt) - Date.parse(agent.startedAt)
+      : null;
+  const meta = [
+    durationMs !== null && durationMs >= 0 ? formatDuration(durationMs) : null,
+    agent.usage && agent.usage.totalTokens > 0
+      ? `${formatSubagentTokenCount(agent.usage.totalTokens)} tok`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  // Settled members show what they cost; any outcome but success keeps its word.
+  const status =
+    working || !meta
+      ? AGENT_MEMBER_STATUS_LABEL[agent.status]
+      : agent.status === "completed"
+        ? meta
+        : `${AGENT_MEMBER_STATUS_LABEL[agent.status]} · ${meta}`;
+  const role =
+    agent.role && agent.role.trim().toLowerCase() !== agent.title.trim().toLowerCase()
+      ? agent.role
+      : null;
+
+  return (
+    <li className="min-w-0">
+      <div className="flex min-w-0 items-baseline gap-1.5 text-[12px] leading-5">
+        <span
+          className={cn(
+            "min-w-0 truncate",
+            agent.status === "failed" ? "text-destructive" : "text-foreground/80",
+          )}
+        >
+          {agent.title}
+        </span>
+        {role ? (
+          <span className="max-w-28 shrink-0 truncate rounded-sm border border-border/60 px-1 font-mono text-[10px] text-muted-foreground">
+            {role}
+          </span>
+        ) : null}
+        <span className="ms-auto shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground/70">
+          {status}
+        </span>
+      </div>
+      {activity ? (
+        <p className="whitespace-pre-wrap break-words text-[11px] leading-relaxed text-muted-foreground/70">
+          {activity}
+        </p>
+      ) : null}
+    </li>
+  );
+}

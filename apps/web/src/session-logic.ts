@@ -7,6 +7,12 @@ import {
   extractCommandOutputText,
 } from "@t3tools/client-runtime/work-log/presentation";
 import {
+  deriveAgentPanelModel,
+  foldSubagentActivities,
+  isBackgroundTaskActivity,
+  type RuntimeSubagent,
+} from "@t3tools/client-runtime/state/subagentRuntime";
+import {
   ApprovalRequestId,
   DIFF_SHOWN_ACTIVITY_KIND,
   DiffShownActivityPayload,
@@ -29,6 +35,7 @@ import type {
   ThreadSession,
   TurnDiffSummary,
 } from "./types";
+import { summarizeAgentSpawn } from "./components/chat/agentSpawnSummary";
 
 export type ProviderPickerKind = ProviderDriverKind;
 
@@ -86,12 +93,30 @@ export interface WorkLogEntry {
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
   /** Originating orchestration activity kind (e.g. `user-input.requested`) for row chrome. */
   sourceActivityKind?: OrchestrationThreadActivity["kind"];
+  /** Present on the one row that stands for a workflow run or a turn's batch of subagents. */
+  agentSpawn?: AgentSpawnWorkLog;
+}
+
+/**
+ * A batch of spawned subagents with each member's latest folded state, so the
+ * row renders from its own entry and a member update changes only this row.
+ */
+export interface AgentSpawnWorkLog {
+  /** Workflow coordinator task id, or null for a batch of direct spawns. */
+  workflowId: string | null;
+  agentTaskIds: ReadonlyArray<string>;
+  workflow: RuntimeSubagent | null;
+  agents: ReadonlyArray<RuntimeSubagent>;
 }
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
   activityKind: OrchestrationThreadActivity["kind"];
   collapseKey?: string;
   toolCallId?: string;
+  taskId?: string;
+  /** Classified by the server's agentKind stamp; other tasks are ordinary rows. */
+  isAgentTask?: boolean;
+  isWorkflowCoordinator?: boolean;
 }
 
 export interface PendingApproval {
@@ -287,6 +312,10 @@ export function workEntryIndicatesToolSuccess(entry: WorkLogEntry): boolean {
 
 /** Tool-like row with neither clear success nor failure (empty, incomplete, in progress, etc.). */
 export function workEntryIndicatesToolNeutralStatus(entry: WorkLogEntry): boolean {
+  // A spawn row reports its members' state, so it is never an empty tool row.
+  if (entry.agentSpawn !== undefined) {
+    return false;
+  }
   if (!workLogEntryIsToolLike(entry)) {
     return false;
   }
@@ -662,24 +691,159 @@ export function hasActionableProposedPlan(
   return proposedPlan !== null && proposedPlan.implementedAt === null;
 }
 
+/**
+ * Subagents keep the log quiet: a workflow run or one turn's batch of direct
+ * spawns is a single spawn row that replaces its launch tool call, and what an
+ * agent does on its own stays out of the parent's log. `sessionLive: false`
+ * settles agents whose session can no longer report.
+ */
 export function deriveWorkLogEntries(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
+  options?: { readonly sessionLive?: boolean },
 ): WorkLogEntry[] {
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
+  const agentLaunchToolIds = new Set<string>();
+  for (const activity of ordered) {
+    if (!isAgentTaskActivity(activity)) continue;
+    const toolUseId = asTrimmedString(asRecord(activity.payload)?.toolUseId);
+    if (toolUseId) agentLaunchToolIds.add(toolUseId);
+  }
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of ordered) {
     if (activity.kind === "tool.started") continue;
-    if (activity.kind === "task.started") continue;
+    // An agent's start anchors its spawn row; other task starts stay hidden.
+    if (activity.kind === "task.started" && !isAgentTaskActivity(activity)) continue;
+    // Agent status patches only feed the members' folded state.
+    if (activity.kind === "task.updated" && isAgentTaskActivity(activity)) continue;
     if (activity.kind === "context-window.updated") continue;
     // Rendered as its own inline diff card; see deriveDiffShownEntries.
     if (activity.kind === DIFF_SHOWN_ACTIVITY_KIND) continue;
     if (activity.summary === "Checkpoint captured") continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
-    entries.push(toDerivedWorkLogEntry(activity));
+    if (isAgentInternalActivity(activity)) continue;
+    const entry = toDerivedWorkLogEntry(activity);
+    if (isReplacedAgentLaunch(activity, entry, agentLaunchToolIds)) continue;
+    entries.push(entry);
   }
-  return collapseDerivedWorkLogEntries(entries).map((entry) => {
-    const { activityKind, collapseKey: _collapseKey, ...rest } = entry;
+  const collapsed = collapseDerivedWorkLogEntries(entries);
+  const withAgents = collapsed.some((entry) => entry.agentSpawn !== undefined)
+    ? attachAgentSpawnMembers(collapsed, ordered, options?.sessionLive)
+    : collapsed;
+  return withAgents.map((entry) => {
+    const {
+      activityKind,
+      collapseKey: _collapseKey,
+      taskId: _taskId,
+      isAgentTask: _isAgentTask,
+      isWorkflowCoordinator: _isWorkflowCoordinator,
+      ...rest
+    } = entry;
     return Object.assign(rest, { sourceActivityKind: activityKind });
+  });
+}
+
+function isTaskLifecycleActivity(activity: OrchestrationThreadActivity): boolean {
+  return (
+    activity.kind === "task.started" ||
+    activity.kind === "task.progress" ||
+    activity.kind === "task.updated" ||
+    activity.kind === "task.completed"
+  );
+}
+
+/** Lifecycle rows of a real agent, by the server's agentKind stamp. */
+function isAgentTaskActivity(activity: OrchestrationThreadActivity): boolean {
+  if (!isTaskLifecycleActivity(activity)) return false;
+  const payload = asRecord(activity.payload);
+  return (
+    payload !== null &&
+    asTrimmedString(payload.taskId) !== null &&
+    !isBackgroundTaskActivity(payload)
+  );
+}
+
+/**
+ * What a subagent does on its own: rows it owns through `agentId` (its tools
+ * and shells) and rows the provider marks `timelineBypass`. Agent lifecycle
+ * rows stay, even when bypassed or nested, because they fold into a spawn row.
+ */
+function isAgentInternalActivity(activity: OrchestrationThreadActivity): boolean {
+  const payload = asRecord(activity.payload);
+  if (!payload || isAgentTaskActivity(activity)) return false;
+  return payload.timelineBypass === true || asTrimmedString(payload.agentId) !== null;
+}
+
+/**
+ * The spawn row replaces the tool call that launched its agents. Claude's
+ * Agent/Task call is held back while in flight, so the batch never shows twice
+ * before its task starts. A failed launch stays: it may be the only sign.
+ */
+function isReplacedAgentLaunch(
+  activity: OrchestrationThreadActivity,
+  entry: DerivedWorkLogEntry,
+  agentLaunchToolIds: ReadonlySet<string>,
+): boolean {
+  if (activity.kind !== "tool.updated" && activity.kind !== "tool.completed") return false;
+  if (entry.tone === "error" || entry.toolLifecycleStatus === "failed") return false;
+  const payload = asRecord(activity.payload);
+  const toolCallId = asTrimmedString(payload?.toolCallId) ?? entry.toolCallId;
+  if (toolCallId !== undefined && agentLaunchToolIds.has(toolCallId)) return true;
+  if (
+    activity.kind !== "tool.updated" ||
+    entry.itemType !== "collab_agent_tool_call" ||
+    entry.toolLifecycleStatus !== "inProgress"
+  ) {
+    return false;
+  }
+  const toolName = asRecord(payload?.data)?.toolName;
+  return toolName === "Agent" || toolName === "Task";
+}
+
+/**
+ * Workflow members and their coordinator share the coordinator's group; direct
+ * spawns batch per turn. Without a turn, each task stands alone rather than
+ * collecting every turn-less agent the thread ever ran.
+ */
+function agentSpawnGroupKey(entry: DerivedWorkLogEntry): string {
+  const taskId = entry.taskId ?? "";
+  const workflowSlot = taskId.indexOf(":wf:");
+  if (workflowSlot !== -1) return `wf:${taskId.slice(0, workflowSlot)}`;
+  if (entry.isWorkflowCoordinator) return `wf:${taskId}`;
+  return entry.turnId ? `direct:${entry.turnId}` : `direct:task:${taskId}`;
+}
+
+/** Fills each spawn row with its members, as the subagent fold sees them now. */
+function attachAgentSpawnMembers(
+  entries: ReadonlyArray<DerivedWorkLogEntry>,
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  sessionLive: boolean | undefined,
+): DerivedWorkLogEntry[] {
+  const model = deriveAgentPanelModel({
+    agents: foldSubagentActivities(activities, sessionLive === undefined ? {} : { sessionLive }),
+  });
+  return entries.map((entry) => {
+    const spawn = entry.agentSpawn;
+    if (!spawn) return entry;
+    const group = spawn.workflowId
+      ? model.workflows.find((candidate) => candidate.workflow.id === spawn.workflowId)
+      : undefined;
+    const memberIds = new Set(spawn.agentTaskIds);
+    const agents = group
+      ? [...group.phases.flatMap((phase) => phase.members), ...group.unphasedMembers]
+      : model.directAgents.filter((agent) => memberIds.has(agent.id));
+    const agentSpawn = { ...spawn, workflow: group?.workflow ?? null, agents };
+    const summary = summarizeAgentSpawn(agentSpawn);
+    return {
+      ...entry,
+      toolLifecycleStatus: summary.live
+        ? "inProgress"
+        : summary.tone === "failed"
+          ? "failed"
+          : summary.tone === "completed"
+            ? "completed"
+            : "stopped",
+      agentSpawn,
+    };
   });
 }
 
@@ -806,6 +970,16 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (toolLifecycleStatus) {
     entry.toolLifecycleStatus = toolLifecycleStatus;
   }
+  const taskId = isTaskLifecycleActivity(activity) ? asTrimmedString(payload?.taskId) : null;
+  if (taskId) {
+    entry.taskId = taskId;
+    if (isAgentTaskActivity(activity)) {
+      entry.isAgentTask = true;
+      if (payload?.taskType === "local_workflow" || asTrimmedString(payload?.workflowName)) {
+        entry.isWorkflowCoordinator = true;
+      }
+    }
+  }
   const collapseKey = deriveToolLifecycleCollapseKey(entry);
   if (collapseKey) {
     entry.collapseKey = collapseKey;
@@ -817,7 +991,28 @@ function collapseDerivedWorkLogEntries(
   entries: ReadonlyArray<DerivedWorkLogEntry>,
 ): DerivedWorkLogEntry[] {
   const collapsed: DerivedWorkLogEntry[] = [];
+  // Agent rows fold by spawn group, not adjacency. A task's group is fixed at
+  // its first row: background subagents settle under later turns, and that
+  // must not split their batch.
+  const spawnRowIndexByGroup = new Map<string, number>();
+  const spawnGroupByTaskId = new Map<string, string>();
   for (const entry of entries) {
+    if (entry.isAgentTask && entry.taskId !== undefined) {
+      const groupKey = spawnGroupByTaskId.get(entry.taskId) ?? agentSpawnGroupKey(entry);
+      spawnGroupByTaskId.set(entry.taskId, groupKey);
+      const index = spawnRowIndexByGroup.get(groupKey);
+      const spawn = index === undefined ? undefined : collapsed[index]?.agentSpawn;
+      if (index === undefined || !spawn) {
+        spawnRowIndexByGroup.set(groupKey, collapsed.length);
+        collapsed.push(agentSpawnRow(entry, entry.taskId, groupKey));
+      } else if (!spawn.agentTaskIds.includes(entry.taskId)) {
+        collapsed[index] = {
+          ...collapsed[index]!,
+          agentSpawn: { ...spawn, agentTaskIds: [...spawn.agentTaskIds, entry.taskId] },
+        };
+      }
+      continue;
+    }
     const previous = collapsed.at(-1);
     if (previous && shouldCollapseToolLifecycleEntries(previous, entry)) {
       collapsed[collapsed.length - 1] = mergeDerivedWorkLogEntries(previous, entry);
@@ -826,6 +1021,28 @@ function collapseDerivedWorkLogEntries(
     collapsed.push(entry);
   }
   return collapsed;
+}
+
+/** A batch row keeps its first row's identity, so it stays where the run launched. */
+function agentSpawnRow(
+  anchor: DerivedWorkLogEntry,
+  taskId: string,
+  groupKey: string,
+): DerivedWorkLogEntry {
+  return {
+    id: anchor.id,
+    createdAt: anchor.createdAt,
+    turnId: anchor.turnId ?? null,
+    label: anchor.label,
+    tone: "tool",
+    activityKind: anchor.activityKind,
+    agentSpawn: {
+      workflowId: groupKey.startsWith("wf:") ? groupKey.slice(3) : null,
+      agentTaskIds: [taskId],
+      workflow: null,
+      agents: [],
+    },
+  };
 }
 
 function shouldCollapseToolLifecycleEntries(

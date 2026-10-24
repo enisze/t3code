@@ -2151,7 +2151,12 @@ function ChatViewContent(props: ChatViewProps) {
   const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
-  const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
+  // Subagents of a session that can no longer report read as stopped, not working.
+  const agentSessionLive = phase !== "disconnected";
+  const workLogEntries = useMemo(
+    () => deriveWorkLogEntries(threadActivities, { sessionLive: agentSessionLive }),
+    [agentSessionLive, threadActivities],
+  );
   const diffShownEntries = useMemo(
     () => deriveDiffShownEntries(threadActivities),
     [threadActivities],

@@ -473,7 +473,12 @@ function deriveTurnFolds(input: {
     }
     const hiddenEntryIds = new Set<string>();
     for (const entry of group.entries) {
-      if (entry.id !== group.terminalEntry?.id) {
+      // Subagents can outlive their turn; a fleet still working stays in view.
+      const liveSpawn =
+        entry.kind === "work" &&
+        entry.entry.agentSpawn !== undefined &&
+        entry.entry.toolLifecycleStatus === "inProgress";
+      if (entry.id !== group.terminalEntry?.id && !liveSpawn) {
         hiddenEntryIds.add(entry.id);
       }
     }
