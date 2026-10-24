@@ -83,6 +83,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "default-permissions",
+    title: "Permissions",
+    to: "/settings/projects",
+    searchTerms: [
+      "new thread default runtime mode supervised approvals auto accept edits full access",
+    ],
+  },
+  {
     id: "color-scheme",
     title: "Color scheme",
     to: "/settings/appearance",

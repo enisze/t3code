@@ -10,7 +10,7 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import { resolveProjectAutoPull } from "@t3tools/shared/serverSettings";
+import { resolveProjectAutoPull, resolveProjectRuntimeMode } from "@t3tools/shared/serverSettings";
 import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
@@ -247,7 +247,7 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
             title: "New thread",
             modelSelection: nextThreadModelSelection,
             interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-            runtimeMode: "full-access",
+            runtimeMode: resolveProjectRuntimeMode(settings, nextProjectId),
             branch: null,
             worktreePath: null,
             createdAt,

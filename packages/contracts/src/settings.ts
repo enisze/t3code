@@ -16,7 +16,12 @@ import {
   DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
   ProviderOptionSelections,
 } from "./model.ts";
-import { ModelSelection, ProjectScript } from "./orchestration.ts";
+import {
+  DEFAULT_RUNTIME_MODE,
+  ModelSelection,
+  ProjectScript,
+  RuntimeMode,
+} from "./orchestration.ts";
 import { BrowserProfile, BrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./browserProfile.ts";
 import {
   DEFAULT_PREVIEW_APPEARANCE,
@@ -948,6 +953,13 @@ export const ServerSettings = Schema.Struct({
   defaultModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** Permissions new threads start with. Projects can override it below. */
+  defaultRuntimeMode: RuntimeMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE)),
+  ),
+  projectRuntimeModeOverrides: Schema.Record(ProjectId, RuntimeMode).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   // Off by default (see the client-settings twin above); enabling in Settings
   // seeds DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS as the initial window.
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
@@ -1237,6 +1249,10 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
+  projectRuntimeModeOverrides: Schema.optionalKey(
+    Schema.Record(ProjectId, Schema.NullOr(RuntimeMode)),
+  ),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(
