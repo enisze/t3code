@@ -111,6 +111,12 @@ export const make = Effect.gen(function* () {
   const prune = Effect.fn("ArchivedWorktreePruner.prune")(function* (
     event: Extract<OrchestrationEvent, { type: "thread.archived" }>,
   ) {
+    // An Undo may have restored the thread before this ran. A thread that is
+    // no longer archived keeps its processes and its worktree's files.
+    const archived = yield* snapshots.getArchivedShellSnapshot();
+    const thread = archived.threads.find((candidate) => candidate.id === event.payload.threadId);
+    if (thread === undefined) return;
+
     // Stop processes before deleting what they run from. A shared worktree
     // keeps its files, but the archived thread's own processes still stop.
     const stopped = yield* stopThreadProcesses(event.payload.threadId).pipe(
@@ -131,9 +137,7 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    const archived = yield* snapshots.getArchivedShellSnapshot();
-    const thread = archived.threads.find((candidate) => candidate.id === event.payload.threadId);
-    if (thread?.worktreePath == null) return;
+    if (thread.worktreePath == null) return;
     const worktreePath = thread.worktreePath;
     // Another live thread still working in this worktree needs its dependencies.
     const live = yield* snapshots.getShellSnapshot();
