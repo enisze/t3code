@@ -7,12 +7,19 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 
 import { isElectron } from "../env";
 import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalStorage";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import { isPreviewFocused } from "../lib/previewFocus";
+import { isTerminalFocused } from "../lib/terminalFocus";
 import { cn, isMacPlatform } from "../lib/utils";
+import { useWorkspaceThreadRef } from "../lib/workspaceThreadRef";
+import { isModelPickerOpen } from "../modelPickerVisibility";
+import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
+import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
+import { resolveThreadRouteTarget } from "../threadRoutes";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { useEnvironmentIdentificationMode, useSidebarV2Enabled } from "../hooks/useSettings";
 import {
@@ -131,6 +138,59 @@ function SidebarControl() {
       </Tooltip>
     </div>
   );
+}
+
+// Moves through the app's route history like a browser's back/forward buttons.
+function NavigationHistoryShortcuts() {
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const routeTarget = useParams({
+    strict: false,
+    select: (params) => resolveThreadRouteTarget(params),
+  });
+  // Terminal and preview open-state is shared across a worktree, and the
+  // stores are read at key time so panel changes never re-render this.
+  const workspaceThreadRef = useWorkspaceThreadRef(
+    routeTarget?.kind === "server" ? routeTarget.threadRef : null,
+  );
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (
+        event.target instanceof HTMLElement &&
+        event.target.closest("[data-keybinding-capture]")
+      ) {
+        return;
+      }
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: isTerminalFocused(),
+          terminalOpen: selectThreadTerminalUiState(
+            useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+            workspaceThreadRef,
+          ).terminalOpen,
+          previewFocus: isPreviewFocused(),
+          previewOpen:
+            selectActiveRightPanel(
+              useRightPanelStore.getState().byThreadKey,
+              workspaceThreadRef,
+            ) === "preview",
+          modelPickerOpen: isModelPickerOpen(),
+        },
+      });
+      if (command !== "navigation.back" && command !== "navigation.forward") return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      if (command === "navigation.back") window.history.back();
+      else window.history.forward();
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [keybindings, workspaceThreadRef]);
+
+  return null;
 }
 
 // Settings swaps the thread sidebar out of the tree. Keep the lightweight
@@ -258,6 +318,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         </Sidebar>
         {children}
         <SidebarControl />
+        <NavigationHistoryShortcuts />
       </SidebarProvider>
     </PanelAnimationSuppressionProvider>
   );

@@ -400,6 +400,7 @@ function reduceCommandPaletteUiState(
 }
 
 export function CommandPalette({ children }: { children: ReactNode }) {
+  const navigate = useNavigate();
   const [state, dispatch] = useReducer(reduceCommandPaletteUiState, {
     open: false,
     openIntent: null,
@@ -434,6 +435,13 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           terminalOpen,
         },
       });
+      if (command === "usage.open") {
+        event.preventDefault();
+        event.stopPropagation();
+        setOpen(false);
+        void navigate({ to: "/usage" });
+        return;
+      }
       if (command !== "commandPalette.toggle" && command !== "file.open") return;
       event.preventDefault();
       event.stopPropagation();
@@ -442,7 +450,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [keybindings, openFile, terminalOpen, toggleOpen]);
+  }, [keybindings, navigate, openFile, setOpen, terminalOpen, toggleOpen]);
 
   useEffect(
     () =>
@@ -1630,6 +1638,7 @@ function OpenCommandPaletteDialog(props: {
     searchTerms: ["usage", "use", "tokens", "cost", "spend", "limits", "stats", "analytics"],
     title: "Open usage",
     icon: <ChartNoAxesColumnIcon className={ITEM_ICON_CLASS} />,
+    shortcutCommand: "usage.open",
     run: async () => {
       await navigate({ to: "/usage" });
     },

@@ -1,6 +1,7 @@
 # Usage and limits
 
-On web and desktop, open **Usage** from the command palette.
+On web and desktop, open **Usage** from the command palette, or press `mod+u` when the
+terminal is not focused. Customize `usage.open` in **Settings → Keybindings**.
 
 ## Understand your usage
 
