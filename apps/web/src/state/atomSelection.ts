@@ -20,7 +20,7 @@ export function useAtomSelection<A, T>(
       atom === null ? () => {} : appAtomRegistry.subscribe(atom, () => onChange()),
     [atom],
   );
-  return useSyncExternalStore(subscribe, () =>
-    atom === null ? fallback : select(appAtomRegistry.get(atom)),
-  );
+  const getSnapshot = () => (atom === null ? fallback : select(appAtomRegistry.get(atom)));
+  // Static rendering, as in component tests, reads the same snapshot.
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
