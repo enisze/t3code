@@ -36,6 +36,7 @@ import {
   ArrowLeftIcon,
   ArrowUpIcon,
   ArchiveRestoreIcon,
+  ChartNoAxesColumnIcon,
   CornerLeftUpIcon,
   FolderIcon,
   FileIcon,
@@ -1622,6 +1623,17 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
+
+  actionItems.push({
+    kind: "action",
+    value: "action:usage",
+    searchTerms: ["usage", "use", "tokens", "cost", "spend", "limits", "stats", "analytics"],
+    title: "Open usage",
+    icon: <ChartNoAxesColumnIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/usage" });
+    },
+  });
 
   actionItems.push({
     kind: "action",

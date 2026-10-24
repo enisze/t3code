@@ -147,7 +147,13 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
       {
         kind: "action" as const,
         value: `thread:${thread.id}`,
-        searchTerms: [thread.title, projectTitle ?? ``, thread.branch ?? ``],
+        searchTerms: [
+          thread.title,
+          projectTitle ?? ``,
+          thread.branch ?? ``,
+          // Last so pasted IDs never outrank title matches for shared substrings.
+          thread.id,
+        ],
         title: thread.title,
         description: descriptionParts.join(` · `),
         timestamp: formatRelativeTimeLabel(
