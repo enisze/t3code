@@ -8,6 +8,7 @@ import {
 import {
   getComposerPromptInjectionState,
   getComposerProviderState,
+  getComposerReasoningStep,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
 } from "./composerProviderState";
@@ -392,5 +393,128 @@ describe("provider traits render guards", () => {
 
     expect(renderProviderTraitsPicker(args)).toBeNull();
     expect(renderProviderTraitsMenuContent(args)).toBeNull();
+  });
+});
+
+describe("getComposerReasoningStep", () => {
+  const LEVELS = [
+    { id: "low", label: "Low" },
+    { id: "medium", label: "Medium", isDefault: true },
+    { id: "high", label: "High" },
+  ];
+  const CLAUDE = {
+    provider: ProviderDriverKind.make("claudeAgent"),
+    models: modelWith([
+      selectDescriptor(
+        "effort",
+        [
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High", isDefault: true },
+          { id: "ultrathink", label: "Ultrathink" },
+        ],
+        ["ultrathink"],
+      ),
+    ]),
+  };
+
+  function step(input: Partial<Parameters<typeof getComposerReasoningStep>[0]>) {
+    return getComposerReasoningStep({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([selectDescriptor("reasoningEffort", LEVELS)]),
+      modelOptions: undefined,
+      prompt: "Fix the bug",
+      cursor: 0,
+      direction: 1,
+      ...input,
+    });
+  }
+
+  it("walks the catalog order, wrapping at both ends and keeping the other traits", () => {
+    const models = modelWith([
+      selectDescriptor("contextWindow", [
+        { id: "200k", label: "200k", isDefault: true },
+        { id: "1m", label: "1M" },
+      ]),
+      selectDescriptor("reasoningEffort", LEVELS),
+    ]);
+    for (const [from, direction, to] of [
+      ["low", -1, "high"],
+      ["low", 1, "medium"],
+      ["high", 1, "low"],
+      ["high", -1, "medium"],
+    ] as const) {
+      expect(
+        step({
+          models,
+          modelOptions: selections(["contextWindow", "1m"], ["reasoningEffort", from]),
+          direction,
+        }),
+        `${from} by ${direction}`,
+      ).toStrictEqual({
+        prompt: "Fix the bug",
+        cursor: 0,
+        modelOptions: selections(["contextWindow", "1m"], ["reasoningEffort", to]),
+      });
+    }
+    // With nothing chosen yet, the step starts from the catalog default.
+    expect(step({ models })?.modelOptions).toStrictEqual(
+      selections(["contextWindow", "200k"], ["reasoningEffort", "high"]),
+    );
+  });
+
+  it("adds and strips the Ultrathink prefix while the caret stays on the same character", () => {
+    for (const { prompt, modelOptions, direction, expected } of [
+      {
+        prompt: "  Fix the bug \n",
+        modelOptions: selections(["effort", "high"]),
+        direction: 1,
+        expected: { prompt: "Ultrathink:\nFix the bug", cursor: 20 },
+      },
+      {
+        // The prefix, not the draft's Medium, is the current level.
+        prompt: "Ultrathink:\n  Fix the bug",
+        modelOptions: selections(["effort", "medium"]),
+        direction: -1,
+        expected: {
+          prompt: "Fix the bug",
+          cursor: 8,
+          modelOptions: selections(["effort", "high"]),
+        },
+      },
+    ] as const) {
+      const result = step({
+        ...CLAUDE,
+        prompt,
+        cursor: prompt.indexOf("bug"),
+        modelOptions,
+        direction,
+      });
+      expect(result).toStrictEqual(expected);
+      expect(result?.prompt.slice(result.cursor)).toMatch(/^bug/);
+    }
+    // A caret in leading whitespace must not land inside the new prefix.
+    expect(
+      step({ ...CLAUDE, prompt: "   Fix", modelOptions: selections(["effort", "high"]) })?.cursor,
+    ).toBe("Ultrathink:\n".length);
+  });
+
+  it("skips Ultrathink for slash commands and does nothing when the prompt locks it", () => {
+    expect(
+      step({ ...CLAUDE, prompt: "/review", modelOptions: selections(["effort", "high"]) }),
+    ).toStrictEqual({
+      prompt: "/review",
+      cursor: 0,
+      modelOptions: selections(["effort", "medium"]),
+    });
+    for (const [prompt, direction] of [
+      ["Please ultrathink harder", 1],
+      ["Ultrathink:\nPlease ultrathink harder", -1],
+    ] as const) {
+      expect(
+        step({ ...CLAUDE, prompt, modelOptions: selections(["effort", "high"]), direction }),
+        prompt,
+      ).toBeNull();
+    }
   });
 });
