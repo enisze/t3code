@@ -70,7 +70,6 @@ import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { isElectron } from "../env";
-import { readLocalApi } from "../localApi";
 import { useDiffPanelStore } from "../diffPanelStore";
 import {
   collapseExpandedComposerCursor,
@@ -4694,10 +4693,19 @@ function ChatViewContent(props: ChatViewProps) {
     composerRef,
   ]);
 
+  // Reverting first asks whether workspace files go back too; the answer calls
+  // onRevertToTurnCount again with `restoreFiles` set.
+  const [pendingRevert, setPendingRevert] = useState<{
+    turnCount: number;
+    routeThreadKey: string;
+  } | null>(null);
+  if (pendingRevert && pendingRevert.routeThreadKey !== routeThreadKey) {
+    setPendingRevert(null);
+  }
+
   const onRevertToTurnCount = useCallback(
-    async (turnCount: number) => {
-      const localApi = readLocalApi();
-      if (!localApi || !activeThread || isRevertingCheckpoint) return;
+    async (turnCount: number, restoreFiles?: boolean) => {
+      if (!activeThread || isRevertingCheckpoint) return;
 
       if (activeEnvironmentUnavailable && activeEnvironmentUnavailableLabel) {
         setThreadError(
@@ -4710,14 +4718,8 @@ function ChatViewContent(props: ChatViewProps) {
         setThreadError(activeThread.id, "Interrupt the current turn before reverting checkpoints.");
         return;
       }
-      const confirmed = await localApi.dialogs.confirm(
-        [
-          `Revert this thread to checkpoint ${turnCount}?`,
-          "This will discard newer messages and turn diffs in this thread.",
-          "This action cannot be undone.",
-        ].join("\n"),
-      );
-      if (!confirmed) {
+      if (restoreFiles === undefined) {
+        setPendingRevert({ turnCount, routeThreadKey });
         return;
       }
 
@@ -4728,6 +4730,7 @@ function ChatViewContent(props: ChatViewProps) {
         input: {
           threadId: activeThread.id,
           turnCount,
+          restoreFiles,
         },
       });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -4749,6 +4752,7 @@ function ChatViewContent(props: ChatViewProps) {
       isSendBusy,
       phase,
       revertThreadCheckpoint,
+      routeThreadKey,
       setThreadError,
     ],
   );
@@ -6949,6 +6953,45 @@ function ChatViewContent(props: ChatViewProps) {
                     }}
                   >
                     Switch branch
+                  </Button>
+                </AlertDialogFooter>
+              </AlertDialogPopup>
+            </AlertDialog>
+
+            <AlertDialog
+              open={pendingRevert !== null && pendingRevert.routeThreadKey === routeThreadKey}
+              onOpenChange={(open) => {
+                if (!open) setPendingRevert(null);
+              }}
+            >
+              <AlertDialogPopup>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Revert to this message?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Rewind this thread to before this message. Newer messages and turn diffs are
+                    discarded. This cannot be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+                  <Button
+                    variant="destructive"
+                    onClick={() => {
+                      if (!pendingRevert || pendingRevert.routeThreadKey !== routeThreadKey) return;
+                      setPendingRevert(null);
+                      void onRevertToTurnCount(pendingRevert.turnCount, true);
+                    }}
+                  >
+                    Revert files too
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      if (!pendingRevert || pendingRevert.routeThreadKey !== routeThreadKey) return;
+                      setPendingRevert(null);
+                      void onRevertToTurnCount(pendingRevert.turnCount, false);
+                    }}
+                  >
+                    Revert and keep changes
                   </Button>
                 </AlertDialogFooter>
               </AlertDialogPopup>
