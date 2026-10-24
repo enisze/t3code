@@ -50,6 +50,19 @@ row, and that row shows the check when any of its chats is marked.
 The mark is a label only: it does not move the thread out of the active list or
 change when it settles.
 
+## Get notified
+
+On web and desktop, **Settings → General → Thread notifications** plays a sound,
+shows a system notification, or both when a thread finishes, fails, or needs
+approval or input. A thread counts as finished when its sidebar row would show
+**Completed**, or **Plan Ready** for a plan. System notifications appear only
+while T3 Code is in the background, and the dock or browser tab icon counts the
+ones you have not opened. Turn on **In-app notifications** to get a toast instead
+while T3 Code has focus. The thread you are looking at never alerts.
+
+These settings apply to this device while T3 Code is open. Browsers show system
+notifications only over HTTPS or on localhost; **Sound only** works everywhere.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list

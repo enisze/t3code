@@ -13,6 +13,8 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopClientSettings from "./DesktopClientSettings.ts";
 
 const clientSettings: ClientSettings = {
+  notificationMode: "notifications-and-sound",
+  inAppNotificationsEnabled: true,
   dictationLocale: "",
   autoOpenPlanSidebar: false,
   chatWidth: "wide",
