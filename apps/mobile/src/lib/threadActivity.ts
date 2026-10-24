@@ -18,6 +18,7 @@ import {
   extractWorkLogToolLifecycleStatus,
   isWorktreeSetupActivity,
   liveActivityToolStatus,
+  liveThoughtLine,
   normalizeCompactToolLabel,
   omitSupersededLifecycleMarkers,
   resolveWorkEntryToolPresentation,
@@ -166,6 +167,8 @@ export type ThreadFeedEntry =
       readonly hasFailure: boolean;
       readonly live: boolean;
       readonly shimmer: boolean;
+      /** First sentence of the newest thought, shown above the live status line. */
+      readonly thought?: string;
     }
   | {
       readonly type: "turn-fold";
@@ -240,6 +243,7 @@ const presentedActivityGroupsCache = new WeakMap<
     readonly unsettledTurnId: TurnId | null;
     readonly isWorking: boolean;
     readonly activeTail: boolean;
+    readonly thought: string | undefined;
     readonly rows: ReadonlyArray<ThreadFeedEntry>;
   }
 >();
@@ -1751,7 +1755,15 @@ export function deriveThreadFeedPresentation(
   }
 
   const result: ThreadFeedEntry[] = [];
+  // The newest thought since the agent last wrote to the user. The live tool
+  // row shows it, so a finding stays in view while later tools run.
+  let latestThought: string | undefined;
   for (const entry of sourceFeed) {
+    if (entry.type === "message") {
+      const { role, text } = entry.message;
+      if (role === "assistant" || role === "user") latestThought = undefined;
+      else if (role === "reasoning") latestThought = liveThoughtLine(text) || latestThought;
+    }
     const isActiveTailGroup =
       isWorking &&
       unsettledTurnId !== null &&
@@ -1790,6 +1802,7 @@ export function deriveThreadFeedPresentation(
         unsettledTurnId,
         isWorking,
         isActiveTailGroup,
+        isActiveTailGroup ? latestThought : undefined,
       );
     }
   }
@@ -1845,6 +1858,7 @@ function appendPresentedFeedEntry(
   unsettledTurnId: TurnId | null,
   isWorking: boolean,
   activeTail: boolean,
+  thought: string | undefined,
 ): void {
   if (entry.type !== "activity-group") {
     result.push(entry);
@@ -1861,6 +1875,7 @@ function appendPresentedFeedEntry(
     cached.unsettledTurnId !== unsettledTurnId ||
     cached.isWorking !== isWorking ||
     cached.activeTail !== activeTail ||
+    cached.thought !== thought ||
     cached.rows.some(
       (row) =>
         (row.type === "work-toggle" && expandedWorkGroupIds.has(row.groupId) !== row.expanded) ||
@@ -1875,8 +1890,9 @@ function appendPresentedFeedEntry(
       unsettledTurnId,
       isWorking,
       activeTail,
+      thought,
     );
-    cached = { unsettledTurnId, isWorking, activeTail, rows };
+    cached = { unsettledTurnId, isWorking, activeTail, thought, rows };
     presentedActivityGroupsCache.set(entry, cached);
   }
   for (const row of cached.rows) {
@@ -1891,6 +1907,7 @@ function appendActivityGroupRows(
   unsettledTurnId: TurnId | null,
   isWorking: boolean,
   activeTail: boolean,
+  thought: string | undefined,
 ): void {
   const activities = omitSupersededLifecycleMarkers(
     entry.activities.filter(
@@ -1916,6 +1933,7 @@ function appendActivityGroupRows(
       unsettledTurnId,
       isWorking,
       activeTail && isTrailingRun,
+      activeTail && isTrailingRun ? thought : undefined,
     );
     groupableRun = [];
   };
@@ -1960,6 +1978,7 @@ function appendToolGroupRows(
   unsettledTurnId: TurnId | null,
   isWorking: boolean,
   activeTail: boolean,
+  thought: string | undefined,
 ): void {
   const firstEntry = activities[0]!.workEntry;
   const identity = firstEntry.toolCallId
@@ -2042,6 +2061,7 @@ function appendToolGroupRows(
     hasFailure: activities.findLast((activity) => activity.toolLike)?.status === "failure",
     live,
     shimmer,
+    ...(live && thought ? { thought } : {}),
   });
   if (!expanded) {
     return;

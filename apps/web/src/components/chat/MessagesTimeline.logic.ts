@@ -21,6 +21,7 @@ import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import { shallow } from "zustand/vanilla/shallow";
 import {
   liveActivityToolStatus,
+  liveThoughtLine,
   resolveWorkEntryToolPresentation,
 } from "@t3tools/client-runtime/work-log/presentation";
 import { isStreamingMessageTextUpdate } from "../../session-logic";
@@ -282,7 +283,13 @@ export type MessagesTimelineRow =
       createdAt: string;
       diff: DiffShownActivityPayload;
     }
-  | { kind: "working"; id: string; createdAt: string | null }
+  | {
+      kind: "working";
+      id: string;
+      createdAt: string | null;
+      /** First sentence of the newest thought since the agent last wrote to the user. */
+      thought?: { messageId: string; line: string } | undefined;
+    }
   | {
       kind: "queued-message";
       id: string;
@@ -709,10 +716,12 @@ export function deriveMessagesTimelineRows(input: {
   }
 
   if (input.isWorking) {
+    const thought = deriveLiveThought(input.timelineEntries);
     nextRows.push({
       kind: "working",
       id: "working-indicator-row",
       createdAt: input.activeTurnStartedAt,
+      ...(thought ? { thought } : {}),
     });
   }
 
@@ -754,8 +763,14 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
   if (a.kind !== b.kind || a.id !== b.id) return false;
 
   switch (a.kind) {
-    case "working":
-      return a.createdAt === (b as typeof a).createdAt;
+    case "working": {
+      const bw = b as typeof a;
+      return (
+        a.createdAt === bw.createdAt &&
+        a.thought?.messageId === bw.thought?.messageId &&
+        a.thought?.line === bw.thought?.line
+      );
+    }
 
     case "turn-fold": {
       const bf = b as typeof a;
@@ -950,9 +965,36 @@ function replaceStreamingMessageRows(
     replacements.set(previousEntry.message, entry.message);
   }
   if (replacements.size === 0) return previous.rows;
+  const thoughtChanged = [...replacements.values()].some((message) => message.role === "reasoning");
+  const thought = thoughtChanged ? deriveLiveThought(timelineEntries) : undefined;
   return previous.rows.map((row) => {
+    if (row.kind === "working") {
+      return thoughtChanged &&
+        (row.thought?.messageId !== thought?.messageId || row.thought?.line !== thought?.line)
+        ? { ...row, thought }
+        : row;
+    }
     if (row.kind !== "message") return row;
     const message = replacements.get(row.message);
     return message ? { ...row, message } : row;
   });
+}
+
+/**
+ * The newest thought since the agent last wrote to the user, for the working
+ * row: a finding stays in view while later tools run, and a reply retires it.
+ */
+function deriveLiveThought(
+  entries: ReadonlyArray<TimelineEntry>,
+): { messageId: string; line: string } | undefined {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry?.kind !== "message") continue;
+    const { message } = entry;
+    if (message.role === "assistant" || message.role === "user") return undefined;
+    if (message.role !== "reasoning") continue;
+    const line = liveThoughtLine(message.text);
+    if (line) return { messageId: message.id, line };
+  }
+  return undefined;
 }

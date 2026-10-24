@@ -5,6 +5,7 @@ import {
   computeMessageDurationStart,
   createTimelineMinimapPositionStore,
   deriveMessagesTimelineRows,
+  deriveMessagesTimelineRowsWithState,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
   resolveTimelineMinimapCurrentIndex,
@@ -1411,5 +1412,92 @@ describe("timeline minimap turn navigation", () => {
     unsubscribe();
     store.set(0);
     expect(listener).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("working row thought", () => {
+  const at = "2026-01-01T00:00:01Z";
+  const message = (
+    id: string,
+    role: "user" | "assistant" | "reasoning",
+    text: string,
+    streaming = false,
+  ) => ({
+    id: `${id}-entry`,
+    kind: "message" as const,
+    createdAt: at,
+    message: {
+      id: id as never,
+      role,
+      text,
+      turnId: (role === "user" ? null : "turn-1") as never,
+      createdAt: at,
+      updatedAt: at,
+      streaming,
+    },
+  });
+  const runningTool = {
+    id: "tool-entry",
+    kind: "work" as const,
+    createdAt: at,
+    entry: {
+      id: "tool",
+      createdAt: at,
+      turnId: "turn-1" as never,
+      label: "Ran a command",
+      tone: "tool" as const,
+      toolLifecycleStatus: "inProgress" as const,
+    },
+  };
+  // Shared maps: like the timeline's memoized inputs, so streaming updates take the fast path.
+  const turnDiffSummaryByAssistantMessageId = new Map();
+  const revertTurnCountByUserMessageId = new Map();
+  const working = (
+    timelineEntries: Parameters<typeof deriveMessagesTimelineRows>[0]["timelineEntries"],
+  ) => ({
+    timelineEntries,
+    isWorking: true,
+    activeTurnStartedAt: "2026-01-01T00:00:00Z",
+    turnDiffSummaryByAssistantMessageId,
+    revertTurnCountByUserMessageId,
+  });
+  const workingRow = (rows: ReadonlyArray<{ kind: string }>) =>
+    rows.find((row) => row.kind === "working");
+  const user = message("user", "user", "Fix the launch");
+
+  it("shows the newest thought while later tools run, until the agent replies", () => {
+    const entries = [
+      user,
+      message("old", "reasoning", "First idea. More."),
+      message("new", "reasoning", "**Found the cause**\n\nThe fetch is skipped."),
+      runningTool,
+    ];
+
+    expect(workingRow(deriveMessagesTimelineRows(working(entries)))).toMatchObject({
+      thought: { messageId: "new", line: "Found the cause" },
+    });
+    expect(
+      workingRow(
+        deriveMessagesTimelineRows(working([...entries, message("answer", "assistant", "Done.")])),
+      ),
+    ).not.toHaveProperty("thought");
+  });
+
+  it("re-renders only the working row while a thought streams, and only when its line changes", () => {
+    const thinking = (text: string) => message("thought", "reasoning", text, true);
+    const first = deriveMessagesTimelineRowsWithState(working([user, thinking("Checking the")]));
+    const second = deriveMessagesTimelineRowsWithState(
+      working([user, thinking("Checking the adapter. Then")]),
+      first,
+    );
+    const third = deriveMessagesTimelineRowsWithState(
+      working([user, thinking("Checking the adapter. Then the UI.")]),
+      second,
+    );
+
+    expect(second.rows[0]).toBe(first.rows[0]);
+    expect(workingRow(first.rows)).toMatchObject({ thought: { line: "Checking the" } });
+    expect(workingRow(second.rows)).toMatchObject({ thought: { line: "Checking the adapter." } });
+    expect(workingRow(third.rows)).toBe(workingRow(second.rows));
   });
 });

@@ -3274,3 +3274,80 @@ describe("quiet timeline: nested agents", () => {
     ]);
   });
 });
+
+describe("live thought", () => {
+  const turnId = TurnId.make("turn-thought");
+  const message = (
+    id: string,
+    role: "user" | "assistant" | "reasoning",
+    text: string,
+    at: string,
+  ): OrchestrationThread["messages"][number] => ({
+    id: MessageId.make(id),
+    role,
+    text,
+    turnId: role === "user" ? null : turnId,
+    streaming: false,
+    createdAt: at,
+    updatedAt: at,
+  });
+  const liveRows = (messages: OrchestrationThread["messages"]) => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-thought"),
+      projectId: ProjectId.make("project-1"),
+      title: "Live thought",
+      latestTurn: {
+        turnId,
+        state: "running",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: null,
+        assistantMessageId: null,
+      },
+      messages,
+      activities: [
+        makeActivity({
+          id: EventId.make("running-command"),
+          kind: "tool.updated",
+          tone: "tool",
+          summary: "Ran command",
+          createdAt: "2026-04-01T00:00:04.000Z",
+          turnId,
+          payload: {
+            itemType: "command_execution",
+            status: "inProgress",
+            data: { command: "git log --oneline" },
+          },
+        }),
+      ],
+    });
+    return deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      thread.latestTurn,
+      new Set(),
+      new Set(),
+      thread.latestTurn!.startedAt,
+    );
+  };
+  const user = message("user-1", "user", "Why does launch fail?", "2026-04-01T00:00:00.000Z");
+  const thought = message(
+    "thought-1",
+    "reasoning",
+    "Found the cause: no commits yet. Checking the UI next.",
+    "2026-04-01T00:00:02.000Z",
+  );
+
+  it("keeps the newest thought above the live tool status", () => {
+    expect(liveRows([user, thought]).find((row) => row.type === "work-toggle")).toMatchObject({
+      thought: "Found the cause: no commits yet.",
+      live: true,
+    });
+  });
+
+  it("drops the thought once the agent has written to the user since", () => {
+    const reply = message("reply-1", "assistant", "Checking.", "2026-04-01T00:00:03.000Z");
+    expect(
+      liveRows([user, thought, reply]).find((row) => row.type === "work-toggle"),
+    ).not.toHaveProperty("thought");
+  });
+});
