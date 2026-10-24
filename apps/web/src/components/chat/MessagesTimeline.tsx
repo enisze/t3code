@@ -105,6 +105,7 @@ import {
   type ParsedPreviewAnnotation,
 } from "~/lib/previewAnnotation";
 import { useClientSettings } from "~/hooks/useSettings";
+import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
@@ -164,6 +165,20 @@ const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FADE_HEADER = <div className="h-10 sm:h-12" />;
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
+const TIMELINE_MAINTAIN_SCROLL_AT_END = {
+  animated: false,
+  on: {
+    dataChange: true,
+    itemLayout: true,
+    layout: true,
+  },
+} as const;
+// Streamed text lands a paragraph at a time. A smooth scroll to the end turns
+// each landing into a short glide instead of a jump.
+const TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH = {
+  ...TIMELINE_MAINTAIN_SCROLL_AT_END,
+  animated: true,
+} as const;
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 const EMPTY_QUEUED_MESSAGES: ReadonlyArray<QueuedComposerMessage> = [];
 const NOOP_QUEUED_MESSAGE_ACTION = (_id: string) => {};
@@ -204,6 +219,11 @@ interface MessagesTimelineProps {
   onManualNavigation: () => void;
   hideEmptyPlaceholder?: boolean;
   topFadeEnabled?: boolean;
+  /**
+   * Glide to the end while a turn runs instead of jumping. Off for token
+   * streaming, where a glide would restart on every delta.
+   */
+  smoothLiveFollow?: boolean;
   /** Older turns the client has not loaded; find pages through them to reach a match. */
   history?: {
     readonly hasMore: boolean;
@@ -249,6 +269,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onManualNavigation,
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
+  smoothLiveFollow = false,
   history = null,
   queuedMessages = EMPTY_QUEUED_MESSAGES,
   onSteerQueuedMessage = NOOP_QUEUED_MESSAGE_ACTION,
@@ -394,6 +415,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const handleListLoad = useCallback(() => setListReady(true), []);
   const chatWidth = useClientSettings((settings) => settings.chatWidth);
   const hasRows = rows.length > 0;
+  const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
   const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
   const scrollMeasurementFrameRef = useRef<number | null>(null);
@@ -630,14 +652,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               initialScrollAtEnd
               onLoad={handleListLoad}
               contentInsetEndAdjustment={contentInsetEndAdjustment}
-              maintainScrollAtEnd={{
-                animated: false,
-                on: {
-                  dataChange: true,
-                  itemLayout: true,
-                  layout: true,
-                },
-              }}
+              // The first end pins of a freshly opened thread snap; gliding starts
+              // once the list has loaded.
+              maintainScrollAtEnd={
+                smoothLiveFollow && isWorking && listReady && !prefersReducedMotion
+                  ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
+                  : TIMELINE_MAINTAIN_SCROLL_AT_END
+              }
               // While find steers the scroll, anchoring would fight its jumps.
               maintainVisibleContentPosition={
                 findActive
