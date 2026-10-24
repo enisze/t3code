@@ -1,5 +1,6 @@
 import {
   parseScopedThreadKey,
+  scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
@@ -16,6 +17,7 @@ import {
   getFallbackThreadAfterArchive,
   getFallbackThreadIdAfterDelete,
 } from "../components/Sidebar.logic";
+import { snoozeWakeDescription } from "../components/Sidebar.snooze";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
@@ -29,11 +31,15 @@ import {
   readProject,
   readThreadShell,
   readThreadRefs,
+  waitForThreadShell,
 } from "../state/entities";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
+import { activateWorkspaceChat } from "../workspaceContentTabsStore";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
+import { showUndoToast } from "./showUndoToast";
+import * as ThreadUndo from "./threadUndo";
 import { useClientSettings } from "./useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
 
@@ -129,6 +135,7 @@ export function useThreadActions() {
   });
   const sidebarThreadSortOrder = useClientSettings((settings) => settings.sidebarThreadSortOrder);
   const confirmThreadDelete = useClientSettings((settings) => settings.confirmThreadDelete);
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
   const clearProjectDraftThreadById = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadById,
@@ -150,6 +157,33 @@ export function useThreadActions() {
     return resolveThreadRouteRef(currentRouteParams);
   }, [router]);
 
+  const unarchiveThread = useCallback(
+    async (target: ScopedThreadRef, opts: { navigate?: boolean } = {}) => {
+      ThreadUndo.invalidate("archive", scopedThreadKey(target));
+      const result = await unarchiveThreadMutation({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId },
+      });
+      if (result._tag === "Failure") {
+        return result;
+      }
+      refreshArchivedThreadsForEnvironment(target.environmentId);
+      if (!opts.navigate) {
+        return result;
+      }
+      // The thread route sends a thread it does not know to a new chat, so
+      // wait until the unarchived thread is back in the client store.
+      return settlePromise(async () => {
+        activateWorkspaceChat(await waitForThreadShell(target));
+        await router.navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(target),
+        });
+      });
+    },
+    [router, unarchiveThreadMutation],
+  );
+
   const archiveThread = useCallback(
     async (
       target: ScopedThreadRef,
@@ -160,6 +194,9 @@ export function useThreadActions() {
         // blocking. Sidebar V2 archives as a park action, so a running turn
         // must not keep working behind a now-hidden thread.
         stopRunningSession?: boolean;
+        // Batch archives and closed chat tabs (Cmd/Ctrl+Shift+T reopens those)
+        // skip the Undo notice.
+        undoToast?: boolean;
       } = {},
     ) => {
       const resolved = resolveThreadTarget(target);
@@ -200,15 +237,31 @@ export function useThreadActions() {
         archivedThreadEnvironmentId: threadRef.environmentId,
         sortOrder: sidebarThreadSortOrder,
       });
+      const action = ThreadUndo.begin("archive", scopedThreadKey(threadRef));
       const archiveResult = await archiveThreadMutation({
         environmentId: threadRef.environmentId,
         input: { threadId: threadRef.threadId },
       });
       if (archiveResult._tag === "Failure") {
+        action.finish();
         return archiveResult;
       }
       refreshArchivedThreadsForEnvironment(threadRef.environmentId);
       opts.onArchived?.();
+      if (opts.undoToast === false) {
+        action.finish();
+      } else {
+        // Undo restores the thread, and reopens it when archiving moved the
+        // reader away. Processes the archive stopped and build output it freed
+        // stay gone.
+        showUndoToast({
+          title: "Thread archived",
+          description: thread.title,
+          claim: action,
+          undo: () => unarchiveThread(threadRef, { navigate: shouldNavigateAfterArchive }),
+          failureTitle: "Failed to undo archive",
+        });
+      }
 
       if (shouldNavigateAfterArchive) {
         const navigationResult = await settlePromise(() => {
@@ -244,21 +297,8 @@ export function useThreadActions() {
       router,
       sidebarThreadSortOrder,
       stopThreadSession,
+      unarchiveThread,
     ],
-  );
-
-  const unarchiveThread = useCallback(
-    async (target: ScopedThreadRef) => {
-      const result = await unarchiveThreadMutation({
-        environmentId: target.environmentId,
-        input: { threadId: target.threadId },
-      });
-      if (result._tag === "Success") {
-        refreshArchivedThreadsForEnvironment(target.environmentId);
-      }
-      return result;
-    },
-    [unarchiveThreadMutation],
   );
 
   const deleteThread = useCallback(
@@ -519,6 +559,27 @@ export function useThreadActions() {
     [unsettleThreadMutation],
   );
 
+  const unsnoozeThread = useCallback(
+    async (target: ScopedThreadRef) => {
+      if (!readEnvironmentSupportsSnooze(target.environmentId)) {
+        return AsyncResult.failure(
+          Cause.fail(
+            new ThreadSnoozeUnsupportedError({
+              environmentId: target.environmentId,
+              threadId: target.threadId,
+            }),
+          ),
+        );
+      }
+      ThreadUndo.invalidate("snooze", scopedThreadKey(target));
+      return unsnoozeThreadMutation({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId, reason: "user" },
+      });
+    },
+    [unsnoozeThreadMutation],
+  );
+
   const snoozeThread = useCallback(
     async (target: ScopedThreadRef, snoozedUntil: string) => {
       // Version skew: never send the command to a server that predates it.
@@ -546,32 +607,26 @@ export function useThreadActions() {
           ),
         );
       }
-      return snoozeThreadMutation({
+      const action = ThreadUndo.begin("snooze", scopedThreadKey(target));
+      const result = await snoozeThreadMutation({
         environmentId: target.environmentId,
         input: { threadId: target.threadId, snoozedUntil },
       });
-    },
-    [resolveThreadTarget, snoozeThreadMutation],
-  );
-
-  const unsnoozeThread = useCallback(
-    async (target: ScopedThreadRef) => {
-      if (!readEnvironmentSupportsSnooze(target.environmentId)) {
-        return AsyncResult.failure(
-          Cause.fail(
-            new ThreadSnoozeUnsupportedError({
-              environmentId: target.environmentId,
-              threadId: target.threadId,
-            }),
-          ),
-        );
+      if (result._tag !== "Success") {
+        action.finish();
+        return result;
       }
-      return unsnoozeThreadMutation({
-        environmentId: target.environmentId,
-        input: { threadId: target.threadId, reason: "user" },
+      // Snooze hides the row, so the notice is the only confirmation.
+      showUndoToast({
+        title: `Snoozed until ${snoozeWakeDescription(snoozedUntil, new Date(), timestampFormat)}`,
+        description: resolved?.thread.title,
+        claim: action,
+        undo: () => unsnoozeThread(target),
+        failureTitle: "Failed to wake thread",
       });
+      return result;
     },
-    [unsnoozeThreadMutation],
+    [resolveThreadTarget, snoozeThreadMutation, timestampFormat, unsnoozeThread],
   );
 
   const confirmAndDeleteThread = useCallback(
