@@ -48,6 +48,24 @@ describe("ServerSettings default permissions", () => {
   });
 });
 
+describe("ServerSettings response streaming", () => {
+  it("defaults to paragraphs and resets legacy token-streaming opt-ins", () => {
+    expect(decodeServerSettings({}).responseStreamingMode).toBe("paragraph");
+    expect(decodeServerSettings({ enableLegacyTokenStreaming: true }).responseStreamingMode).toBe(
+      "paragraph",
+    );
+  });
+
+  it.each(["turn", "paragraph", "token"])("round-trips %s", (responseStreamingMode) => {
+    const settings = decodeServerSettings({ responseStreamingMode });
+    expect(encodeServerSettings(settings).responseStreamingMode).toBe(responseStreamingMode);
+    expect(decodeServerSettingsPatch({ responseStreamingMode }).responseStreamingMode).toBe(
+      responseStreamingMode,
+    );
+    expect(() => decodeServerSettings({ responseStreamingMode: "word" })).toThrow();
+  });
+});
+
 describe("ServerSettings usage price overrides", () => {
   const prices = { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 };
 

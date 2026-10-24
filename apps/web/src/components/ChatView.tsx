@@ -6674,6 +6674,7 @@ function ChatViewContent(props: ChatViewProps) {
                   onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
                   hideEmptyPlaceholder={isDraftHeroState || threadDetailUnavailable}
                   topFadeEnabled={!hasTimelineTopBanner}
+                  smoothLiveFollow={settings.responseStreamingMode !== "token"}
                   queuedMessages={queuedMessages}
                   onSteerQueuedMessage={onSteerQueuedMessage}
                   steerQueuedMessageShortcutLabel={shortcutLabelForCommand(
