@@ -147,7 +147,7 @@ import {
 // Context — shared state consumed by every row component via Context.
 // Propagates through LegendList's memo boundaries for shared callbacks and
 // non-row-scoped state. `nowIso` is intentionally excluded — self-ticking
-// components (WorkingTimer, LiveElapsed) handle it.
+// components (WorkingStatus, LiveElapsed) handle it.
 // ---------------------------------------------------------------------------
 
 interface TimelineRowSharedState {
@@ -1816,22 +1816,7 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
           <span className="line-clamp-4 min-w-0">{thought}</span>
         </p>
       ) : null}
-      <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70 tabular-nums">
-        <span className="inline-flex items-center gap-[3px]">
-          <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse" />
-          <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse [animation-delay:200ms]" />
-          <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse [animation-delay:400ms]" />
-        </span>
-        <span>
-          {row.createdAt ? (
-            <>
-              Working for <WorkingTimer createdAt={row.createdAt} />
-            </>
-          ) : (
-            "Working..."
-          )}
-        </span>
-      </div>
+      <WorkingStatus createdAt={row.createdAt} />
     </div>
   );
 }
@@ -1841,26 +1826,59 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
 // does not create a React commit every second while a response is streaming.
 // ---------------------------------------------------------------------------
 
-/** Live "Working for Xs" label. */
-function WorkingTimer({ createdAt }: { createdAt: string }) {
+// The lit dot follows the tick; with reduced motion all three stay dim.
+const WORKING_DOT_STEP_CLASSES = [
+  "motion-safe:group-data-[step=0]/working-dots:bg-muted-foreground/70",
+  "motion-safe:group-data-[step=1]/working-dots:bg-muted-foreground/70",
+  "motion-safe:group-data-[step=2]/working-dots:bg-muted-foreground/70",
+];
+
+/**
+ * Live "Working for Xs" label. One timer updates the text and steps the dots'
+ * highlight once a second, so the row shows it is alive without running a CSS
+ * animation, which would keep the compositor busy for as long as the agent works.
+ */
+function WorkingStatus({ createdAt }: { createdAt: string | null }) {
+  const dotsRef = useRef<HTMLSpanElement>(null);
   const textRef = useRef<HTMLSpanElement>(null);
-  const initialText = formatWorkingTimerNow(createdAt);
 
   useEffect(() => {
-    const updateText = () => {
-      if (textRef.current) {
+    let step = 0;
+    const tick = () => {
+      dotsRef.current?.setAttribute("data-step", String(step));
+      step = (step + 1) % WORKING_DOT_STEP_CLASSES.length;
+      if (createdAt && textRef.current) {
         textRef.current.textContent = formatWorkingTimerNow(createdAt);
       }
     };
-    updateText();
-    const id = setInterval(updateText, 1000);
+    tick();
+    const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, [createdAt]);
 
   return (
-    <span ref={textRef} className="tabular-nums">
-      {initialText}
-    </span>
+    <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70 tabular-nums">
+      <span ref={dotsRef} className="group/working-dots inline-flex items-center gap-[3px]">
+        {WORKING_DOT_STEP_CLASSES.map((stepClass) => (
+          <span
+            key={stepClass}
+            className={cn("h-1 w-1 rounded-full bg-muted-foreground/30", stepClass)}
+          />
+        ))}
+      </span>
+      <span>
+        {createdAt ? (
+          <>
+            Working for{" "}
+            <span ref={textRef} className="tabular-nums">
+              {formatWorkingTimerNow(createdAt)}
+            </span>
+          </>
+        ) : (
+          "Working..."
+        )}
+      </span>
+    </div>
   );
 }
 
