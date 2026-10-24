@@ -20,6 +20,7 @@ const prompt: PendingUserInput = {
       multiSelect: false,
     },
   ],
+  dismissible: true,
 };
 
 function renderPanel() {
@@ -31,6 +32,7 @@ function renderPanel() {
       questionIndex={0}
       onToggleOption={() => {}}
       onAdvance={() => {}}
+      onDismiss={() => {}}
     />,
   );
 }

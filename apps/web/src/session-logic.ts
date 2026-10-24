@@ -105,6 +105,8 @@ export interface PendingUserInput {
   requestId: ApprovalRequestId;
   createdAt: string;
   questions: ReadonlyArray<UserInputQuestion>;
+  /** Async questions can be dismissed without a reply; native callbacks cannot. */
+  dismissible: boolean;
 }
 
 export interface ActivePlanState {
@@ -519,6 +521,7 @@ export function derivePendingUserInputs(
         requestId,
         createdAt: activity.createdAt,
         questions,
+        dismissible: payload?.responseMode === "message",
       });
       continue;
     }
