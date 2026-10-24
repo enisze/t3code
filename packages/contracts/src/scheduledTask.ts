@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { IsoDateTime, MessageId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const MIN_SCHEDULED_TASK_INTERVAL_MS = 60_000;
 export const ScheduledTaskId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
@@ -134,6 +134,16 @@ export const ScheduledTaskRun = Schema.Struct({
   dueAt: Schema.optional(IsoDateTime),
 });
 export type ScheduledTaskRun = typeof ScheduledTaskRun.Type;
+
+const AUTOMATION_MESSAGE_ID_PREFIX = "automation:";
+
+/** The user message a run sends its prompt as. */
+export const automationMessageId = (runId: string) =>
+  MessageId.make(`${AUTOMATION_MESSAGE_ID_PREFIX}${runId}`);
+
+/** Automation prompts carry no other marker; clients fold them into compact rows by this. */
+export const isAutomationMessageId = (messageId: string): boolean =>
+  messageId.startsWith(AUTOMATION_MESSAGE_ID_PREFIX);
 
 export const ScheduledTask = Schema.Struct({
   ...ScheduledTaskInput.fields,

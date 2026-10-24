@@ -1,9 +1,9 @@
 import * as NodeCrypto from "node:crypto";
 
 import {
+  automationMessageId,
   CommandId,
   DEFAULT_WEBHOOK_COALESCE_SECONDS,
-  MessageId,
   type OrchestrationThreadShell,
   ScheduledTask,
   ScheduledTaskError,
@@ -104,7 +104,7 @@ const turnCommand = (
   commandId: CommandId.make(`automation:${runId}`),
   threadId: thread.id,
   message: {
-    messageId: MessageId.make(`automation:${runId}`),
+    messageId: automationMessageId(runId),
     role: "user",
     text,
     attachments: [],

@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import { expect } from "vite-plus/test";
 import {
+  isAutomationMessageId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -122,6 +123,8 @@ test("persistent automations", (it) => {
       if (commands[0]?.type !== "thread.turn.start") throw new Error("Missing turn");
       expect(commands[0].modelSelection).toEqual(thread.modelSelection);
       assert.strictEqual(commands[0].runtimeMode, "approval-required");
+      // Clients fold the prompt by this mark.
+      assert.isTrue(isAutomationMessageId(commands[0].message.messageId));
       const listed = yield* recovered.list();
       assert.strictEqual(listed[0]?.nextRunAt, "2026-10-23T08:06:00.000Z");
       assert.strictEqual(listed[0]?.lastRun?.status, "started");
