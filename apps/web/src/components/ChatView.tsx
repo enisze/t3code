@@ -3101,6 +3101,26 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
 
+  // A shell code block from a reply runs through the project-script path, so it
+  // uses this thread's terminal and its workspace: the thread's worktree when it
+  // has one. It runs only from the code block's Run button.
+  const runProjectScriptRef = useRef(runProjectScript);
+  useLayoutEffect(() => {
+    runProjectScriptRef.current = runProjectScript;
+  }, [runProjectScript]);
+  const runShellCommand = useCallback((command: string) => {
+    void runProjectScriptRef.current(
+      {
+        id: "chat-code-block",
+        name: "Chat code block",
+        command,
+        icon: "play",
+        runOnWorktreeCreate: false,
+      },
+      { rememberAsLastInvoked: false },
+    );
+  }, []);
+
   const persistProjectScripts = useCallback(
     async (input: {
       projectId: ProjectId;
@@ -6662,6 +6682,7 @@ function ChatViewContent(props: ChatViewProps) {
                   revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
                   onRevertUserMessage={onRevertUserMessage}
                   onStartNewChatFromMessage={onStartNewChatFromMessage}
+                  onRunShellCommand={activeProject ? runShellCommand : undefined}
                   isRevertingCheckpoint={isRevertingCheckpoint}
                   onImageExpand={onExpandTimelineImage}
                   markdownCwd={gitCwd ?? undefined}
