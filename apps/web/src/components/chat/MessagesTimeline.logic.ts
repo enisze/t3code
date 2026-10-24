@@ -73,6 +73,78 @@ export function resolveTimelineMinimapIndexFromPointer(input: {
   return Math.max(0, Math.min(input.itemCount - 1, Math.round(progress * (input.itemCount - 1))));
 }
 
+/** The minimap turn at the reader's position: the first in view, else the last above it. */
+export function resolveTimelineMinimapCurrentIndex(input: {
+  readonly scrollTop: number;
+  readonly scrollBottom: number;
+  readonly itemBounds: ReadonlyArray<{
+    readonly top: number | null;
+    readonly height: number | null;
+  }>;
+}): number | null {
+  let precedingIndex: number | null = null;
+
+  for (const [index, item] of input.itemBounds.entries()) {
+    if (item.top === null) {
+      continue;
+    }
+    const inView =
+      item.top < input.scrollBottom && item.top + Math.max(1, item.height ?? 1) > input.scrollTop;
+    if (inView) {
+      return index;
+    }
+    if (item.top <= input.scrollTop) {
+      precedingIndex = index;
+    }
+  }
+
+  return precedingIndex;
+}
+
+/**
+ * The turns the minimap's previous and next controls jump to. Before the
+ * oldest loaded turn, `"older"` asks for older turns when the thread has more.
+ */
+export function resolveTimelineMinimapNeighbors<T>(input: {
+  readonly items: ReadonlyArray<T>;
+  readonly currentIndex: number | null;
+  readonly canLoadOlder: boolean;
+}): { readonly previous: T | "older" | null; readonly next: T | null } {
+  const { items, currentIndex } = input;
+  if (currentIndex === null || currentIndex < 0 || currentIndex >= items.length) {
+    return { previous: null, next: null };
+  }
+  return {
+    previous: items[currentIndex - 1] ?? (input.canLoadOlder ? "older" : null),
+    next: items[currentIndex + 1] ?? null,
+  };
+}
+
+/**
+ * Holds the minimap turn at the reader's position. Scroll measurement writes
+ * it and only the minimap reads it, so crossing a turn while scrolling does
+ * not re-render the timeline.
+ */
+export function createTimelineMinimapPositionStore() {
+  let current: number | null = null;
+  const listeners = new Set<() => void>();
+  return {
+    get: (): number | null => current,
+    set: (next: number | null) => {
+      if (next === current) return;
+      current = next;
+      for (const listener of listeners) listener();
+    },
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+}
+export type TimelineMinimapPositionStore = ReturnType<typeof createTimelineMinimapPositionStore>;
+
 /**
  * Side gutter between the viewport edge and the centered content column.
  * `contentWidth` is the rendered column width, which follows the Chat width

@@ -1,11 +1,14 @@
 import { ProviderInstanceId } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
+  createTimelineMinimapPositionStore,
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
+  resolveTimelineMinimapCurrentIndex,
+  resolveTimelineMinimapNeighbors,
 } from "./MessagesTimeline.logic";
 
 describe("computeMessageDurationStart", () => {
@@ -1291,5 +1294,62 @@ describe("computeStableMessagesTimelineRows", () => {
 
     expect(reordered).not.toBe(initial);
     expect(reordered.result).toEqual([initial.result[1], initial.result[0]]);
+  });
+});
+
+describe("timeline minimap turn navigation", () => {
+  const itemBounds = [
+    { top: 80, height: 20 },
+    { top: 120, height: 20 },
+    { top: 220, height: 20 },
+  ];
+
+  it("reads the first turn in view, else the last one above the viewport", () => {
+    expect(
+      resolveTimelineMinimapCurrentIndex({ scrollTop: 100, scrollBottom: 500, itemBounds }),
+    ).toBe(1);
+    expect(
+      resolveTimelineMinimapCurrentIndex({ scrollTop: 150, scrollBottom: 200, itemBounds }),
+    ).toBe(1);
+    expect(
+      resolveTimelineMinimapCurrentIndex({
+        scrollTop: 0,
+        scrollBottom: 50,
+        itemBounds: [{ top: 80, height: 20 }],
+      }),
+    ).toBeNull();
+  });
+
+  it("asks for older turns only before the oldest loaded turn of a thread that has more", () => {
+    const items = ["a", "b", "c"];
+    expect(resolveTimelineMinimapNeighbors({ items, currentIndex: 1, canLoadOlder: true })).toEqual(
+      { previous: "a", next: "c" },
+    );
+    expect(resolveTimelineMinimapNeighbors({ items, currentIndex: 0, canLoadOlder: true })).toEqual(
+      { previous: "older", next: "b" },
+    );
+    expect(
+      resolveTimelineMinimapNeighbors({ items, currentIndex: 0, canLoadOlder: false }),
+    ).toEqual({ previous: null, next: "b" });
+    expect(
+      resolveTimelineMinimapNeighbors({ items, currentIndex: 2, canLoadOlder: false }),
+    ).toEqual({ previous: "b", next: null });
+    expect(
+      resolveTimelineMinimapNeighbors({ items, currentIndex: null, canLoadOlder: true }),
+    ).toEqual({ previous: null, next: null });
+  });
+
+  it("notifies the minimap only when the reader crosses into another turn", () => {
+    const store = createTimelineMinimapPositionStore();
+    const listener = vi.fn();
+    const unsubscribe = store.subscribe(listener);
+    store.set(1);
+    store.set(1);
+    store.set(2);
+    expect(store.get()).toBe(2);
+    expect(listener).toHaveBeenCalledTimes(2);
+    unsubscribe();
+    store.set(0);
+    expect(listener).toHaveBeenCalledTimes(2);
   });
 });
