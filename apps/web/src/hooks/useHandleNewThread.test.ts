@@ -1,8 +1,12 @@
+import type { RuntimeMode } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => {
   let completeProjectFileRead: (value: null) => void = () => undefined;
   let projectFileRead = Promise.resolve<null>(null);
+  let routeTarget: { readonly kind: "draft"; readonly draftId: string } | null = null;
+  let viewedComposerDraft: { readonly runtimeMode?: RuntimeMode } = {};
+  let defaultRuntimeMode: RuntimeMode = "full-access";
   let storedDraft: {
     readonly draftId: string;
     readonly environmentId: string;
@@ -19,7 +23,7 @@ const testState = vi.hoisted(() => {
     }),
   };
   const draftStore = {
-    getComposerDraft: vi.fn(() => ({})),
+    getComposerDraft: vi.fn(() => viewedComposerDraft),
     getDraftSessionByLogicalProjectKey: vi.fn(() => storedDraft),
     getDraftSession: vi.fn(() => null),
     getDraftThread: vi.fn(() => null),
@@ -35,8 +39,24 @@ const testState = vi.hoisted(() => {
     get projectFileRead() {
       return projectFileRead;
     },
-    reset(nextStoredDraft: typeof storedDraft) {
+    get routeTarget() {
+      return routeTarget;
+    },
+    get defaultRuntimeMode() {
+      return defaultRuntimeMode;
+    },
+    viewDraft(draftId: string, runtimeMode: RuntimeMode) {
+      routeTarget = { kind: "draft", draftId };
+      viewedComposerDraft = { runtimeMode };
+    },
+    reset(
+      nextStoredDraft: typeof storedDraft,
+      nextDefaultRuntimeMode: RuntimeMode = "full-access",
+    ) {
       storedDraft = nextStoredDraft;
+      routeTarget = null;
+      viewedComposerDraft = {};
+      defaultRuntimeMode = nextDefaultRuntimeMode;
       router.state.location.href = "/";
       router.navigate.mockClear();
       draftStore.setLogicalProjectDraftThreadId.mockClear();
@@ -126,6 +146,7 @@ vi.mock("../state/entities", () => ({
       defaultModelSelection: null,
     },
   ],
+  readNewThreadRuntimeMode: () => testState.defaultRuntimeMode,
   readThreadShell: () => null,
   useProjects: () => [],
   useThread: () => null,
@@ -134,7 +155,7 @@ vi.mock("../state/server", () => ({
   environmentServerConfigsAtom: {},
   primaryServerSettingsAtom: "primary-settings",
 }));
-vi.mock("../threadRoutes", () => ({ resolveThreadRouteTarget: () => null }));
+vi.mock("../threadRoutes", () => ({ resolveThreadRouteTarget: () => testState.routeTarget }));
 vi.mock("../uiStateStore", () => ({
   legacyProjectCwdPreferenceKey: () => "remote-project",
   useUiStateStore: () => [],
@@ -171,4 +192,36 @@ describe("useNewThreadHandler", () => {
     expect(testState.router.navigate).not.toHaveBeenCalled();
     expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["new", null],
+    [
+      "reusable",
+      {
+        draftId: "draft-existing",
+        environmentId: "environment-ssh",
+        promotedTo: null,
+        threadId: "thread-existing",
+      },
+    ],
+  ])(
+    "starts a %s draft with the project's default permissions, not the viewed thread's",
+    async (_, draft) => {
+      testState.reset(draft, "approval-required");
+      testState.viewDraft("draft-viewed", "full-access");
+      const pendingOpen = useNewThreadHandler()({
+        environmentId: "environment-ssh",
+        projectId: "project-remote",
+      } as never);
+      testState.completeProjectFileRead(null);
+      await pendingOpen;
+
+      expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+        "remote-project",
+        expect.anything(),
+        draft?.draftId ?? "draft-delayed",
+        expect.objectContaining({ runtimeMode: "approval-required" }),
+      );
+    },
+  );
 });

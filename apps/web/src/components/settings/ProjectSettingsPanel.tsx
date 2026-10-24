@@ -3,7 +3,12 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, ModelSelection, ProjectId } from "@t3tools/contracts";
+import {
+  DEFAULT_RUNTIME_MODE,
+  type EnvironmentId,
+  type ModelSelection,
+  type ProjectId,
+} from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { FilesIcon, FolderGitIcon, GitBranchIcon, PlayIcon, SlidersIcon } from "lucide-react";
 
@@ -16,7 +21,9 @@ import { ProjectDefaultAgentField } from "../ProjectDefaultAgentField";
 import { ProjectDefaultWorktreeBranchField } from "../ProjectDefaultWorktreeBranchField";
 import { ProjectScriptsField } from "../ProjectScriptsField";
 import { ProjectWorktreeCopyFilesField } from "../ProjectWorktreeCopyFilesField";
+import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
 import { Input } from "../ui/input";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { RemoveProjectSection } from "./RemoveProjectSection";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
@@ -233,6 +240,11 @@ export function ProjectSettingsPanel(props: {
               );
             }}
           />
+          <ProjectPermissionsField
+            idPrefix={`${idPrefix}-permissions`}
+            environmentId={environmentId}
+            projectId={projectId}
+          />
         </div>
       </SettingsSection>
 
@@ -278,6 +290,65 @@ export function ProjectSettingsPanel(props: {
       </SettingsSection>
       <RemoveProjectSection environmentId={environmentId} projectId={projectId} project={project} />
     </SettingsPageContainer>
+  );
+}
+
+const INHERIT_PERMISSIONS = "__t3_machine_default__";
+
+/**
+ * Permissions new threads in the project start with. The override lives in
+ * the project's machine settings beside its other overrides; "Use default"
+ * removes it so the project follows the machine's default again.
+ */
+function ProjectPermissionsField(props: {
+  idPrefix: string;
+  environmentId: EnvironmentId;
+  projectId: ProjectId;
+}) {
+  const { idPrefix, environmentId, projectId } = props;
+  const settings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
+  const updateSettings = useAtomCommand(
+    serverEnvironment.updateSettings,
+    "project permissions update",
+  );
+  const override = settings?.projectRuntimeModeOverrides[projectId] ?? null;
+  const defaultLabel = `Use default (${
+    runtimeModeConfig[settings?.defaultRuntimeMode ?? DEFAULT_RUNTIME_MODE].label
+  })`;
+  return (
+    <label className="grid min-w-0 gap-1.5 sm:max-w-xs" htmlFor={`${idPrefix}-mode`}>
+      <span className="font-medium text-foreground">Permissions</span>
+      <Select
+        value={override ?? INHERIT_PERMISSIONS}
+        disabled={settings === null}
+        onValueChange={(value) => {
+          if (value === null) return;
+          const mode = runtimeModeOptions.find((option) => option === value) ?? null;
+          if (mode === override) return;
+          void updateSettings({
+            environmentId,
+            input: { patch: { projectRuntimeModeOverrides: { [projectId]: mode } } },
+          });
+        }}
+      >
+        <SelectTrigger id={`${idPrefix}-mode`} className="w-full sm:min-h-7.5">
+          <SelectValue>{override ? runtimeModeConfig[override].label : defaultLabel}</SelectValue>
+        </SelectTrigger>
+        <SelectPopup align="start" alignItemWithTrigger={false}>
+          <SelectItem hideIndicator value={INHERIT_PERMISSIONS}>
+            {defaultLabel}
+          </SelectItem>
+          {runtimeModeOptions.map((mode) => (
+            <SelectItem hideIndicator key={mode} value={mode}>
+              {runtimeModeConfig[mode].label}
+            </SelectItem>
+          ))}
+        </SelectPopup>
+      </Select>
+      <span className="text-[11px] text-muted-foreground">
+        New threads in this project start with these permissions.
+      </span>
+    </label>
   );
 }
 

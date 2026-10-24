@@ -5,6 +5,7 @@ import {
   type ModelSelection,
   type ProjectId,
   type ProviderDriverKind,
+  type RuntimeMode,
   type ServerProvider,
   ServerSettings,
   type ServerSettingsPatch,
@@ -43,6 +44,14 @@ export function resolveProjectAutoPull(
     settings.projectAutoPullOverrides[projectId] ??
     (legacyAutoPull === true || settings.defaultAutoPull)
   );
+}
+
+/** Permissions a new thread in the project starts with. */
+export function resolveProjectRuntimeMode(
+  settings: Pick<ServerSettings, "defaultRuntimeMode" | "projectRuntimeModeOverrides">,
+  projectId: ProjectId,
+): RuntimeMode {
+  return settings.projectRuntimeModeOverrides[projectId] ?? settings.defaultRuntimeMode;
 }
 
 type LegacyProviderSettings = ServerSettings["providers"][keyof ServerSettings["providers"]];
@@ -213,6 +222,7 @@ export function applyServerSettingsPatch(
     usagePriceOverrides: usagePriceOverridesPatch,
     projectAgentBrowserAccessOverrides: projectAgentBrowserAccessOverridesPatch,
     projectAutoPullOverrides: projectAutoPullOverridesPatch,
+    projectRuntimeModeOverrides: projectRuntimeModeOverridesPatch,
     ...patchForMerge
   } = patch;
   const currentBackgroundActivity = normalizeServerBackgroundActivitySettings(current);
@@ -282,6 +292,14 @@ export function applyServerSettingsPatch(
           projectAutoPullOverrides: mergeSettingsEntries(
             current.projectAutoPullOverrides,
             projectAutoPullOverridesPatch,
+          ),
+        }
+      : {}),
+    ...(projectRuntimeModeOverridesPatch !== undefined
+      ? {
+          projectRuntimeModeOverrides: mergeSettingsEntries(
+            current.projectRuntimeModeOverrides,
+            projectRuntimeModeOverridesPatch,
           ),
         }
       : {}),

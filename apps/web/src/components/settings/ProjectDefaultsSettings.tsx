@@ -24,6 +24,7 @@ import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { resolveEnvModeLabel } from "../BranchToolbar.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
@@ -87,6 +88,11 @@ export function ProjectDefaultsSettings({
       JSON.stringify(target.serverConfig?.settings.defaultModelSelection) !==
       JSON.stringify(storedSelection),
   );
+  const mixedPermissions = targets.some(
+    (target) =>
+      target.serverConfig?.settings.defaultRuntimeMode !== serverSettings.defaultRuntimeMode,
+  );
+  const PermissionIcon = runtimeModeConfig[serverSettings.defaultRuntimeMode].icon;
   const mixedWorkspace = targets.some(
     (target) =>
       target.serverConfig?.settings.defaultThreadEnvMode !== serverSettings.defaultThreadEnvMode,
@@ -270,6 +276,65 @@ export function ProjectDefaultsSettings({
             ) : (
               <span className="text-sm text-muted-foreground">No providers available</span>
             )
+          }
+        />
+        <SettingsRow
+          id={searchableSetting("default-permissions").id}
+          title="Permissions"
+          description="Default permissions for new threads. Projects can override them."
+          resetAction={
+            mixedPermissions ||
+            serverSettings.defaultRuntimeMode !== DEFAULT_SERVER_SETTINGS.defaultRuntimeMode ? (
+              <SettingResetButton
+                label="default permissions"
+                disabled={disabled("defaultRuntimeMode")}
+                onClick={() =>
+                  void save({ defaultRuntimeMode: DEFAULT_SERVER_SETTINGS.defaultRuntimeMode })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              disabled={disabled("defaultRuntimeMode")}
+              value={mixedPermissions ? "mixed" : serverSettings.defaultRuntimeMode}
+              onValueChange={(value) => {
+                const mode = runtimeModeOptions.find((option) => option === value);
+                if (mode) void save({ defaultRuntimeMode: mode });
+              }}
+            >
+              <SelectTrigger size="sm" aria-label="Default permissions">
+                {targets.length > 0 && !mixedPermissions ? (
+                  <PermissionIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                ) : null}
+                <SelectValue>
+                  {targets.length === 0
+                    ? "Unavailable"
+                    : mixedPermissions
+                      ? "Differs by machine"
+                      : runtimeModeConfig[serverSettings.defaultRuntimeMode].label}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {runtimeModeOptions.map((mode) => {
+                  const option = runtimeModeConfig[mode];
+                  const Icon = option.icon;
+                  return (
+                    <SelectItem key={mode} value={mode} className="min-w-64 py-2">
+                      <div className="grid gap-0.5">
+                        <span className="inline-flex items-center gap-1.5 font-medium">
+                          <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+                          {option.label}
+                        </span>
+                        <span className="text-xs leading-4 text-muted-foreground">
+                          {option.description}
+                        </span>
+                      </div>
+                    </SelectItem>
+                  );
+                })}
+              </SelectPopup>
+            </Select>
           }
         />
         <SettingsRow

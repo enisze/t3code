@@ -6,8 +6,15 @@ import type {
   ThreadStructure,
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
-import type { ScopedProjectRef, ScopedThreadRef, ServerConfig } from "@t3tools/contracts";
+import {
+  DEFAULT_RUNTIME_MODE,
+  type RuntimeMode,
+  type ScopedProjectRef,
+  type ScopedThreadRef,
+  type ServerConfig,
+} from "@t3tools/contracts";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { resolveProjectRuntimeMode } from "@t3tools/shared/serverSettings";
 import { Atom } from "effect/unstable/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
@@ -255,6 +262,16 @@ export function waitForThreadShell(
     unsubscribe = appAtomRegistry.subscribe(environmentThreadShells.threadShellAtom(ref), finish);
     finish(readThreadShell(ref));
   });
+}
+
+/** Permissions a new thread in the project starts with, from its machine's settings. */
+export function readNewThreadRuntimeMode(projectRef: ScopedProjectRef): RuntimeMode {
+  const settings = appAtomRegistry
+    .get(environmentServerConfigsAtom)
+    .get(projectRef.environmentId)?.settings;
+  return settings
+    ? resolveProjectRuntimeMode(settings, projectRef.projectId)
+    : DEFAULT_RUNTIME_MODE;
 }
 
 /** Whether the environment's server understands thread.settle/unsettle.

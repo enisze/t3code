@@ -18,6 +18,7 @@ import {
   resolveSourceControlWriterModelSelection,
   resolveProjectAgentBrowserAccess,
   resolveProjectAutoPull,
+  resolveProjectRuntimeMode,
   resolveSourceControlWriterModelSelectionWithProjectPreference,
 } from "./serverSettings.ts";
 
@@ -170,6 +171,23 @@ describe("serverSettings helpers", () => {
     expect(reset.projectAgentBrowserAccessOverrides[firstProjectId]).toBeUndefined();
     expect(resolveProjectAutoPull(secondUpdate, firstProjectId, false)).toBe(false);
     expect(resolveProjectAgentBrowserAccess(secondUpdate, firstProjectId)).toBe(false);
+  });
+
+  it("starts new threads with a project's permissions, then the environment's", () => {
+    const projectId = ProjectId.make("project-permissions");
+    const otherProjectId = ProjectId.make("other-project");
+    expect(resolveProjectRuntimeMode(DEFAULT_SERVER_SETTINGS, projectId)).toBe("full-access");
+    const overridden = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      defaultRuntimeMode: "auto-accept-edits",
+      projectRuntimeModeOverrides: { [projectId]: "approval-required" },
+    });
+    expect(resolveProjectRuntimeMode(overridden, projectId)).toBe("approval-required");
+    expect(resolveProjectRuntimeMode(overridden, otherProjectId)).toBe("auto-accept-edits");
+    const reset = applyServerSettingsPatch(overridden, {
+      projectRuntimeModeOverrides: { [projectId]: null },
+    });
+    expect(resolveProjectRuntimeMode(reset, projectId)).toBe("auto-accept-edits");
+    expect(reset.projectRuntimeModeOverrides).toEqual({});
   });
 
   it("replaces and clears conversation model defaults without retaining old options", () => {
