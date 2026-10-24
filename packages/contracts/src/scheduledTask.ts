@@ -12,8 +12,9 @@ export const DEFAULT_WEBHOOK_COALESCE_SECONDS = 120;
 
 /**
  * A request value in placeholder syntax without braces: `body`, `body.action`,
- * `headers.x-github-event`, or `query.source`. Segments exclude dots, so
- * matching stays linear on malformed input.
+ * `headers.x-github-event`, or `query.source`. A body segment ending in `[]`
+ * fans out over an array, so `body.issue.labels[].name` names every label's
+ * name. Segments exclude dots, so matching stays linear on malformed input.
  */
 const WEBHOOK_PATH = /^(?:body(?:\.[^{}.\s]+)*|(?:headers|query)(?:\.[^{}.\s]+)+)$/;
 const WEBHOOK_PLACEHOLDER =
@@ -44,7 +45,10 @@ const WebhookFilterListValue = Schema.String.check(
 
 /**
  * Scalars compare as strings. Objects and arrays only satisfy `exists`, and a
- * missing or null value fails every op, including `notEquals`.
+ * missing or null value fails every op, including `notEquals`. A `[]` wildcard
+ * path yields a list: `equals`, `in`, and `startsWith` match when any element
+ * does, `notEquals` when no element equals the value, and `exists` when the
+ * list has an element.
  */
 export const ScheduledTaskWebhookFilter = Schema.Union([
   Schema.Struct({

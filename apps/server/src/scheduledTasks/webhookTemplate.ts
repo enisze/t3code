@@ -18,13 +18,32 @@ export const MAX_WEBHOOK_PROMPT_BYTES = 131_072;
 const NOT_A_PLACEHOLDER = Symbol("NotAPlaceholder");
 const PLACEHOLDER = /\{\{\s*([a-z]+(?:\.[^{}.\s]+)*)\s*\}\}/g;
 
+const WILDCARD_SEGMENT = /^(.*)\[\]$/;
+
+/**
+ * Walks `segments` from `root`. A segment ending in `[]` names an array and
+ * the rest of the path applies to each element, so `labels[].name` resolves
+ * to the list of every label's name. Elements without the rest of the path
+ * are dropped; a wildcard on a non-array resolves to undefined.
+ */
 function lookup(root: unknown, segments: ReadonlyArray<string>): unknown {
   let current = root;
-  for (const segment of segments) {
-    if (current === null || typeof current !== "object" || !Object.hasOwn(current, segment)) {
+  for (const [index, segment] of segments.entries()) {
+    const wildcard = WILDCARD_SEGMENT.exec(segment);
+    const key = wildcard ? wildcard[1]! : segment;
+    if (current === null || typeof current !== "object" || !Object.hasOwn(current, key)) {
       return undefined;
     }
-    current = (current as Record<string, unknown>)[segment];
+    current = (current as Record<string, unknown>)[key];
+    if (!wildcard) continue;
+    if (!Array.isArray(current)) return undefined;
+    const rest = segments.slice(index + 1);
+    const nested = rest.some((part) => WILDCARD_SEGMENT.test(part));
+    return current.flatMap((element: unknown) => {
+      const value = rest.length === 0 ? element : lookup(element, rest);
+      if (value === undefined) return [];
+      return nested && Array.isArray(value) ? value : [value];
+    });
   }
   return current;
 }
@@ -129,10 +148,10 @@ function scalarText(value: unknown): string | undefined {
   return undefined;
 }
 
-function matchesWebhookFilter(filter: ScheduledTaskWebhookFilter, value: unknown): boolean {
-  if (filter.op === "exists") return value !== undefined && value !== null;
-  const text = scalarText(value);
-  if (text === undefined) return false;
+function matchesText(
+  filter: Exclude<ScheduledTaskWebhookFilter, { readonly op: "exists" }>,
+  text: string,
+): boolean {
   switch (filter.op) {
     case "equals":
       return text === filter.value;
@@ -143,6 +162,25 @@ function matchesWebhookFilter(filter: ScheduledTaskWebhookFilter, value: unknown
     case "startsWith":
       return text.startsWith(filter.value);
   }
+}
+
+/**
+ * Placeholders render null as missing, so filters treat it the same way. A
+ * path with a `[]` wildcard resolves to a list: `equals`, `in` and
+ * `startsWith` match when any element does, `notEquals` only when none equals
+ * the value, and `exists` when the list has an element.
+ */
+function matchesWebhookFilter(filter: ScheduledTaskWebhookFilter, value: unknown): boolean {
+  if (Array.isArray(value) && filter.path.includes("[]")) {
+    if (filter.op === "exists") return value.some((element: unknown) => element !== null);
+    const texts = value.flatMap((element: unknown) => scalarText(element) ?? []);
+    return filter.op === "notEquals"
+      ? texts.every((text) => text !== filter.value)
+      : texts.some((text) => matchesText(filter, text));
+  }
+  if (filter.op === "exists") return value !== undefined && value !== null;
+  const text = scalarText(value);
+  return text !== undefined && matchesText(filter, text);
 }
 
 /** Why the delivery fails its filters, numbered from 1 as the form lists them, or null when all match. */
