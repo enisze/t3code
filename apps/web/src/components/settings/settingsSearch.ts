@@ -178,6 +178,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["math formulas equations tex katex markdown"],
   },
   {
+    id: "chat-width",
+    title: "Chat width",
+    to: "/settings/appearance",
+    searchTerms: ["wide full width column layout messages composer monitor"],
+  },
+  {
     id: "project-grouping",
     title: "Project grouping",
     to: "/settings/general",

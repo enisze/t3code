@@ -15,6 +15,7 @@ import * as DesktopClientSettings from "./DesktopClientSettings.ts";
 const clientSettings: ClientSettings = {
   dictationLocale: "",
   autoOpenPlanSidebar: false,
+  chatWidth: "wide",
   legacySidebarEnabled: false,
   loadBalancingEnabled: false,
   loadBalancingWeights: {},
