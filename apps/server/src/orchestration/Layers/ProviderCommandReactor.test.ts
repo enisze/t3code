@@ -1483,7 +1483,7 @@ describe("ProviderCommandReactor", () => {
     expect(attempts).toBe(2);
   });
 
-  it("regenerates a thread title from the current conversation", async () => {
+  it("regenerates a thread title from the current conversation, without thinking traces", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
     harness.generateThreadTitle.mockReturnValue(
@@ -1512,6 +1512,26 @@ describe("ProviderCommandReactor", () => {
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
+      }),
+    );
+    // The thinking trace is working notes; the title must come from the conversation.
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.message.reasoning.delta",
+        commandId: CommandId.make("cmd-reasoning-before-title-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        messageId: asMessageId("reasoning-before-title-regeneration"),
+        delta: "Consider token expiry, then the QR payload.",
+        createdAt: "2026-01-01T00:00:00.500Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.message.reasoning.complete",
+        commandId: CommandId.make("cmd-reasoning-complete-before-title-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        messageId: asMessageId("reasoning-before-title-regeneration"),
+        createdAt: "2026-01-01T00:00:00.600Z",
       }),
     );
     await harness.runEffect(

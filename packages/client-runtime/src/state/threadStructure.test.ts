@@ -87,6 +87,26 @@ describe("createThreadStructureSelector", () => {
     expect(select(streamDelta(afterDelta, " things", "2026-04-01T00:00:04.000Z"))).toBe(structure);
   });
 
+  it("holds the same structure while a thinking trace streams", () => {
+    const trace: OrchestrationMessage = {
+      ...reply,
+      id: MessageId.make("reasoning:turn-1"),
+      role: "reasoning",
+      text: "Weighing",
+    };
+    const withTrace = { ...thread, messages: [userMessage, trace] };
+    const select = createThreadStructureSelector();
+    const structure = select(withTrace);
+    const afterChunk: EnvironmentThread = {
+      ...withTrace,
+      updatedAt: "2026-04-01T00:00:03.000Z",
+      messages: [userMessage, { ...trace, text: "Weighing the options.\n\n" }],
+    };
+
+    expect(select(afterChunk)).toBe(structure);
+    expect(structure?.messages[1]).not.toHaveProperty("text");
+  });
+
   it("drops streamed text and stamps, and keeps user text", () => {
     const structure = createThreadStructureSelector()(thread)!;
     const [user, assistant] = structure.messages;

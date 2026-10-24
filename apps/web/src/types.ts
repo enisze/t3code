@@ -56,10 +56,11 @@ export interface ChatMessage extends Omit<OrchestrationMessage, "attachments"> {
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
 }
 
-/** A ChatMessage of a {@link ThreadStructure}: assistant messages carry no streamed text. */
+/** A ChatMessage of a {@link ThreadStructure}: streamed (assistant and reasoning) messages carry no text. */
 export type ChatMessageStructure =
   | (Omit<ChatMessage, "role" | "text" | "updatedAt"> & { readonly role: "assistant" })
-  | (ChatMessage & { readonly role: Exclude<ChatMessage["role"], "assistant"> });
+  | (Omit<ChatMessage, "role" | "text" | "updatedAt"> & { readonly role: "reasoning" })
+  | (ChatMessage & { readonly role: Exclude<ChatMessage["role"], "assistant" | "reasoning"> });
 
 export type ProposedPlan = OrchestrationProposedPlan;
 export type TurnDiffFileChange = OrchestrationCheckpointFile;

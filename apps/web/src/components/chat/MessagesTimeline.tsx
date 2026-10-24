@@ -43,6 +43,7 @@ import ChatMarkdown from "../ChatMarkdown";
 import {
   ArrowUpIcon,
   BotIcon,
+  BrainIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
@@ -74,6 +75,7 @@ import { MessageCopyButton } from "./MessageCopyButton";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
+  deriveUnsettledTurnId,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
   resolveTimelineIsAtEnd,
@@ -148,6 +150,9 @@ interface TimelineRowSharedState {
   onOpenGitDiff: (scope: ChatDiffScope, filePath?: string) => void;
   onToggleTurnFold: (turnId: TurnId) => void;
   onToggleWorkGroup: (groupId: string, anchorElement?: HTMLElement) => void;
+  /** Open thinking traces. Kept on the list so it survives row recycling. */
+  expandedReasoningMessageIds: ReadonlySet<string>;
+  onToggleReasoning: (messageId: string, anchorElement?: HTMLElement) => void;
   onSteerQueuedMessage: (id: string) => void;
   steerQueuedMessageShortcutLabel: string | null;
   onRemoveQueuedMessage: (id: string) => void;
@@ -158,6 +163,8 @@ interface TimelineRowActivityState {
   isRevertingCheckpoint: boolean;
   activeTurnInProgress: boolean;
   latestTurnId: TurnId | null;
+  /** The turn still running, by the same rule the row derivation folds with. */
+  unsettledTurnId: TurnId | null;
 }
 
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
@@ -289,6 +296,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   }, [findOpen, onManualNavigation]);
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
+  const [expandedReasoningMessageIds, setExpandedReasoningMessageIds] = useState<
+    ReadonlySet<string>
+  >(new Set());
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
 
   const onToggleTurnFold = useCallback((turnId: TurnId) => {
@@ -327,6 +337,31 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         return;
       }
 
+      const list = listRef.current;
+      const currentScroll = list?.getState?.().scroll;
+      if (list && typeof currentScroll === "number") {
+        list.scrollToOffset({ offset: currentScroll + delta, animated: false });
+      }
+    },
+    [listRef],
+  );
+
+  // Opening a thinking trace grows its row below the header; keep the header
+  // where it was, as the work group toggle does.
+  const onToggleReasoning = useCallback(
+    (messageId: string, anchorElement?: HTMLElement) => {
+      const anchorTopBeforeToggle = anchorElement?.getBoundingClientRect().top ?? null;
+      flushSync(() => {
+        setExpandedReasoningMessageIds((existing) => {
+          const next = new Set(existing);
+          if (next.has(messageId)) next.delete(messageId);
+          else next.add(messageId);
+          return next;
+        });
+      });
+      if (anchorTopBeforeToggle === null || !anchorElement) return;
+      const delta = anchorElement.getBoundingClientRect().top - anchorTopBeforeToggle;
+      if (Math.abs(delta) < 0.5) return;
       const list = listRef.current;
       const currentScroll = list?.getState?.().scroll;
       if (list && typeof currentScroll === "number") {
@@ -535,6 +570,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenGitDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
+      expandedReasoningMessageIds,
+      onToggleReasoning,
       onSteerQueuedMessage,
       steerQueuedMessageShortcutLabel,
       onRemoveQueuedMessage,
@@ -554,19 +591,25 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenGitDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
+      expandedReasoningMessageIds,
+      onToggleReasoning,
       onSteerQueuedMessage,
       steerQueuedMessageShortcutLabel,
       onRemoveQueuedMessage,
     ],
   );
+  // The same rule the row derivation folds with, so a thinking row and the
+  // fold beside it never disagree about whether a turn is still live.
+  const unsettledTurnId = deriveUnsettledTurnId(latestTurn, runningTurnId);
   const activityState = useMemo<TimelineRowActivityState>(
     () => ({
       isWorking,
       isRevertingCheckpoint,
       activeTurnInProgress,
       latestTurnId: latestTurn?.turnId ?? null,
+      unsettledTurnId,
     }),
-    [activeTurnInProgress, isRevertingCheckpoint, isWorking, latestTurn?.turnId],
+    [activeTurnInProgress, isRevertingCheckpoint, isWorking, latestTurn?.turnId, unsettledTurnId],
   );
 
   useLayoutEffect(() => {
@@ -1023,6 +1066,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
         // Commentary (non-terminal assistant) rows carry no metadata row, so
         // they sit closer to the work that follows them.
         (row.kind === "message" && row.message.role === "assistant" && !row.showAssistantMeta) ||
+          (row.kind === "message" && row.message.role === "reasoning") ||
           row.kind === "work" ||
           row.kind === "work-toggle"
           ? "pb-2"
@@ -1041,6 +1085,9 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "message" && row.message.role === "assistant" ? (
         <AssistantTimelineRow row={row} />
       ) : null}
+      {row.kind === "message" && row.message.role === "reasoning" ? (
+        <ReasoningTimelineRow row={row} />
+      ) : null}
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
       {row.kind === "diff" ? <DiffTimelineRow row={row} /> : null}
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
@@ -1048,6 +1095,54 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
     </div>
   );
 });
+
+/**
+ * A provider's thinking trace, collapsed by default: reasoning is context for
+ * the answer, not the answer. Only the running turn may still read
+ * "Thinking", so a block a crashed provider never closed settles to "Thought".
+ */
+function ReasoningTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+  const ctx = use(TimelineRowCtx);
+  const { isWorking, unsettledTurnId } = use(TimelineRowActivityCtx);
+  const { message } = row;
+  const streaming =
+    Boolean(message.streaming) &&
+    isWorking &&
+    message.turnId != null &&
+    message.turnId === unsettledTurnId;
+  const expanded = ctx.expandedReasoningMessageIds.has(message.id);
+  if (message.text.trim().length === 0 && !streaming) {
+    return null;
+  }
+  return (
+    <div className={cn("flex flex-col px-1", expanded && "pb-1")}>
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={(event) => ctx.onToggleReasoning(message.id, event.currentTarget)}
+        className="flex w-fit cursor-pointer select-none items-center gap-1.5 rounded-md py-0.5 pe-1 text-start text-muted-foreground text-xs transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+      >
+        <BrainIcon aria-hidden className="size-3.5 shrink-0 opacity-70" />
+        <span>{streaming ? "Thinking" : "Thought"}</span>
+        <ChevronRightIcon
+          aria-hidden
+          className={cn("size-3 shrink-0 opacity-70", expanded && "rotate-90")}
+        />
+      </button>
+      {expanded ? (
+        <div className="mt-1 ms-5 max-h-96 overflow-auto rounded-md bg-muted/40 px-3 py-2 text-muted-foreground">
+          <ChatMarkdown
+            text={message.text}
+            cwd={ctx.markdownCwd}
+            threadRef={ctx.threadRef ?? undefined}
+            isStreaming={streaming}
+            skills={ctx.skills}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 /** A message waiting for the running turn: a dashed user bubble with icon actions inside it. */
 function QueuedMessageTimelineRow({

@@ -1047,6 +1047,92 @@ describe("deriveMessagesTimelineRows", () => {
       expanded: true,
     });
   });
+
+  const reasoningEntry = (id: string, at: string, turnId: string | null) => ({
+    id,
+    kind: "message" as const,
+    createdAt: at,
+    message: {
+      id: id as never,
+      role: "reasoning" as const,
+      text: "weighing it up",
+      turnId: turnId as never,
+      createdAt: at,
+      updatedAt: at,
+      streaming: false,
+    },
+  });
+
+  const answerEntry = (id: string, at: string, turnId: string) => ({
+    id,
+    kind: "message" as const,
+    createdAt: at,
+    message: {
+      id: id as never,
+      role: "assistant" as const,
+      text: "the answer",
+      turnId: turnId as never,
+      createdAt: at,
+      updatedAt: at,
+      streaming: false,
+    },
+  });
+
+  const toolEntry = (id: string, at: string, turnId: string) => ({
+    id,
+    kind: "work" as const,
+    createdAt: at,
+    entry: {
+      id,
+      createdAt: at,
+      turnId: turnId as never,
+      label: "Ran a command",
+      tone: "tool" as const,
+    },
+  });
+
+  const settledRows = (
+    timelineEntries: Parameters<typeof deriveMessagesTimelineRows>[0]["timelineEntries"],
+  ) =>
+    deriveMessagesTimelineRows({
+      timelineEntries,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+  it("keeps a thought-only turn out of the work fold", () => {
+    const rows = settledRows([
+      reasoningEntry("reasoning-entry", "2026-01-01T00:00:01Z", "turn-1"),
+      answerEntry("assistant-entry", "2026-01-01T00:00:02Z", "turn-1"),
+    ]);
+
+    expect(rows.some((row) => row.kind === "turn-fold")).toBe(false);
+    expect(rows.map((row) => row.id)).toContain("reasoning-entry");
+  });
+
+  it("folds a thinking block away with the tool work beside it", () => {
+    const rows = settledRows([
+      reasoningEntry("reasoning-entry", "2026-01-01T00:00:01Z", "turn-1"),
+      toolEntry("tool-entry", "2026-01-01T00:00:02Z", "turn-1"),
+      answerEntry("assistant-entry", "2026-01-01T00:00:03Z", "turn-1"),
+    ]);
+
+    expect(rows.some((row) => row.kind === "turn-fold")).toBe(true);
+    expect(rows.map((row) => row.id)).not.toContain("reasoning-entry");
+  });
+
+  it("does not let a stranded streaming thought hold a settled turn open", () => {
+    const stranded = reasoningEntry("reasoning-stranded", "2026-01-01T00:00:01Z", "turn-1");
+    const rows = settledRows([
+      { ...stranded, message: { ...stranded.message, streaming: true } },
+      toolEntry("tool-entry", "2026-01-01T00:00:02Z", "turn-1"),
+      answerEntry("assistant-entry", "2026-01-01T00:00:03Z", "turn-1"),
+    ]);
+
+    expect(rows.some((row) => row.kind === "turn-fold")).toBe(true);
+  });
 });
 
 describe("computeStableMessagesTimelineRows", () => {

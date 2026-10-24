@@ -151,7 +151,7 @@ function maxIsoTimestamp(a: string | null, b: string | null): string | null {
 
 export interface TimelineDurationMessage {
   id: string;
-  role: "user" | "assistant" | "system";
+  role: ChatMessage["role"];
   createdAt: string;
   updatedAt: string;
   streaming: boolean;
@@ -306,7 +306,7 @@ interface TurnFold {
  * user sends a message, the previous turn is still the "active" one until the
  * server creates the new turn, and folding must not flicker through that window.
  */
-function deriveUnsettledTurnId(
+export function deriveUnsettledTurnId(
   latestTurn: TimelineLatestTurn | null,
   runningTurnId: TurnId | null,
 ): TurnId | null {
@@ -351,8 +351,11 @@ function deriveTurnFolds(input: {
       pendingUserBoundary = entry.message.createdAt;
       continue;
     }
+    // Thinking is work, so it folds with the rest of it. Nothing folds while
+    // the turn is live, which is when traces are watched.
     const turnId =
-      entry.kind === "message" && entry.message.role === "assistant"
+      entry.kind === "message" &&
+      (entry.message.role === "assistant" || entry.message.role === "reasoning")
         ? (entry.message.turnId ?? null)
         : entry.kind === "work"
           ? (entry.entry.turnId ?? null)
@@ -379,7 +382,10 @@ function deriveTurnFolds(input: {
       if (input.terminalAssistantMessageIds.has(entry.message.id)) {
         group.terminalEntry = entry;
       }
-      if (entry.message.streaming) {
+      // A live turn is excluded below, so only an answer still being written
+      // may hold a fold open. A thinking block stranded by a crashed provider
+      // keeps its streaming flag forever and must not.
+      if (entry.message.streaming && entry.message.role !== "reasoning") {
         group.hasStreamingMessage = true;
       }
     }
@@ -399,7 +405,14 @@ function deriveTurnFolds(input: {
         hiddenEntryIds.add(entry.id);
       }
     }
-    if (hiddenEntryIds.size === 0) {
+    // A question answered by thought alone keeps its "Thought" row rather than
+    // collapsing behind a "Worked for ..." that hides nothing else.
+    const hidesWork = group.entries.some(
+      (entry) =>
+        hiddenEntryIds.has(entry.id) &&
+        !(entry.kind === "message" && entry.message.role === "reasoning"),
+    );
+    if (!hidesWork) {
       continue;
     }
 

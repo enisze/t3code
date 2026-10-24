@@ -13,9 +13,14 @@ import { mergeEnvironmentThread } from "./threadDetail.ts";
 
 type Fields = { readonly [key: string]: unknown };
 
-// A streamed reply rewrites these on its assistant message with every delta.
-// The comparison skips them and the structure drops them, from this one list.
+// A streamed reply rewrites these on its assistant (or reasoning) message with
+// every delta. The comparison skips them and the structure drops them, from
+// this one list.
 const STREAMED_MESSAGE_FIELDS: ReadonlySet<string> = new Set(["text", "updatedAt"]);
+
+function streamsText(message: OrchestrationMessage): boolean {
+  return message.role === "assistant" || message.role === "reasoning";
+}
 // Every thread event restamps the thread's and the shell's `updatedAt`.
 const STAMP_FIELDS: ReadonlySet<string> = new Set(["updatedAt"]);
 const THREAD_FIELDS_COMPARED_APART: ReadonlySet<string> = new Set(["updatedAt", "messages"]);
@@ -58,7 +63,7 @@ function sameFields(left: object, right: object, ignored: ReadonlySet<string>): 
 }
 
 function streamedFields(message: OrchestrationMessage): ReadonlySet<string> {
-  return message.role === "assistant" ? STREAMED_MESSAGE_FIELDS : NO_FIELDS;
+  return streamsText(message) ? STREAMED_MESSAGE_FIELDS : NO_FIELDS;
 }
 
 function sameMessageStructures(
@@ -92,7 +97,7 @@ function withoutFields(value: object, fields: ReadonlySet<string>): Fields {
 const messageStructures = new WeakMap<OrchestrationMessage, ThreadStructureMessage>();
 
 function toMessageStructure(message: OrchestrationMessage): ThreadStructureMessage {
-  if (message.role !== "assistant") return message;
+  if (message.role !== "assistant" && message.role !== "reasoning") return message;
   let structure = messageStructures.get(message);
   if (structure === undefined) {
     structure = withoutFields(message, STREAMED_MESSAGE_FIELDS) as ThreadStructureMessage;
