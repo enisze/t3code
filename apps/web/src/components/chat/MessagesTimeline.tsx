@@ -1802,8 +1802,20 @@ function DiffTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "diff" }> 
 }
 
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
+  const { expandedReasoningMessageIds } = use(TimelineRowCtx);
+  // An open trace already shows the whole thought.
+  const thought =
+    row.thought && !expandedReasoningMessageIds.has(row.thought.messageId)
+      ? row.thought.line
+      : null;
   return (
     <div className="py-0.5 pl-1.5">
+      {thought ? (
+        <p className="flex min-w-0 items-start gap-1.5 pt-1 text-[12px] leading-5 text-muted-foreground">
+          <BrainIcon aria-hidden className="mt-0.5 size-3.5 shrink-0 opacity-70" />
+          <span className="line-clamp-4 min-w-0">{thought}</span>
+        </p>
+      ) : null}
       <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70 tabular-nums">
         <span className="inline-flex items-center gap-[3px]">
           <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse" />
