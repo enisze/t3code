@@ -152,8 +152,8 @@ The slash menu includes the provider's own commands for the project, such as
 OpenCode project commands. Cursor reports its commands when a session starts, so
 they appear after your first message in a project.
 
-The slash menu also includes skills unless you turn off **Settings → General →
-Show skills in slash menu**. Only skills enabled for the provider are listed.
+The `$` menu lists only skills enabled for the provider. On mobile, the slash menu
+lists them too.
 
 After you add or change skills, plugins, or MCP servers, use **Restart agent
 session** in the command palette on web and desktop. The conversation continues,
