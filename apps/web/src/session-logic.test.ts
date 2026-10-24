@@ -1755,3 +1755,152 @@ describe("deriveDiffShownEntries", () => {
     ]);
   });
 });
+
+describe("subagent spawn rows", () => {
+  function agentTask(
+    id: string,
+    kind: string,
+    taskId: string,
+    overrides: { createdAt: string; turnId?: string; payload?: Record<string, unknown> },
+  ) {
+    return makeActivity({
+      id,
+      kind,
+      createdAt: overrides.createdAt,
+      turnId: overrides.turnId ?? "turn-1",
+      summary: kind,
+      tone: "info",
+      payload: { taskId, agentKind: "agent", ...overrides.payload },
+    });
+  }
+
+  it("folds a batch into one row that replaces its launch calls and the agents' own work", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        id: "launch-running",
+        kind: "tool.updated",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        turnId: "turn-1",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          toolCallId: "toolu-1",
+          status: "inProgress",
+          data: { toolName: "Agent" },
+        },
+      }),
+      agentTask("start-1", "task.started", "task-1", {
+        createdAt: "2026-02-23T00:00:02.000Z",
+        payload: { taskType: "subagent", toolUseId: "toolu-1", title: "Map the auth flow" },
+      }),
+      agentTask("start-2", "task.started", "task-2", {
+        createdAt: "2026-02-23T00:00:03.000Z",
+        payload: { taskType: "subagent", toolUseId: "toolu-2", title: "Check the tests" },
+      }),
+      makeActivity({
+        id: "agent-own-tool",
+        kind: "tool.completed",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        turnId: "turn-1",
+        payload: { itemType: "command_execution", toolCallId: "toolu-inner", agentId: "task-1" },
+      }),
+      agentTask("progress-1", "task.progress", "task-1", {
+        createdAt: "2026-02-23T00:00:05.000Z",
+        payload: { summary: "Reading src/auth.ts" },
+      }),
+      agentTask("done-1", "task.completed", "task-1", {
+        createdAt: "2026-02-23T00:00:06.000Z",
+        payload: { status: "completed", summary: "Auth goes through middleware." },
+      }),
+      makeActivity({
+        id: "launch-done",
+        kind: "tool.completed",
+        createdAt: "2026-02-23T00:00:07.000Z",
+        turnId: "turn-1",
+        payload: { itemType: "collab_agent_tool_call", toolCallId: "toolu-1" },
+      }),
+      makeActivity({
+        id: "parent-tool",
+        kind: "tool.completed",
+        createdAt: "2026-02-23T00:00:08.000Z",
+        turnId: "turn-1",
+        payload: { itemType: "command_execution", toolCallId: "toolu-parent" },
+      }),
+    ]);
+
+    expect(entries.map((entry) => entry.id)).toEqual(["start-1", "parent-tool"]);
+    const [spawnRow] = entries;
+    expect(spawnRow?.toolLifecycleStatus).toBe("inProgress");
+    expect(spawnRow?.agentSpawn?.agentTaskIds).toEqual(["task-1", "task-2"]);
+    expect(
+      spawnRow?.agentSpawn?.agents.map((agent) => [agent.title, agent.status, agent.result]),
+    ).toEqual([
+      ["Map the auth flow", "completed", "Auth goes through middleware."],
+      ["Check the tests", "running", null],
+    ]);
+  });
+
+  it("keeps an agent in its spawn turn's batch when it settles under a later turn", () => {
+    const entries = deriveWorkLogEntries([
+      agentTask("start-1", "task.started", "task-1", {
+        createdAt: "2026-02-23T00:00:01.000Z",
+        payload: { title: "Watch the deploy" },
+      }),
+      agentTask("done-1", "task.completed", "task-1", {
+        createdAt: "2026-02-23T00:05:00.000Z",
+        turnId: "turn-2",
+        payload: { status: "completed" },
+      }),
+    ]);
+
+    expect(entries.map((entry) => [entry.id, entry.turnId])).toEqual([["start-1", "turn-1"]]);
+    expect(entries[0]?.toolLifecycleStatus).toBe("completed");
+  });
+
+  it("stops agents whose session can no longer report", () => {
+    const activities = [
+      agentTask("start-1", "task.started", "task-1", {
+        createdAt: "2026-02-23T00:00:01.000Z",
+        payload: { title: "Long survey" },
+      }),
+    ];
+
+    expect(deriveWorkLogEntries(activities)[0]?.toolLifecycleStatus).toBe("inProgress");
+    const [stopped] = deriveWorkLogEntries(activities, { sessionLive: false });
+    expect(stopped?.toolLifecycleStatus).toBe("stopped");
+    expect(stopped?.agentSpawn?.agents.map((agent) => agent.status)).toEqual(["interrupted"]);
+  });
+
+  it("hides children's status patches and bypassed rows, but not background tasks", () => {
+    const entries = deriveWorkLogEntries([
+      agentTask("child-start", "task.started", "child-1", {
+        createdAt: "2026-02-23T00:00:01.000Z",
+        payload: { title: "math_one", timelineBypass: true },
+      }),
+      agentTask("child-idle", "task.updated", "child-1", {
+        createdAt: "2026-02-23T00:00:02.000Z",
+        payload: { status: "idle", timelineBypass: true },
+      }),
+      makeActivity({
+        id: "child-tool",
+        kind: "tool.completed",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        turnId: "turn-1",
+        payload: { itemType: "command_execution", timelineBypass: true },
+      }),
+      makeActivity({
+        id: "shell-progress",
+        kind: "task.progress",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        turnId: "turn-1",
+        summary: "Run dev server",
+        tone: "info",
+        payload: { taskId: "shell-1", agentKind: "background", taskType: "local_bash" },
+      }),
+    ]);
+
+    expect(entries.map((entry) => entry.id)).toEqual(["child-start", "shell-progress"]);
+    expect(entries[0]?.agentSpawn?.agents.map((agent) => [agent.title, agent.status])).toEqual([
+      ["math_one", "idle"],
+    ]);
+  });
+});

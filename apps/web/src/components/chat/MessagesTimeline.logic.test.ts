@@ -580,6 +580,66 @@ describe("deriveMessagesTimelineRows", () => {
     ).toBeDefined();
   });
 
+  it("keeps a spawn row with working subagents outside its settled turn's fold", () => {
+    const timelineEntries = (spawnStatus: "inProgress" | "completed") => [
+      {
+        id: "spawn-entry",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:02Z",
+        entry: {
+          id: "spawn",
+          createdAt: "2026-01-01T00:00:02Z",
+          turnId: "turn-1" as never,
+          label: "Task started",
+          tone: "tool" as const,
+          toolLifecycleStatus: spawnStatus,
+          agentSpawn: { workflowId: null, agentTaskIds: ["task-1"], workflow: null, agents: [] },
+        },
+      },
+      {
+        id: "work-entry",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:03Z",
+        entry: {
+          id: "work-1",
+          createdAt: "2026-01-01T00:00:03Z",
+          turnId: "turn-1" as never,
+          label: "Ran command",
+          tone: "tool" as const,
+        },
+      },
+      {
+        id: "assistant-final-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:20Z",
+        message: {
+          id: "assistant-final" as never,
+          role: "assistant" as const,
+          text: "Started the survey.",
+          turnId: "turn-1" as never,
+          createdAt: "2026-01-01T00:00:20Z",
+          updatedAt: "2026-01-01T00:00:21Z",
+          streaming: false,
+        },
+      },
+    ];
+    const rowIds = (spawnStatus: "inProgress" | "completed") =>
+      deriveMessagesTimelineRows({
+        timelineEntries: timelineEntries(spawnStatus),
+        isWorking: false,
+        activeTurnStartedAt: null,
+        turnDiffSummaryByAssistantMessageId: new Map(),
+        revertTurnCountByUserMessageId: new Map(),
+      }).map((row) => row.id);
+
+    expect(rowIds("inProgress")).toEqual([
+      "turn-fold:turn-1",
+      "spawn-entry",
+      "assistant-final-entry",
+    ]);
+    expect(rowIds("completed")).toEqual(["turn-fold:turn-1", "assistant-final-entry"]);
+  });
+
   it("derives a sane duration for a steer-superseded turn with one instant commentary message", () => {
     // A steer ends the previous turn early: its only message completes the
     // instant it is created, and trailing work entries land after it. The

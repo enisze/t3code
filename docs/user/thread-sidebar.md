@@ -127,7 +127,8 @@ for custom configuration.
 
 ## Inspect agent work
 
-On web and desktop, use **Agents** to follow work delegated to subagents.
+Each batch of subagents an agent starts appears as one row in the conversation.
+Expand it to see each subagent's status and its latest activity or result.
 
 Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it

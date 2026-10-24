@@ -4,6 +4,23 @@ import {
   type RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 
+/** Summarizes a spawn row's batch; a workflow's coordinator is in the batch but not a member. */
+export function summarizeAgentSpawn(spawn: {
+  workflowId: string | null;
+  agentTaskIds: ReadonlyArray<string>;
+  workflow: Pick<RuntimeSubagent, "status"> | null;
+  agents: ReadonlyArray<Pick<RuntimeSubagent, "kind" | "status">>;
+}) {
+  return deriveAgentSpawnSummary({
+    agents: spawn.agents,
+    agentCount: Math.max(
+      spawn.agents.length,
+      spawn.agentTaskIds.length - (spawn.workflowId ? 1 : 0),
+    ),
+    coordinatorStatus: spawn.workflow?.status,
+  });
+}
+
 /** Summarize observed states without treating idle or missing agents as completed. */
 export function deriveAgentSpawnSummary({
   agents,
