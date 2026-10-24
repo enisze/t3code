@@ -32,6 +32,7 @@ import {
   composerAttachmentUploadBlockReason,
   composerAttachmentUploadsAtom,
 } from "../../state/composer-attachment-uploads";
+import { getComposerDraftSnapshot } from "../../state/use-composer-drafts";
 import Animated, {
   FadeIn,
   FadeInDown,
@@ -129,7 +130,8 @@ export interface ThreadComposerProps {
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
-  readonly onSendMessage: () => Promise<MessageId | null>;
+  /** `stillSendable` reports whether the draft is unchanged after any wait before sending. */
+  readonly onSendMessage: (stillSendable?: () => boolean) => Promise<MessageId | null>;
   /** `/usage-limits` resolves locally; the host decides where the report shows. Null clears it. */
   readonly onShowUsageLimits: (report: UsageLimitsReport | null) => void;
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => void;
@@ -313,6 +315,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const settingsRoutePresentedRef = useRef(false);
   const wasExpandedBeforePreviewRef = useRef(false);
   const inFlightThreadIdsRef = useRef(new Set<string>());
+  const pendingNativeImagePasteCountRef = useRef(0);
   const { onExpandedChange } = props;
 
   const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
@@ -475,12 +478,24 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       if (openUsageLimits()) onChangeDraftMessage("");
       return;
     }
-    if (voiceInput.blocksSubmission) return;
+    if (voiceInput.blocksSubmission || pendingNativeImagePasteCountRef.current > 0) return;
     const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
     if (inFlightThreadIdsRef.current.has(threadKey)) return;
     inFlightThreadIdsRef.current.add(threadKey);
+    const draftAtSend = getComposerDraftSnapshot(threadKey);
+    const stillSendable = () => {
+      const draft = getComposerDraftSnapshot(threadKey);
+      return (
+        pendingNativeImagePasteCountRef.current === 0 &&
+        draft.text === draftAtSend.text &&
+        draft.attachments.length === draftAtSend.attachments.length &&
+        draft.attachments.every(
+          (attachment, index) => attachment.id === draftAtSend.attachments[index]?.id,
+        )
+      );
+    };
     try {
-      const messageId = await onSendMessage();
+      const messageId = await onSendMessage(stillSendable);
       if (messageId === null) {
         return;
       }
@@ -708,7 +723,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 selection={composerMenu.selection}
                 onChangeText={props.onChangeDraftMessage}
                 onSelectionChange={composerMenu.onSelectionChange}
-                onPasteImages={(uris) => void props.onNativePasteImages(uris)}
+                onPasteImages={(uris) => {
+                  pendingNativeImagePasteCountRef.current += 1;
+                  void props.onNativePasteImages(uris).finally(() => {
+                    pendingNativeImagePasteCountRef.current -= 1;
+                  });
+                }}
                 placeholder={props.placeholder}
                 onFocus={handleFocus}
                 onBlur={handleBlur}

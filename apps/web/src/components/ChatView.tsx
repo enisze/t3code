@@ -27,6 +27,7 @@ import {
   connectionStatusTitle,
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
+import { declinePendingApprovals } from "@t3tools/client-runtime/pending-requests";
 import { effectiveSettled, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
   parseScopedThreadKey,
@@ -2216,6 +2217,16 @@ function ChatViewContent(props: ChatViewProps) {
     latestTurnSettled &&
     hasActionableProposedPlan(activeProposedPlan);
   const activePendingApproval = pendingApprovals[0] ?? null;
+  // A send declines pending approvals before it dispatches, so it reads the
+  // approvals and the route as they are once the declines return.
+  const pendingApprovalsRef = useRef(pendingApprovals);
+  const respondingRequestIdsRef = useRef(respondingRequestIds);
+  const routeThreadKeyRef = useRef(routeThreadKey);
+  useLayoutEffect(() => {
+    pendingApprovalsRef.current = pendingApprovals;
+    respondingRequestIdsRef.current = respondingRequestIds;
+    routeThreadKeyRef.current = routeThreadKey;
+  }, [pendingApprovals, respondingRequestIds, routeThreadKey]);
   const {
     beginLocalDispatch,
     resetLocalDispatch,
@@ -4742,6 +4753,34 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
 
+  const onRespondToApproval = useCallback(
+    async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
+      if (!activeThreadId) return;
+
+      setRespondingRequestIds((existing) =>
+        existing.includes(requestId) ? existing : [...existing, requestId],
+      );
+      const result = await respondToThreadApproval({
+        environmentId,
+        input: {
+          threadId: activeThreadId,
+          requestId,
+          decision,
+        },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        setThreadError(
+          activeThreadId,
+          error instanceof Error ? error.message : "Failed to submit approval decision.",
+        );
+      }
+      setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
+      return result;
+    },
+    [activeThreadId, environmentId, respondToThreadApproval, setThreadError],
+  );
+
   const queuedMessages = useQueuedMessages(activeThreadKey ?? "");
   // The composer's model and modes, as a queued message keeps them for its send.
   const readComposerSendSettings = (
@@ -5044,10 +5083,13 @@ function ChatViewContent(props: ChatViewProps) {
     // A send during a running turn steers it, or waits in the queue when
     // follow-ups queue. A queued message leaves on the next tool boundary,
     // when the turn ends, or when the user sends it now, even with another
-    // thread open (QueuedMessageSender).
+    // thread open (QueuedMessageSender). During an approval a send declines
+    // it and steers the waiting turn instead; queued, it would wait behind it.
+    const followUpBehavior = activePendingApproval !== null ? "steer" : settings.followUpBehavior;
     // A queued message that will still leave on its own goes first, so a new
     // send lines up behind it instead of overtaking it.
     const queueStillSending =
+      activePendingApproval === null &&
       activeThreadKey !== null &&
       (useQueuedMessageStore.getState().queuesByThreadKey[activeThreadKey] ?? []).some(
         (message) => message.sending !== undefined || !message.holdUntilUserAction,
@@ -5056,7 +5098,7 @@ function ChatViewContent(props: ChatViewProps) {
       activeThreadKey &&
       (queueStillSending ||
         (phase === "running" &&
-          (settings.followUpBehavior === "queue") !== (submissionIntent === "alternate")))
+          (followUpBehavior === "queue") !== (submissionIntent === "alternate")))
     ) {
       useQueuedMessageStore.getState().enqueue(activeThreadKey, {
         prompt: promptForSend,
@@ -5098,6 +5140,62 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     sendInFlightRef.current = true;
+    // A message sent while approvals are pending redirects the agent. They are
+    // declined only here, after everything above has accepted the send, so
+    // slash commands and rejected drafts leave them alone.
+    const approvalsToDecline = pendingApprovalsRef.current;
+    if (approvalsToDecline.length > 0) {
+      const draftAttachmentIds = () => {
+        const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+        return [...(draft?.images ?? []), ...(draft?.documents ?? [])].map(
+          (attachment) => attachment.id,
+        );
+      };
+      const attachmentIdsAtSend = draftAttachmentIds();
+      const approvalResponding = approvalsToDecline.some((approval) =>
+        respondingRequestIdsRef.current.includes(approval.requestId),
+      );
+      const declined =
+        !approvalResponding &&
+        (await declinePendingApprovals(approvalsToDecline, onRespondToApproval).catch(() => false));
+      // A draft edited while the declines were in flight is no longer the
+      // message the user sent.
+      const attachmentIds = draftAttachmentIds();
+      const draftChanged =
+        promptRef.current !== promptForSend ||
+        attachmentIds.length !== attachmentIdsAtSend.length ||
+        attachmentIds.some((id, index) => id !== attachmentIdsAtSend[index]);
+      // An approval that arrived during the declines would block the redirect;
+      // the draft stays so the next send declines it too.
+      const approvalArrived = pendingApprovalsRef.current.some(
+        (approval) =>
+          !approvalsToDecline.some((declining) => declining.requestId === approval.requestId),
+      );
+      if (
+        !declined ||
+        draftChanged ||
+        approvalArrived ||
+        routeThreadKeyRef.current !== routeThreadKey
+      ) {
+        sendInFlightRef.current = false;
+        if (draftChanged || approvalResponding || (declined && approvalArrived)) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "info",
+              title: draftChanged
+                ? declined
+                  ? "Approval declined. Your message changed, so it wasn't sent."
+                  : "Your message changed, so it wasn't sent."
+                : approvalResponding
+                  ? "An approval is already being answered, so your message wasn't sent."
+                  : "Another approval arrived, so your message wasn't sent.",
+              description: "Send again when it's ready.",
+            }),
+          );
+        }
+        return;
+      }
+    }
     // Sending leaves an open file/diff/preview tab in place: the composer stays
     // docked below it, so the user can keep reviewing while the turn runs.
     setMaximizedRightPanelThreadKey(null);
@@ -5448,34 +5546,6 @@ function ChatViewContent(props: ChatViewProps) {
       );
     }
   };
-
-  const onRespondToApproval = useCallback(
-    async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
-      if (!activeThreadId) return;
-
-      setRespondingRequestIds((existing) =>
-        existing.includes(requestId) ? existing : [...existing, requestId],
-      );
-      const result = await respondToThreadApproval({
-        environmentId,
-        input: {
-          threadId: activeThreadId,
-          requestId,
-          decision,
-        },
-      });
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        setThreadError(
-          activeThreadId,
-          error instanceof Error ? error.message : "Failed to submit approval decision.",
-        );
-      }
-      setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
-      return result;
-    },
-    [activeThreadId, environmentId, respondToThreadApproval, setThreadError],
-  );
 
   const onRespondToUserInput = useCallback(
     async (requestId: ApprovalRequestId, answers: Record<string, unknown>) => {

@@ -1,6 +1,7 @@
 import {
   ApprovalRequestId,
   type OrchestrationThreadActivity,
+  type ProviderApprovalDecision,
   ProviderApprovalOption,
   ProviderRequestKind,
   UserInputQuestion,
@@ -8,6 +9,8 @@ import {
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
+
+import type { AtomCommandResult } from "./state/runtime.ts";
 
 export interface PendingApproval {
   readonly requestId: ApprovalRequestId;
@@ -24,6 +27,22 @@ export interface PendingUserInput {
   readonly questions: ReadonlyArray<UserInputQuestion>;
   /** Async questions can be dismissed without a reply; native callbacks cannot. */
   readonly dismissible: boolean;
+}
+
+export type ApprovalResponder = (
+  requestId: ApprovalRequestId,
+  decision: ProviderApprovalDecision,
+) => Promise<AtomCommandResult<unknown, unknown> | undefined>;
+
+/** Declines every approval a redirect replaces; any one still pending would block the agent. */
+export async function declinePendingApprovals(
+  approvals: ReadonlyArray<Pick<PendingApproval, "requestId">>,
+  respond: ApprovalResponder,
+): Promise<boolean> {
+  for (const approval of approvals) {
+    if ((await respond(approval.requestId, "decline"))?._tag !== "Success") return false;
+  }
+  return true;
 }
 
 const isRequestId = Schema.is(ApprovalRequestId);
