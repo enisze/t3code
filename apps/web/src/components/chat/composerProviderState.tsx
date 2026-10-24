@@ -19,7 +19,12 @@ import type { buttonVariants } from "../ui/button";
 import type { DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
 import type { ComposerControlSize } from "./ComposerControl";
-import { shouldRenderTraitsControls, TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
+import {
+  getReasoningTraitStep,
+  shouldRenderTraitsControls,
+  TraitsMenuContent,
+  TraitsPicker,
+} from "./TraitsPicker";
 
 export type ComposerProviderStateInput = {
   provider: ProviderDriverKind;
@@ -114,6 +119,48 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
           modelPickerIconClassName: "ultrathink-chroma",
         }
       : {}),
+  };
+}
+
+/**
+ * `cursor` is an expanded caret in `prompt`; the result's `cursor` keeps it on
+ * the same character when the Ultrathink prefix is added or removed.
+ */
+export function getComposerReasoningStep(input: {
+  provider: ProviderDriverKind;
+  model: string;
+  models: ReadonlyArray<ServerProviderModel>;
+  modelOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined;
+  prompt: string;
+  cursor: number;
+  direction: 1 | -1;
+}): {
+  prompt: string;
+  cursor: number;
+  modelOptions?: ReadonlyArray<ProviderOptionSelection>;
+} | null {
+  const { prompt, cursor } = input;
+  const step = getReasoningTraitStep({
+    provider: input.provider,
+    model: input.model,
+    models: input.models,
+    modelOptions: input.modelOptions,
+    prompt,
+    direction: input.direction,
+  });
+  if (!step) return null;
+  const modelOptions = "modelOptions" in step ? { modelOptions: step.modelOptions } : {};
+  if (step.prompt === prompt) return { prompt, cursor, ...modelOptions };
+  // Adding the prefix also trims the prompt, so the kept text starts right after the prefix.
+  const keptStart = "modelOptions" in step ? 0 : step.prompt.length - prompt.trim().length;
+  const offset =
+    "modelOptions" in step
+      ? step.prompt.length - prompt.length
+      : keptStart - (prompt.length - prompt.trimStart().length);
+  return {
+    prompt: step.prompt,
+    cursor: Math.min(step.prompt.length, Math.max(keptStart, cursor + offset)),
+    ...modelOptions,
   };
 }
 

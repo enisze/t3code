@@ -14,6 +14,11 @@ its turn (the default) or queues. Use `mod+Enter` to do the opposite for one
 message. When sending requires `mod+Enter`, use `mod+Shift+Enter` for the opposite
 action.
 
+To change effort one step without opening the picker, bind
+**Composer: Increase Effort** and **Composer: Decrease Effort** in Keybindings.
+Both are unbound by default. Increase wraps from the highest level to the
+lowest, and decrease wraps from the lowest level to the highest.
+
 ## Edit the configuration file
 
 Keybindings live on the environment's machine, in

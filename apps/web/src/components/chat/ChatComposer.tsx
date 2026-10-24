@@ -105,6 +105,7 @@ import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 import {
   getComposerPromptInjectionState,
   getComposerProviderState,
+  getComposerReasoningStep,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
 } from "./composerProviderState";
@@ -485,6 +486,7 @@ export interface ChatComposerHandle {
   focusAt: (cursor: number) => void;
   insertTextAtEnd: (text: string, options?: { ensureLeadingBoundary?: boolean }) => boolean;
   openModelPicker: () => void;
+  stepReasoningEffort: (direction: 1 | -1) => void;
   toggleModelPicker: () => void;
   isModelPickerOpen: () => boolean;
   readSnapshot: () => {
@@ -1646,7 +1648,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       rangeStart: number,
       rangeEnd: number,
       replacement: string,
-      options?: { expectedText?: string; focusEditorAfterReplace?: boolean },
+      options?: {
+        expectedText?: string;
+        expandedCursorAfterReplace?: number;
+        focusEditorAfterReplace?: boolean;
+      },
     ): boolean => {
       const currentText = promptRef.current;
       const safeStart = Math.max(0, Math.min(currentText.length, rangeStart));
@@ -1658,7 +1664,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return false;
       }
       const next = replaceTextRange(promptRef.current, rangeStart, rangeEnd, replacement);
-      const nextCursor = collapseExpandedComposerCursor(next.text, next.cursor);
+      const nextCursor = collapseExpandedComposerCursor(
+        next.text,
+        options?.expandedCursorAfterReplace ?? next.cursor,
+      );
       const nextExpandedCursor = expandCollapsedComposerCursor(next.text, nextCursor);
       promptRef.current = next.text;
       const activePendingQuestion = activePendingProgress?.activeQuestion;
@@ -2644,6 +2653,34 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       openModelPicker: () => {
         setIsComposerModelPickerOpen(true);
       },
+      stepReasoningEffort: (direction) => {
+        // A pending question puts its answer, not the prompt, in the editor.
+        if (noProviderAvailable || pendingUserInputs.length > 0) return;
+        const change = getComposerReasoningStep({
+          provider: selectedProvider,
+          model: selectedModel,
+          models: selectedProviderModels,
+          modelOptions: composerModelOptions?.[selectedInstanceId],
+          prompt: promptRef.current,
+          cursor: readComposerSnapshot().expandedCursor,
+          direction,
+        });
+        if (!change) return;
+        if (change.modelOptions) {
+          useComposerDraftStore
+            .getState()
+            .setProviderModelOptions(composerDraftTarget, selectedProvider, change.modelOptions, {
+              instanceId: selectedInstanceId,
+              model: selectedModel,
+              persistSticky: true,
+            });
+        }
+        if (change.prompt !== promptRef.current) {
+          applyPromptReplacement(0, promptRef.current.length, change.prompt, {
+            expandedCursorAfterReplace: change.cursor,
+          });
+        }
+      },
       toggleModelPicker: () => {
         setIsComposerModelPickerOpen((open) => !open);
       },
@@ -2724,6 +2761,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [
       activeThread,
       composerDraftTarget,
+      composerModelOptions,
       composerCursor,
       composerTerminalContexts,
       insertComposerDraftTerminalContext,
@@ -2741,6 +2779,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       isComposerModelPickerOpen,
       readComposerSnapshot,
       selectedModel,
+      selectedInstanceId,
       selectedModelOptionsForDispatch,
       selectedModelSelection,
       noProviderAvailable,
