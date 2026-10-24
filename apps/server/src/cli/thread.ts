@@ -860,7 +860,7 @@ const threadShowCommand = Command.make("show", {
             shell.threads.find((candidate) => candidate.id === threadId) ?? thread,
           );
           const messages = thread.messages
-            .filter((message) => message.role !== "system")
+            .filter((message) => message.role !== "system" && message.role !== "reasoning")
             .slice(-flags.messages)
             .map((message) => ({
               messageId: message.id,

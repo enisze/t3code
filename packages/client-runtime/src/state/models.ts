@@ -25,9 +25,15 @@ export interface EnvironmentThread extends OrchestrationThread {
  * `text` or `updatedAt`, the fields a streamed reply rewrites, so a reader of
  * the structure cannot show text that went stale while the reply streams.
  */
+/** Roles whose text streams in deltas; their structure carries no text. */
+export type StreamedMessageRole = "assistant" | "reasoning";
+
 export type ThreadStructureMessage =
   | (Omit<OrchestrationMessage, "role" | "text" | "updatedAt"> & { readonly role: "assistant" })
-  | (OrchestrationMessage & { readonly role: Exclude<OrchestrationMessage["role"], "assistant"> });
+  | (Omit<OrchestrationMessage, "role" | "text" | "updatedAt"> & { readonly role: "reasoning" })
+  | (OrchestrationMessage & {
+      readonly role: Exclude<OrchestrationMessage["role"], StreamedMessageRole>;
+    });
 
 /**
  * A thread without what changes while a reply streams: assistant text and the

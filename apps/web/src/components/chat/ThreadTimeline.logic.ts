@@ -5,12 +5,17 @@ import type { ChatMessageStructure } from "../../types";
 
 type StructureEntry = TimelineEntry<ChatMessageStructure>;
 
+// Assistant replies and reasoning traces stream their text; the structure
+// carries neither, so their text comes from the live messages.
+const streamsText = (role: OrchestrationMessage["role"]) =>
+  role === "assistant" || role === "reasoning";
+
 export function indexLiveAssistantMessages(
   messages: ReadonlyArray<OrchestrationMessage>,
 ): ReadonlyMap<string, OrchestrationMessage> {
   const byId = new Map<string, OrchestrationMessage>();
   for (const message of messages) {
-    if (message.role === "assistant") byId.set(message.id, message);
+    if (streamsText(message.role)) byId.set(message.id, message);
   }
   return byId;
 }
@@ -28,13 +33,13 @@ function renderedEntry(
 ): TimelineEntry {
   if (entry.kind !== "message") return entry;
   const { message } = entry;
-  const live = message.role === "assistant" ? liveAssistantMessages.get(message.id) : undefined;
+  const live = streamsText(message.role) ? liveAssistantMessages.get(message.id) : undefined;
   const cached = renderedEntries.get(entry);
   if (cached !== undefined && cached.live === live) return cached.entry;
   const rendered: TimelineEntry = {
     ...entry,
     message:
-      message.role === "assistant"
+      message.role === "assistant" || message.role === "reasoning"
         ? {
             ...message,
             text: live?.text ?? "",

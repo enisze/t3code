@@ -644,6 +644,8 @@ export const ServerConfig = Schema.Struct({
   threadSnapshotPagination: Schema.optionalKey(Schema.Boolean),
   /** Whether `orchestration.searchThread` finds text in one thread's messages and plans. */
   threadFind: Schema.optionalKey(Schema.Boolean),
+  /** Whether thread reads accept the reasoningMessages opt-in. */
+  reasoningMessages: Schema.optionalKey(Schema.Boolean),
   /**
    * Palettes published by this environment's machine. Never sent in a config
    * snapshot: the theme stream emits the current set before any change, so a
