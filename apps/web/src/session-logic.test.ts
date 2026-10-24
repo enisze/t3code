@@ -248,6 +248,7 @@ describe("derivePendingUserInputs", () => {
       {
         requestId: "req-user-input-1",
         createdAt: "2026-02-23T00:00:01.000Z",
+        dismissible: false,
         questions: [
           {
             id: "sandbox_mode",
@@ -263,6 +264,44 @@ describe("derivePendingUserInputs", () => {
           },
         ],
       },
+    ]);
+  });
+
+  it("only marks async questions as dismissible", () => {
+    const question = {
+      id: "0",
+      header: "Question",
+      question: "Continue?",
+      options: [{ label: "Yes", description: "" }],
+      multiSelect: false,
+    };
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "async-question",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: { requestId: "async-1", responseMode: "message", questions: [question] },
+      }),
+      makeActivity({
+        id: "native-question",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: { requestId: "native-1", questions: [question] },
+      }),
+    ];
+
+    expect(
+      derivePendingUserInputs(activities).map(({ requestId, dismissible }) => ({
+        requestId,
+        dismissible,
+      })),
+    ).toEqual([
+      { requestId: "async-1", dismissible: true },
+      { requestId: "native-1", dismissible: false },
     ]);
   });
 
