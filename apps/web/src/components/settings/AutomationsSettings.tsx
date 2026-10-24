@@ -550,7 +550,9 @@ function AutomationEditor({
           <fieldset className="min-w-0 space-y-2">
             <legend className="text-sm">Filters</legend>
             <p className="text-xs text-muted-foreground">
-              Run only when every filter matches. Other deliveries are answered and ignored.
+              Run only when every filter matches. Other deliveries are answered and ignored. A path
+              segment ending in [] tests each item of a list, such as
+              body.pull_request.labels[].name.
             </p>
             {filters.map((filter, index) => {
               const update = (patch: Partial<WebhookFilterDraft>) =>

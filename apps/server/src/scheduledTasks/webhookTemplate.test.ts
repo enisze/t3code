@@ -42,6 +42,20 @@ describe("renderWebhookPrompt", () => {
     );
   });
 
+  it("renders a [] wildcard as the list of matching values", () => {
+    expect(
+      renderWebhookPrompt(
+        "Labels: {{body.pull_request.labels[]}} Names: {{body.reviewers[].login}}",
+        {
+          body: {
+            pull_request: { labels: ["bug", "ui"] },
+            reviewers: [{ login: "ada" }, { name: "no login" }, { login: "bob" }],
+          },
+        },
+      ),
+    ).toBe('Labels: [\n  "bug",\n  "ui"\n] Names: [\n  "ada",\n  "bob"\n]');
+  });
+
   it("does not read inherited properties", () => {
     expect(renderWebhookPrompt("[{{body.constructor}}][{{body.__proto__}}]", request)).toBe("[][]");
   });
@@ -108,6 +122,72 @@ describe("failedWebhookFilter", () => {
     }
     expect(
       failedWebhookFilter([{ path: "body.pull_request", op: "notEquals", value: "x" }], request),
+    ).not.toBeNull();
+    // A list without a wildcard in the path only satisfies exists.
+    expect(
+      failedWebhookFilter(
+        [{ path: "body.pull_request.labels", op: "equals", value: "bug" }],
+        request,
+      ),
+    ).not.toBeNull();
+  });
+
+  const issueComment = {
+    body: {
+      action: "created",
+      issue: { number: 7, labels: [{ name: "bug" }, { name: "needs more info" }], assignees: [] },
+    },
+    headers: { "x-github-event": "issue_comment" },
+  };
+
+  it("matches a [] wildcard path when any element matches", () => {
+    expect(
+      failedWebhookFilter(
+        [
+          { path: "body.issue.labels[].name", op: "equals", value: "needs more info" },
+          { path: "body.issue.labels[].name", op: "in", value: ["needs more info", "triage"] },
+          { path: "body.issue.labels[].name", op: "startsWith", value: "needs" },
+          { path: "body.issue.labels[].name", op: "exists" },
+          { path: "body.issue.labels[]", op: "exists" },
+        ],
+        issueComment,
+      ),
+    ).toBeNull();
+    expect(
+      failedWebhookFilter(
+        [{ path: "body.issue.labels[].name", op: "equals", value: "wontfix" }],
+        issueComment,
+      ),
+    ).toBe("Filter 1 (body.issue.labels[].name) did not match.");
+  });
+
+  it("fails notEquals on a [] wildcard path when any element equals the value", () => {
+    expect(
+      failedWebhookFilter(
+        [{ path: "body.issue.labels[].name", op: "notEquals", value: "bug" }],
+        issueComment,
+      ),
+    ).not.toBeNull();
+    expect(
+      failedWebhookFilter(
+        [{ path: "body.issue.labels[].name", op: "notEquals", value: "wontfix" }],
+        issueComment,
+      ),
+    ).toBeNull();
+  });
+
+  it("treats an empty or missing [] wildcard list as nothing to match", () => {
+    expect(
+      failedWebhookFilter([{ path: "body.issue.assignees[].login", op: "exists" }], issueComment),
+    ).not.toBeNull();
+    expect(
+      failedWebhookFilter(
+        [{ path: "body.issue.assignees[].login", op: "notEquals", value: "anyone" }],
+        issueComment,
+      ),
+    ).toBeNull();
+    expect(
+      failedWebhookFilter([{ path: "body.issue.number[].x", op: "exists" }], issueComment),
     ).not.toBeNull();
   });
 });

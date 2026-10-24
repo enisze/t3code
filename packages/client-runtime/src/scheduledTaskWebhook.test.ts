@@ -28,6 +28,7 @@ const stored = task({
     { path: "headers.x-github-event", op: "equals", value: "pull_request" },
     { path: "body.action", op: "in", value: ["opened", "reopened"] },
     { path: "body.pull_request", op: "exists" },
+    { path: "body.pull_request.labels[].name", op: "equals", value: "bug" },
   ],
   coalesce: { key: "{{body.number}}" },
 });

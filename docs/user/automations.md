@@ -38,6 +38,12 @@ first filter that failed; they are not recorded and do not count toward the limi
 Values compare as text, objects and arrays only satisfy **exists**, and a missing
 value fails every test.
 
+A path segment ending in `[]` tests each item of a list:
+`body.pull_request.labels[].name` equals `bug` matches when any label is named
+`bug`, **does not equal** `bug` only when none is, and **exists** only when the
+list has an item. In a placeholder, such as `{{body.pull_request.labels[].name}}`,
+the same path inserts the values as a JSON list.
+
 **Combine bursts** turns several updates about one item into one run. Set a key
 such as `{{body.pull_request.number}}` and a window of 10 to 3600 seconds (120 by
 default). The first delivery for a key opens the window; later ones replace its
